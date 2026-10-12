@@ -1,4 +1,4 @@
-const CACHE='bbpoker-static-v10';
+const CACHE='bbpoker-static-v11';
 const FILES=['/','/index.html','/style.css','/app.js','/replay.js','/platform.js','/client-config.js','/icon.svg','/manifest.webmanifest'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>(k.startsWith('tongzhuo-static-')||k.startsWith('bbpoker-static-'))&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});

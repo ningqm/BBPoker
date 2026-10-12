@@ -10,7 +10,7 @@ function amount(value) {
 }
 export function replayStreets(hand) {
   validHand(hand);
-  const result = [{ street: 'preflop', label: '开始', index: 0 }];
+  const result = [{ street: 'preflop', label: hand.bombPot ? '前注' : '开始', index: 0 }];
   const labels = { flop: '翻牌', turn: '转牌', river: '河牌' };
   for (let i = 0; i < hand.log.length; i++) {
     const event = hand.log[i];

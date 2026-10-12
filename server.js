@@ -2,16 +2,18 @@ import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { EncryptedStore } from './src/store.js';
-import { RoomService, cleanName, fail, exportText, exportCsv, now } from './src/room.js';
+import { RoomService, fail, exportText, exportCsv, now } from './src/room.js';
 import { fairnessInfo } from './src/fairness.js';
 import { originPolicy } from './src/origins.js';
 import { exportPhh } from './src/phh.js';
 import { clientIp } from './src/client-ip.js';
 import { digest, secret, username, password, hashPassword, verifyPassword, verifySecret, SESSION_MS } from './src/auth.js';
+import { nickname, avatar, profilePatch, AVATAR_COUNT, NICKNAME_LIMIT } from './src/profile.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data'), actionTickMs = 1000, publicOrigin = process.env.PUBLIC_ORIGIN || '', clientOrigins = process.env.CLIENT_ORIGINS || '', trustProxy = process.env.TRUST_PROXY || '', allowGuestSessions = false } = {}) {
   const checkOrigin = originPolicy(publicOrigin, clientOrigins);
@@ -19,10 +21,9 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   const streams = new Map(), rateLimits = new Map();
   store.data.sessions ??= {};
   for (const [key, session] of Object.entries(store.data.sessions)) if (session.expiresAt <= Date.now()) delete store.data.sessions[key];
-  // Preserve the exact active deck on restart, while granting a fresh action clock.
+  // Preserve the active deck and a previously saved clock, including used time cards.
   for (const r of Object.values(store.data.rooms)) if (r.hand?.status === 'playing') {
-    r.deadline = Date.now() + r.settings.actionSeconds * 1000;
-    r.hand.log.push({ seq: r.hand.log.length + 1, street: r.hand.street, type: 'reconnect', amount: 0 });
+    if (!Number.isFinite(r.deadline) || r.deadline <= 0) r.deadline = Date.now() + r.settings.actionSeconds * 1000;
   }
   store.save();
 
@@ -59,7 +60,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     req.authKey = key;
     return user;
   }
-  function publicUser(u) { return { id: u.id, name: u.name, avatar: u.avatar, username: u.username ?? null }; }
+  function publicUser(u) { return { id: u.id, name: u.name, avatar: Number.isInteger(u.avatar) && u.avatar >= 0 && u.avatar < AVATAR_COUNT ? u.avatar : 0, username: u.username ?? null }; }
   async function body(req) {
     const chunks = []; let length = 0;
     for await (const chunk of req) { length += chunk.length; if (length > 16384) fail('请求内容过大', 413); chunks.push(chunk); }
@@ -131,7 +132,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         const ip = clientIp(req, trustProxy); limited(`ip:${ip}`, 600);
         checkOrigin(req, res);
         if (req.method === 'OPTIONS') { if (!req.headers.origin) fail('缺少请求来源', 400); res.writeHead(204, { 'Cache-Control': 'no-store' }); return res.end(); }
-        if (path === '/api/health' && req.method === 'GET') return send(res, 200, { ok: true, app: 'BBPoker', version: '0.4.2', time: now() });
+        if (path === '/api/health' && req.method === 'GET') return send(res, 200, { ok: true, app: 'BBPoker', version: VERSION, time: now() });
         if (path === '/api/fairness' && req.method === 'GET') return send(res, 200, fairnessInfo);
         if (path === '/api/source/poker.js' || path === '/api/source/fairness.js') {
           if (req.method !== 'GET') fail('方法不支持', 405);
@@ -140,11 +141,11 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         if (path === '/api/session' && req.method === 'POST') {
           if (!allowGuestSessions) fail('请注册账号或登录；已有旧身份可通过恢复码找回并绑定账号', 410);
           limited(`register:${ip}`, 20); const b = await body(req);
-          if (typeof b.name !== 'string' || !b.name.trim()) fail('请填写昵称');
+          const displayName = nickname(b.name), selectedAvatar = b.avatar === undefined ? randomInt(AVATAR_COUNT) : avatar(b.avatar);
           const token = randomBytes(32).toString('base64url');
           const user = mutate(() => {
             if (Object.keys(store.data.users).length >= 1000) fail('账号数量达到上限');
-            const u = { id: randomBytes(12).toString('hex'), name: cleanName(b.name, '朋友'), avatar: Number.isInteger(b.avatar) ? Math.max(0, Math.min(11, b.avatar)) : randomBytes(1)[0] % 12, createdAt: now() };
+            const u = { id: randomBytes(12).toString('hex'), name: displayName, avatar: selectedAvatar, createdAt: now() };
             store.data.users[digest(token)] = u; return u;
           });
           return send(res, 201, { token, user: publicUser(user) });
@@ -159,13 +160,14 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           limited(`account:register:ip:${ip}`, 10, 60 * 60000);
           const b = await body(req), name = username(b.username); password(b.password);
           if (userByName(name)) fail('这个账号已被使用，请换一个', 409);
-          if (b.name !== undefined && (typeof b.name !== 'string' || !b.name.trim())) fail('请填写昵称');
+          const displayName = nickname(b.name ?? Array.from(name).slice(0, NICKNAME_LIMIT).join(''));
+          const selectedAvatar = b.avatar === undefined ? randomInt(AVATAR_COUNT) : avatar(b.avatar);
           const passwordHash = await hashPassword(b.password);
           const result = mutate(() => {
             // Another request may have committed while scrypt was running.
             if (userByName(name)) fail('这个账号已被使用，请换一个', 409);
             if (Object.keys(store.data.users).length >= 1000) fail('账号数量达到上限');
-            const u = { id: randomBytes(12).toString('hex'), username: name, name: cleanName(b.name ?? name, name), avatar: randomBytes(1)[0] % 12, createdAt: now() };
+            const u = { id: randomBytes(12).toString('hex'), username: name, name: displayName, avatar: selectedAvatar, createdAt: now() };
             store.data.users[u.id] = u;
             return rotateCredentials(u, passwordHash);
           });
@@ -198,6 +200,20 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           closeInvalidStreams(); return send(res, 200, result);
         }
         const user = auth(req);
+        if (path === '/api/profile' && req.method === 'POST') {
+          limited(`profile:${user.id}`, 12);
+          const patch = profilePatch(await body(req));
+          const result = mutate(() => {
+            // Re-resolve after reading the body: concurrent persistence rollback may replace data.
+            const current = auth(req);
+            Object.assign(current, patch);
+            const rooms = Object.values(store.data.rooms).filter(room => Object.hasOwn(room.members, current.id));
+            for (const room of rooms) service.touch(room);
+            return { user: publicUser(current), roomCodes: rooms.map(room => room.code) };
+          });
+          for (const code of result.roomCodes) broadcast(code);
+          return send(res, 200, { user: result.user });
+        }
         if (path === '/api/account/bind' && req.method === 'POST') {
           limited(`account:bind:${user.id}`, 10, 15 * 60000);
           const b = await body(req), name = username(b.username); password(b.password);
@@ -295,11 +311,14 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   });
   server.requestTimeout = 15000;
   const tick = setInterval(() => {
-    for (const room of Object.values(store.data.rooms)) {
-      if (room.hand?.status !== 'playing' || !room.deadline || Date.now() < room.deadline) continue;
-      try { const changed = mutate(() => service.timeout(room)); if (changed) broadcast(room.code); }
-      catch (e) { console.error('超时处理失败:', e.message); }
-    }
+    const timestamp = Date.now();
+    const codes = Object.values(store.data.rooms).filter(room => service.needsTick(room, timestamp)).map(room => room.code);
+    if (!codes.length) return;
+    try {
+      // Deadline actions, time-card refresh and table expiry commit together before observers see them.
+      const changed = mutate(() => codes.filter(code => service.tick(store.data.rooms[code], timestamp)));
+      for (const code of changed) broadcast(code);
+    } catch (e) { console.error('牌桌计时处理失败:', e.message); }
   }, actionTickMs); tick.unref();
   return { server, store, service, broadcast, async close() { clearInterval(tick); for (const set of streams.values()) for (const c of set) c.res.destroy(); await new Promise(resolve => server.close(resolve)); } };
 }

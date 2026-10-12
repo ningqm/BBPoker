@@ -4,7 +4,7 @@ import { createHand, applyAction, availableActions } from '../src/poker.js';
 import { replaySnapshot, replayStreets } from '../public/replay.js';
 
 function filtered(h, viewer = 'a') {
-  return { id: h.id, board: [...h.board], log: structuredClone(h.log),
+  return { id: h.id, bombPot: h.bombPot, board: [...h.board], log: structuredClone(h.log),
     players: h.players.map(p => ({ id: p.id, seat: p.seat, name: p.name, startingStack: p.startingStack,
       cards: p.id === viewer || (h.result.showdown && !p.folded) ? [...p.cards] : [null, null],
       net: p.stack - p.startingStack, miniNet: 0, endingStack: p.stack })) };
@@ -74,4 +74,14 @@ test('fold-only hands have start/result navigation, inputs are immutable and raw
   assert.deepEqual(replayStreets(record).map(x => x.street), ['preflop', 'complete']);
   replaySnapshot(record, 999, 'a'); assert.deepEqual(record, before);
   assert.throws(() => replaySnapshot(h, 0, 'a'), /过滤/);
+});
+
+
+test('bomb pot replay starts with antes, skips blinds and preserves privacy and conservation at every frame',()=>{
+  const h=createHand({id:'bomb-replay',buttonSeat:0,smallBlind:5,bigBlind:10,ante:20,bombPot:true,players:[{id:'a',seat:0,stack:15},{id:'b',seat:1,stack:100},{id:'c',seat:2,stack:500}]});
+  assert.equal(h.street,'flop');assert.ok(!h.log.some(x=>x.type==='smallBlind'||x.type==='bigBlind'));
+  finish(h,a=>a.canAllIn?'allin':a.canCheck?'check':'call');
+  const record=conservedEveryFrame(h),stages=replayStreets(record);assert.equal(stages[0].label,'前注');
+  const flop=stages.find(x=>x.street==='flop');assert.equal(replaySnapshot(record,flop.index,'a').board.length,3);
+  assert.deepEqual(replaySnapshot(record,flop.index,'a').players[1].cards,[null,null]);
 });

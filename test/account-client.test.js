@@ -20,7 +20,7 @@ const clientSource = [
   section('function profileModal(', 'function roomMenu('),
   section('function resetPrivateView(', 'function resumeTable('),
   section('function resumeTable(', "window.addEventListener('hashchange'"),
-  'globalThis.client={state,requests,api,connectStream,route,welcome,recoveryPage,profileModal,bindAccountModal,changePasswordModal,recoverModal,restoreModal,submitAccount,acceptAccount,logout,adoptIdentity,expireIdentity};',
+  'globalThis.client={state,requests,api,connectStream,route,welcome,recoveryPage,profileModal,saveProfile,bindAccountModal,changePasswordModal,recoverModal,restoreModal,submitAccount,acceptAccount,logout,adoptIdentity,expireIdentity};',
 ].join('\n');
 
 function harness() {
@@ -161,4 +161,22 @@ test('account logout revokes server session before clearing current device data'
   assert.equal(c.state.token,'');
   assert.equal(c.state.stats,null);
   assert.equal(c.state.page,'welcome');
+});
+
+
+test('profile changes preserve the active identity and table without navigating or rotating a session',async()=>{
+  const c=harness();Object.assign(c.state,{token:'current-session',user:account,page:'room',room:{code:'123456',players:[{...account,stack:400}]}});
+  const room=c.state.room;const pending=c.saveProfile(fd({name:'新昵称',avatar:'11'}));
+  assert.equal(c.calls[0].url,'https://poker.test/api/profile');
+  assert.deepEqual(JSON.parse(c.calls[0].options.body),{name:'新昵称',avatar:11});
+  c.respond(c.calls[0],{user:{...account,name:'新昵称',avatar:11}});await pending;
+  assert.equal(c.state.room,room);assert.equal(c.state.room.players[0].name,'新昵称');assert.equal(c.state.room.players[0].stack,400);
+  assert.equal(c.state.token,'current-session');assert.equal(c.state.page,'room');assert.equal(c.writes.length,0);
+});
+test('late profile save cannot overwrite a newer login',async()=>{
+  const c=harness();Object.assign(c.state,{token:'old-session',user:account,page:'lobby'});
+  const pending=c.saveProfile(fd({name:'旧账号改名',avatar:'2'}));
+  await c.adoptIdentity({token:'new-session',user:{id:'new-user',name:'新账号'}});
+  c.respond(c.calls[0],{user:{...account,name:'旧账号改名',avatar:2}});
+  await assert.rejects(pending,error=>error.stale===true);assert.equal(c.state.user.id,'new-user');
 });

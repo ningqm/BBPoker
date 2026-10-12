@@ -352,3 +352,12 @@ test('real platform credential operations finish an older disk clear before a ne
     else delete globalThis.tongzhuoDesktop;
   }
 });
+
+
+test('time bank commands bind to the current hand and action sequence like gameplay actions',async()=>{
+  const c=clientHarness();const pending=c.command('timebank');
+  const body=JSON.parse(c.pending[0].options.body);
+  assert.equal(body.type,'timebank');assert.equal(body.handId,'hand-123456');assert.equal(body.actionSeq,1);
+  assert.equal(body.commandId,'test-command');
+  c.pending[0].resolve(response({room:room('old-user','123456',2)}));assert.equal(await pending,true);
+});

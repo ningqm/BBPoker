@@ -67,11 +67,12 @@ async function recoveredHistory() {
     command(users[0], 'sit', { seat: 0, amount: 1000 });
     command(users[1], 'sit', { seat: 5, amount: 1000 });
     command(users[0], 'start');
+    const beforeLog = structuredClone(room.hand.log);
     app.store.save();
     await app.close();
     app = createApp({ dataDir: directory });
     room = app.service.room(code);
-    assert.equal(room.hand.log.filter(a => a.type === 'reconnect').length, 1);
+    assert.deepEqual(room.hand.log, beforeLog);
     const checkOrCall = () => {
       const actor = users.find(u => u.id === room.hand.actingId);
       command(actor, availableActions(room.hand, actor.id).canCheck ? 'check' : 'call');
@@ -88,7 +89,7 @@ async function recoveredHistory() {
 
 test('real server recovery and RoomService timeout markers do not change exported poker actions', async () => {
   const hand = await recoveredHistory();
-  assert.ok(hand.log.some(a => a.type === 'reconnect'));
+  assert.ok(!hand.log.some(a => a.type === 'reconnect'));
   assert.ok(hand.log.some(a => a.type === 'timeout'));
   const plain = structuredClone(hand);
   plain.log = plain.log.filter(a => !['reconnect', 'timeout'].includes(a.type));

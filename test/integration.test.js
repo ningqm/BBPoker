@@ -27,7 +27,8 @@ async function setup(t) {
   async function seat(count = 3, amount = 1000) {
     for (let seat = 0; seat < count; seat++) {
       const { room: s } = await cmd(users[seat], 'sit', { seat, amount });
-      if (seat > 0) { const pending = s.pending.find(p => p.playerId === users[seat].user.id); await cmd(users[0], 'approve', { requestId: pending.id }); }
+      const pending = s.pending.find(p => p.playerId === users[seat].user.id);
+      if (pending) await cmd(users[0], 'approve', { requestId: pending.id });
     }
   }
   async function win(targetId) {
@@ -45,7 +46,7 @@ async function setup(t) {
   return { api, users, room, cmd, state, seat, win, dir, base, get app() { return app; }, async restart() { await app.close(); app = createApp({ dataDir: dir, allowGuestSessions: true }); await new Promise(r => app.server.listen(0, '127.0.0.1', r)); } };
 }
 
-test('invite, approval, game, selective proofs, voluntary show and all export formats work end to end', async t => {
+test('invite, instant seating, game, selective proofs, voluntary show and all export formats work end to end', async t => {
   const f = await setup(t); await f.seat();
   const host = f.users[0], observer = f.users[3];
   const start = (await f.cmd(host, 'start')).room;
@@ -108,10 +109,21 @@ test('illegal actions, duplicate commands and unauthorized users cannot mutate p
   await f.cmd(actor, 'fold', { handId: 'stale-hand' }, 409);
 });
 
-test('both mini games conserve points, squid settlement is separated, remaining pools refund on close', async t => {
+test('squid conserves points, legacy mushroom pool refunds remain included on close', async t => {
   const f = await setup(t); await f.seat(3);
-  await f.cmd(f.users[0], 'settings', { settings: { squid: true, squidUnit: 20, mushroom: true, mushroomUnit: 5 } });
-  let s = (await f.cmd(f.users[0], 'start')).room;
+  await f.cmd(f.users[0], 'settings', { settings: { squid: true, squidUnitBB: 2 } });
+  await f.cmd(f.users[0], 'start');
+  // Simulate a persisted old-version hand: only legacy histories/pools retain
+  // mushroom bookkeeping, while no subsequent new hand charges mushroom fees.
+  const legacy = f.app.store.data.rooms[f.room.code], h = legacy.hand, pool = legacy.mini.mushroom;
+  h.settings.mushroom = true; pool.smallBlindId = h.players.find(p => p.seat === h.smallBlindSeat).id;
+  for (const p of h.players) {
+    const amount = pool.unit * (p.id === pool.smallBlindId ? 2 : 1);
+    p.startingStack -= amount; p.stack -= amount; legacy.members[p.id].stack -= amount;
+    h.miniChanges[p.id] -= amount; pool.pool += amount; pool.contributions[p.id] = amount;
+  }
+  h.miniBefore = structuredClone(legacy.mini); f.app.store.save();
+  let s = await f.state(f.users[0]);
   const account = st => st.players.reduce((n, p) => n + p.stack + p.squidReserve, 0) + st.mini.mushroom.pool + (st.hand?.status === 'playing' ? st.hand.pot : 0);
   assert.equal(account(s), 3000); assert.equal(s.mini.mushroom.pool, 20);
   await f.cmd(f.users[0], 'stand', {}, 400);

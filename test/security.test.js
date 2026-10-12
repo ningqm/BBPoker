@@ -14,9 +14,24 @@ function fixture(settings = {}) {
   const users = Array.from({ length: 5 }, (_, i) => ({ id: `user${i}`, name: `朋友${i}`, avatar: i }));
   users.forEach(u => { store.data.users[u.id] = u; });
   const service = new RoomService(store);
-  const room = service.create(users[0], { name: '隐私验收桌', settings: { approvalRequired: false, ...settings } });
+  const room = service.create(users[0], { name: '隐私验收桌', settings: { approvalRequired: false, ...settings, mushroom: false } });
   users.slice(1, 4).forEach(u => service.join(u, room.code, room.invite));
-  const command = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  // Preserve old-version pending approvals and mushroom balances as recovery
+  // fixtures; new clients can no longer enable either room option.
+  const command = (i, type, extra = {}) => {
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (settings.mushroom && type === 'start' && room.handNumber === 1) {
+      const h = room.hand, pool = room.mini.mushroom;
+      h.settings.mushroom = true; pool.smallBlindId = h.players.find(p => p.seat === h.smallBlindSeat).id;
+      for (const p of h.players) {
+        const amount = pool.unit * (p.id === pool.smallBlindId ? 2 : 1);
+        p.startingStack -= amount; p.stack -= amount; room.members[p.id].stack -= amount;
+        h.miniChanges[p.id] -= amount; pool.pool += amount; pool.contributions[p.id] = amount;
+      }
+      h.miniBefore = structuredClone(room.mini);
+    }
+    return result;
+  };
   return { store, users, service, room, command };
 }
 function seat(f, count = 3) { for (let i = 0; i < count; i++) f.command(i, 'sit', { seat: i, amount: 1000 }); }
@@ -59,7 +74,8 @@ test('security: member and host checks reject outsider reads, guessed invitation
   assert.throws(() => f.service.state(f.room, f.users[4].id), e => e.status === 403);
   assert.throws(() => f.service.join(f.users[4], f.room.code, 'wrong'), e => e.status === 403);
   assert.throws(() => f.service.exports(f.users[4].id, f.room.code), e => e.status === 403);
-  f.command(1, 'sit', { seat: 1, amount: 1000 });
+  // A request written by the older approval-based release is still guarded.
+  f.room.pending.push({ id: randomUUID(), playerId: f.users[1].id, name: f.users[1].name, seat: 1, amount: 1000 });
   assert.equal(f.room.members[f.users[1].id].seat, null);
   assert.throws(() => f.command(2, 'approve', { requestId: f.room.pending[0].id }), e => e.status === 403);
   assert.throws(() => f.command(1, 'start'), e => e.status === 403);
@@ -150,7 +166,7 @@ test('security: showdown reveals live contenders but keeps a folded player hidde
   noSecrets(projected, h, visible);
 });
 
-test('settlement: squid reserves plus mushroom pools remain conserved and closing refunds contributors', () => {
+test('settlement: squid reserves plus legacy mushroom pools remain conserved and closing refunds contributors', () => {
   const f = fixture({ squid: true, squidUnit: 20, mushroom: true, mushroomUnit: 5 });
   seat(f); conserved(f.room);
   f.command(0, 'start'); conserved(f.room); finishWithFolds(f); conserved(f.room);
@@ -183,8 +199,7 @@ test('settlement: repeated command is idempotent and closing an unfinished squid
 test('regression: standing cancels the seated player pending rebuy so approval cannot reseat them', () => {
   const f = fixture({ approvalRequired: true });
   f.command(1, 'sit', { seat: 1, amount: 1000 });
-  f.command(0, 'approve', { requestId: f.room.pending[0].id });
-  f.command(1, 'buyin', { amount: 200 });
+  f.room.pending.push({ id: randomUUID(), playerId: f.users[1].id, name: f.users[1].name, seat: 1, amount: 200 });
   const pendingId = f.room.pending[0].id;
   f.command(1, 'stand');
   assert.equal(f.room.pending.some(p => p.id === pendingId), false);

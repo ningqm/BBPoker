@@ -12,7 +12,7 @@ npm test
 npm start
 ```
 
-打开 http://localhost:8787。自动测试使用临时数据；正常启动默认把真实使用数据保存到项目的 `data/`。网页后端没有第三方运行依赖，不需要 `npm install`。
+打开 [http://localhost:8787](http://localhost:8787)。自动测试使用临时数据；正常启动默认把真实使用数据保存到项目的 `data/`。网页后端没有第三方运行依赖，不需要 `npm install`。
 
 ## 2. 配置生产服务
 

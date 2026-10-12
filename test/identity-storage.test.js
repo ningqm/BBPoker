@@ -36,6 +36,7 @@ function tab() {
   const calls = [];
   const context = vm.createContext({
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
+    avatarCache: { clear() {} },
     stopStream() {}, closeModal() {}, render() {}, toast() {}, resumeTable() {},
     api(endpoint) { calls.push({ endpoint, token: context.client.state.token }); return Promise.resolve({ ok: true }); },
   });

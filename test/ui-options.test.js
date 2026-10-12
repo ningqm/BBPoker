@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {settingsFor} from '../src/room.js';
+import {avatarMarkup,createAvatarCache} from '../public/avatar.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 function harness(){
   const modals=[];
-  const context=vm.createContext({
+  const context=vm.createContext({avatarMarkup,createAvatarCache,apiUrl:path=>path,
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
     state:{user:{name:'小鱼'},timeOffset:0},
     openModal(title,body,kind){modals.push({title,body,kind});},toast(message){throw new Error(message);},
@@ -73,9 +74,9 @@ test('room duration and mini cutoff are computed against supplied server time, i
   assert.equal(c.roomClock(room,3600000),'时间到 · 本手结束后散桌');room.status='closed';assert.equal(c.roomClock(room,4000000),'已结束');
   assert.equal(c.roomClock({status:'waiting',settings:{durationMinutes:90}},0),'90 分钟 · 首手开始计时');
 });
-test('only built-in avatar identifiers render, and malicious profile data never becomes markup',()=>{
-  const c=harness();assert.match(c.avatar({avatar:11}),/🐶/);assert.match(c.avatar({avatar:'<img onerror=alert(1)>',name:'<svg>'}),/🦊/);
-  assert.doesNotMatch(c.avatar({avatar:'<img onerror=alert(1)>',name:'<svg>'}),/<img|<svg|onerror/);
+test('avatar images use fixed local paths and malicious profile data never becomes markup',()=>{
+  const c=harness();assert.match(c.avatar({avatar:11}),/avatars\/ai-06\.png/);assert.match(c.avatar({avatar:'<img onerror=alert(1)>',name:'<svg>'}),/avatars\/ai-01\.png/);
+  assert.doesNotMatch(c.avatar({avatar:'<img onerror=alert(1)>',name:'<svg>'}),/<svg|onerror|src=x/);
 });
 
 

@@ -61,7 +61,7 @@ test('registered profiles keep account ownership, credentials and every session 
   const before = structuredClone(f.app.service.user(first.user.id));
   const sessions = structuredClone(f.app.store.data.sessions);
   const changed = await f.api('/api/profile', { name: '  新昵称😀  ', avatar: 8 }, first.token);
-  assert.deepEqual(changed.user, { id: first.user.id, username: 'profile_owner', name: '新昵称😀', avatar: 8 });
+  assert.deepEqual(changed.user, { id: first.user.id, username: 'profile_owner', name: '新昵称😀', avatar: 8, avatarImage: null });
   const expected = { ...before, name: '新昵称😀', avatar: 8 };
   assert.deepEqual(f.app.service.user(first.user.id), expected);
   assert.deepEqual(f.app.store.data.sessions, sessions);

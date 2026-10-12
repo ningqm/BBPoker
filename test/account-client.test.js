@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequestGuard } from '../public/platform.js';
+import { avatarMarkup,avatarEditorMarkup,createAvatarCache } from '../public/avatar.js';
 
 const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 function section(start, end) {
@@ -25,9 +26,10 @@ const clientSource = [
 
 function harness() {
   const calls = [], writes = [], toasts = [], timers = new Map(), modals = [], cleared = [], rendered = [];
-  let timerId = 0, client;
+  let timerId = 0, client, avatarPatch={};
   const context = vm.createContext({
-    createRequestGuard, AbortController, TextDecoder, Uint8Array, URLSearchParams,
+    createRequestGuard, AbortController, TextDecoder, Uint8Array, URLSearchParams, avatarMarkup,avatarEditorMarkup,createAvatarCache,
+    $:()=>({}),createAvatarEditor:()=>({patch:()=>avatarPatch,setSaving(){},setError(){},destroy(){}}),
     apiUrl: p => `https://poker.test${p}`,
     fetch(url, options) { return new Promise((resolve, reject) => calls.push({url,options,resolve,reject})); },
     writeIdentity: async token => writes.push(token), clearIdentity: async () => cleared.push(true),
@@ -44,7 +46,7 @@ function harness() {
   vm.runInContext(clientSource, context);
   client=context.client;
   const respond=(call,data,status=200)=>call.resolve({ok:status>=200&&status<300,status,json:async()=>data});
-  return {...client,calls,writes,toasts,timers,modals,cleared,rendered,location:context.location,respond};
+  return {...client,calls,writes,toasts,timers,modals,cleared,rendered,location:context.location,respond,setAvatarPatch:patch=>{avatarPatch=patch;}};
 }
 const fd = data => ({get: key => data[key]??null});
 const account = {id:'existing-id',name:'朋友',username:'friend_1'};
@@ -166,7 +168,7 @@ test('account logout revokes server session before clearing current device data'
 
 test('profile changes preserve the active identity and table without navigating or rotating a session',async()=>{
   const c=harness();Object.assign(c.state,{token:'current-session',user:account,page:'room',room:{code:'123456',players:[{...account,stack:400}]}});
-  const room=c.state.room;const pending=c.saveProfile(fd({name:'新昵称',avatar:'11'}));
+  const room=c.state.room;c.profileModal();c.setAvatarPatch({avatar:11});const pending=c.saveProfile(fd({name:'新昵称'}));
   assert.equal(c.calls[0].url,'https://poker.test/api/profile');
   assert.deepEqual(JSON.parse(c.calls[0].options.body),{name:'新昵称',avatar:11});
   c.respond(c.calls[0],{user:{...account,name:'新昵称',avatar:11}});await pending;
@@ -179,4 +181,27 @@ test('late profile save cannot overwrite a newer login',async()=>{
   await c.adoptIdentity({token:'new-session',user:{id:'new-user',name:'新账号'}});
   c.respond(c.calls[0],{user:{...account,name:'旧账号改名',avatar:2}});
   await assert.rejects(pending,error=>error.stale===true);assert.equal(c.state.user.id,'new-user');
+});
+
+
+test('editing only the nickname preserves a custom avatar and sends no avatar replacement',async()=>{
+  const c=harness(),avatarImage='a'.repeat(32);Object.assign(c.state,{token:'current-session',user:{...account,avatarImage},page:'lobby'});c.profileModal();
+  const pending=c.saveProfile(fd({name:'只改昵称'}));assert.deepEqual(JSON.parse(c.calls[0].options.body),{name:'只改昵称'});
+  c.respond(c.calls[0],{user:{...account,name:'只改昵称',avatarImage}});await pending;assert.equal(c.state.user.avatarImage,avatarImage);
+});
+test('uploading a cropped avatar sends one unambiguous replacement field and updates room metadata',async()=>{
+  const c=harness();Object.assign(c.state,{token:'current-session',user:account,page:'room',room:{players:[{...account}]}});c.profileModal();
+  c.setAvatarPatch({avatarUpload:'data:image/png;base64,c3ludGhldGlj'});const pending=c.saveProfile(fd({name:'自定义头像'}));
+  assert.deepEqual(JSON.parse(c.calls[0].options.body),{name:'自定义头像',avatarUpload:'data:image/png;base64,c3ludGhldGlj'});
+  c.respond(c.calls[0],{user:{...account,name:'自定义头像',avatar:2,avatarImage:'b'.repeat(32)}});await pending;
+  assert.equal(c.state.room.players[0].avatarImage,'b'.repeat(32));
+});
+
+
+test('closing and reopening profile cannot start overlapping saves or let a late response replace newer edits',async()=>{
+  const c=harness();Object.assign(c.state,{token:'current-session',user:account,page:'lobby'});c.profileModal();
+  const first=c.saveProfile(fd({name:'第一份保存'}));c.profileModal();
+  await assert.rejects(c.saveProfile(fd({name:'不应并发保存'})),/正在保存/);assert.equal(c.calls.length,1);
+  c.respond(c.calls[0],{user:{...account,name:'第一份保存'}});await first;assert.equal(c.state.profileSave,null);
+  const next=c.saveProfile(fd({name:'第二份保存'}));c.respond(c.calls[1],{user:{...account,name:'第二份保存'}});await next;assert.equal(c.state.user.name,'第二份保存');
 });

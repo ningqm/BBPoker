@@ -69,7 +69,7 @@ test('register/login/logout use normalized accounts and private revocable sessio
   for (const clear of [PASSWORD, registered.token, registered.recoveryCode]) assert.equal(encoded.includes(clear), false);
   assert.equal(readFileSync(f.app.store.file).includes(Buffer.from('player_one')), false);
   const me = await f.api('/api/me', undefined, registered.token);
-  assert.deepEqual(Object.keys(me.user).sort(), ['avatar', 'id', 'name', 'username']);
+  assert.deepEqual(Object.keys(me.user).sort(), ['avatar', 'avatarImage', 'id', 'name', 'username']);
   await f.api('/api/account/register', { username: 'PLAYER_ONE', password: PASSWORD }, null, 409);
   const login = await f.api('/api/account/login', { username: ' PLAYER_ONE ', password: PASSWORD });
   assert.equal(login.user.id, registered.user.id); assert.notEqual(login.token, registered.token); assert.equal(login.recoveryCode, undefined);

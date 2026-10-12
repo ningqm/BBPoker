@@ -52,7 +52,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   let timerId = 0, clock = 0;
   let client;
   const context = vm.createContext({
-    createRequestGuard,
+    createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {
       const result = deferred();

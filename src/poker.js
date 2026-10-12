@@ -197,8 +197,9 @@ function advance(hand, afterSeat) {
   }
 }
 
-export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, deck } = {}) {
+export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, deck } = {}) {
   if (!Array.isArray(players) || players.length < 2 || players.length > 9) throw new Error('需要 2 至 9 位玩家');
+  if (typeof bombPot !== 'boolean' || (bombPot && !integer(ante, 1))) throw new Error('炸弹池前注无效');
   if (!integer(smallBlind, 1) || !integer(bigBlind, smallBlind) || !integer(ante)) throw new Error('盲注或前注无效');
   if (players.some(p => !p || typeof p.id !== 'string' || !p.id || !integer(p.seat) || !integer(p.stack, 1)) ||
       new Set(players.map(p => p.id)).size !== players.length || new Set(players.map(p => p.seat)).size !== players.length ||
@@ -207,7 +208,7 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   const shuffled = deck === undefined ? shuffleDeck() : [...deck];
   if (shuffled.length !== 52 || new Set(shuffled).size !== 52 || shuffled.some(c => !CARDS.includes(c))) throw new Error('牌堆必须含 52 张不同扑克牌');
   const hand = {
-    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante,
+    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot,
     smallBlindSeat: null, bigBlindSeat: null, board: [], boardIndices: [],
     deck: Object.freeze(shuffled), deckCursor: 0, burnIndices: [],
     players: players.map(p => ({ id: p.id, name: p.name ?? '', seat: p.seat,
@@ -219,17 +220,20 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   const order = clockwise(hand, buttonSeat);
   const sb = players.length === 2 ? hand.players.find(p => p.seat === buttonSeat) : order[0];
   const bb = players.length === 2 ? order[0] : order[1];
-  hand.smallBlindSeat = sb.seat;
-  hand.bigBlindSeat = bb.seat;
+  hand.smallBlindSeat = bombPot ? null : sb.seat;
+  hand.bigBlindSeat = bombPot ? null : bb.seat;
   if (ante) for (const p of order) contribute(hand, p, ante, 'ante', false);
-  contribute(hand, sb, smallBlind, 'smallBlind');
-  contribute(hand, bb, bigBlind, 'bigBlind');
+  if (!bombPot) {
+    contribute(hand, sb, smallBlind, 'smallBlind');
+    contribute(hand, bb, bigBlind, 'bigBlind');
+  }
   for (let round = 0; round < 2; round++) for (const p of order) {
     const { card, index } = draw(hand);
     p.cards.push(card);
     p.cardIndices.push(index);
   }
-  advance(hand, bb.seat);
+  if (bombPot) nextStreet(hand);
+  advance(hand, bombPot ? buttonSeat : bb.seat);
   return hand;
 }
 

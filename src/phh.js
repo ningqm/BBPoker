@@ -42,7 +42,7 @@ function orderPlayers(hand) {
   const ordered = [...players.slice(button + 1), ...players.slice(0, button + 1)];
   const sb = ordered[ordered.length === 2 ? 1 : 0];
   const bb = ordered[ordered.length === 2 ? 0 : 1];
-  if (hand.smallBlindSeat !== sb.seat || hand.bigBlindSeat !== bb.seat) throw new Error('PHH：盲注位置与庄位不一致');
+  if (hand.bombPot ? hand.smallBlindSeat !== null || hand.bigBlindSeat !== null : hand.smallBlindSeat !== sb.seat || hand.bigBlindSeat !== bb.seat) throw new Error('PHH：盲注位置与庄位不一致');
   return ordered;
 }
 
@@ -65,6 +65,15 @@ function handTable(hand, index, viewerId) {
   if (new Set([...known, ...hand.board]).size !== known.length + hand.board.length) throw new Error('PHH：可见牌重复');
   if (!Array.isArray(hand.log)) throw new Error('PHH：缺少行动记录');
   const actions = players.map((p, i) => `d dh p${i + 1} ${visible[i]}`);
+  // PHH NT has no skip-preflop flag. Zero-cost checks reproduce the omitted
+  // betting round without changing any stack; annotate these export-only steps
+  // so analysis tools do not mistake them for real player decisions.
+  const syntheticChecks = [];
+  if (hand.bombPot) {
+    const mobile = players.filter(p => p.startingStack > ante);
+    if (mobile.length > 1) for (const p of mobile) syntheticChecks.push(`${position.get(p.id)} cc # BBPoker bomb pot: preflop skipped`);
+    actions.push(...syntheticChecks);
+  }
   const finalAction = hand.log.findLastIndex(a => PLAY_ACTIONS.has(a.type));
   const show = () => {
     if (!hand.result?.showdown) return;
@@ -102,7 +111,8 @@ function handTable(hand, index, viewerId) {
     `[${index + 1}]`,
     'variant = "NT"',
     `antes = ${array(players.map(() => ante))}`,
-    `blinds_or_straddles = ${array([smallBlind, bigBlind, ...players.slice(2).map(() => 0)])}`,
+    'ante_trimming_status = true',
+    `blinds_or_straddles = ${array(hand.bombPot ? players.map(() => 0) : [smallBlind, bigBlind, ...players.slice(2).map(() => 0)])}`,
     `min_bet = ${bigBlind}`,
     `starting_stacks = ${array(starting)}`,
     'actions = [', ...actions.map(a => `  ${quote(a)},`), ']',
@@ -125,6 +135,7 @@ function handTable(hand, index, viewerId) {
     // separate from the standard PHH finishing_stacks used for hold'em replay.
     `_tongzhuo_room_ending_stacks = ${array(players.map(p => integer(p.endingStack, '结束房间积分')))}`,
   ];
+  if (hand.bombPot) { lines.push('_bbpoker_bomb_pot = true', `_bbpoker_synthetic_preflop_checks = ${syntheticChecks.length}`); }
   if (viewerId !== undefined) lines.push(`_tongzhuo_viewer_id = ${quote(viewerId)}`);
   if (typeof hand.commitment === 'string') lines.push(`_tongzhuo_commitment = ${quote(hand.commitment)}`);
   return lines.join('\n');

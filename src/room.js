@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createHand, applyAction, availableActions } from './poker.js';
 import { commitDeck, cardProof, VERIFICATION_VERSION, hash } from './fairness.js';
+import { avatarImageId } from './avatar.js';
 
 const MAX_BUYIN = 1000000000;
 const TIME_BANK_WINDOW = 30 * 60 * 1000;
@@ -391,7 +392,7 @@ export class RoomService {
       timeBankResetAt: r.startedAt == null ? null : (r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW < r.endsAt ? r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW : null),
       players: Object.values(r.members).map(m => {
         const u = this.user(m.id), p = h?.players.find(x => x.id === m.id);
-        return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn,
+        return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, avatarImage: avatarImageId(u?.avatarImage), seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn,
           sessionProfit: m.stack + m.cashedOut + (r.mini.squid.reserves[m.id] ?? 0) - m.totalBuyIn,
           timeBankCardsRemaining: m.timeBank?.remaining ?? (r.settings.timeBankCards ?? DEFAULTS.timeBankCards), sittingOut: m.sittingOut, connected: (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0,
           squidWon: r.mini.squid.won.includes(m.id), squidReserve: r.mini.squid.reserves[m.id] ?? 0,

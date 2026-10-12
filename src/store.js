@@ -39,9 +39,19 @@ export class EncryptedStore {
     const bytes = Buffer.concat([Buffer.from('TZ01'), iv, cipher.getAuthTag(), encrypted]);
     const tmp = this.file + '.tmp';
     writeFileSync(tmp, bytes, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
     const fd = openSync(tmp, 'r');
     try { fsyncSync(fd); } finally { closeSync(fd); }
+    // Rename is the commit boundary: callers may roll back memory on any error above.
     renameSync(tmp, this.file);
-    chmodSync(this.file, 0o600);
+    // Do not throw after committing: that could make callers delete a referenced blob.
+    // If the directory cannot be synced, retain old avatar files for crash recovery.
+    this.lastSaveDurable = false;
+    let directoryFd;
+    try {
+      directoryFd = openSync(this.directory, 'r'); fsyncSync(directoryFd);
+      this.lastSaveDurable = true;
+    } catch { console.error('存档已提交，但目录同步未完成；保留旧头像文件以便恢复。'); }
+    finally { if (directoryFd !== undefined) try { closeSync(directoryFd); } catch { /* The commit already completed. */ } }
   }
 }

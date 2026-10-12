@@ -20,9 +20,13 @@ export function avatar(value) {
 export function profilePatch(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('资料格式错误');
   const keys = Object.keys(input);
-  if (!keys.length || keys.some(key => !['name', 'avatar'].includes(key))) fail('只能修改昵称和头像');
+  if (!keys.length || keys.some(key => !['name', 'avatar', 'avatarImage', 'avatarUpload'].includes(key))) fail('只能修改昵称和头像');
+  if (Object.hasOwn(input, 'avatarImage') && input.avatarImage !== null) fail('不能使用其他用户的头像标识');
+  if (Object.hasOwn(input, 'avatarUpload') && (Object.hasOwn(input, 'avatar') || Object.hasOwn(input, 'avatarImage'))) fail('请只选择一种头像');
   const patch = {};
   if (Object.hasOwn(input, 'name')) patch.name = nickname(input.name);
   if (Object.hasOwn(input, 'avatar')) patch.avatar = avatar(input.avatar);
+  if (Object.hasOwn(input, 'avatarImage')) patch.avatarImage = null;
+  if (Object.hasOwn(input, 'avatarUpload')) patch.avatarUpload = input.avatarUpload;
   return patch;
 }

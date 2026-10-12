@@ -11,6 +11,7 @@ import { exportPhh } from './src/phh.js';
 import { clientIp } from './src/client-ip.js';
 import { digest, secret, username, password, hashPassword, verifyPassword, verifySecret, SESSION_MS } from './src/auth.js';
 import { nickname, avatar, profilePatch, AVATAR_COUNT, NICKNAME_LIMIT } from './src/profile.js';
+import { AvatarStore, avatarImageId, normalizeAvatarUpload, AVATAR_PROFILE_BODY_BYTES } from './src/avatar.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
@@ -18,6 +19,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data'), actionTickMs = 1000, publicOrigin = process.env.PUBLIC_ORIGIN || '', clientOrigins = process.env.CLIENT_ORIGINS || '', trustProxy = process.env.TRUST_PROXY || '', allowGuestSessions = false } = {}) {
   const checkOrigin = originPolicy(publicOrigin, clientOrigins);
   const store = new EncryptedStore(dataDir), service = new RoomService(store);
+  const avatars = new AvatarStore(store);
   const streams = new Map(), rateLimits = new Map();
   store.data.sessions ??= {};
   for (const [key, session] of Object.entries(store.data.sessions)) if (session.expiresAt <= Date.now()) delete store.data.sessions[key];
@@ -60,10 +62,10 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     req.authKey = key;
     return user;
   }
-  function publicUser(u) { return { id: u.id, name: u.name, avatar: Number.isInteger(u.avatar) && u.avatar >= 0 && u.avatar < AVATAR_COUNT ? u.avatar : 0, username: u.username ?? null }; }
-  async function body(req) {
+  function publicUser(u) { return { id: u.id, name: u.name, avatar: Number.isInteger(u.avatar) && u.avatar >= 0 && u.avatar < AVATAR_COUNT ? u.avatar : 0, avatarImage: avatarImageId(u.avatarImage), username: u.username ?? null }; }
+  async function body(req, maxBytes = 16384) {
     const chunks = []; let length = 0;
-    for await (const chunk of req) { length += chunk.length; if (length > 16384) fail('请求内容过大', 413); chunks.push(chunk); }
+    for await (const chunk of req) { length += chunk.length; if (length > maxBytes) fail('请求内容过大', 413); chunks.push(chunk); }
     try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); if (!value || typeof value !== 'object' || Array.isArray(value)) fail('请求格式错误'); if (req.authKey) auth(req); return value; }
     catch (e) { if (e.status) throw e; fail('请求格式错误'); }
   }
@@ -200,17 +202,38 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           closeInvalidStreams(); return send(res, 200, result);
         }
         const user = auth(req);
+        if (path.startsWith('/api/avatars/') && req.method === 'GET') {
+          const imageId = avatarImageId(path.slice('/api/avatars/'.length));
+          const owner = imageId && Object.values(store.data.users).find(candidate => candidate.avatarImage === imageId);
+          if (!owner || (owner.id !== user.id && !Object.values(store.data.rooms).some(room => Object.hasOwn(room.members, owner.id) && Object.hasOwn(room.members, user.id)))) fail('头像不存在', 404);
+          let bytes;
+          try { bytes = avatars.read(imageId); } catch { fail('头像不存在', 404); }
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'Content-Length': bytes.length });
+          return res.end(bytes);
+        }
         if (path === '/api/profile' && req.method === 'POST') {
           limited(`profile:${user.id}`, 12);
-          const patch = profilePatch(await body(req));
-          const result = mutate(() => {
-            // Re-resolve after reading the body: concurrent persistence rollback may replace data.
-            const current = auth(req);
-            Object.assign(current, patch);
-            const rooms = Object.values(store.data.rooms).filter(room => Object.hasOwn(room.members, current.id));
-            for (const room of rooms) service.touch(room);
-            return { user: publicUser(current), roomCodes: rooms.map(room => room.code) };
-          });
+          const patch = profilePatch(await body(req, AVATAR_PROFILE_BODY_BYTES));
+          const thumbnail = Object.hasOwn(patch, 'avatarUpload') ? normalizeAvatarUpload(patch.avatarUpload) : null;
+          delete patch.avatarUpload;
+          let newImage = null, oldImage = null, result;
+          try {
+            result = mutate(() => {
+              // Re-resolve after reading the body: concurrent persistence rollback may replace data.
+              const current = auth(req); oldImage = avatarImageId(current.avatarImage);
+              if (thumbnail) patch.avatarImage = newImage = avatars.write(thumbnail);
+              else if (Object.hasOwn(patch, 'avatar') && oldImage) patch.avatarImage = null;
+              Object.assign(current, patch);
+              const rooms = Object.values(store.data.rooms).filter(room => Object.hasOwn(room.members, current.id));
+              for (const room of rooms) service.touch(room);
+              return { user: publicUser(current), roomCodes: rooms.map(room => room.code) };
+            });
+          } catch (error) {
+            // An image must never become visible before its profile update is durable.
+            if (newImage) try { avatars.remove(newImage); } catch { /* A later maintenance pass may remove an unreachable encrypted file. */ }
+            throw error;
+          }
+          if (store.lastSaveDurable && oldImage && oldImage !== result.user.avatarImage) try { avatars.remove(oldImage); } catch { /* A failed cleanup must not roll back a committed profile. */ }
           for (const code of result.roomCodes) broadcast(code);
           return send(res, 200, { user: result.user });
         }

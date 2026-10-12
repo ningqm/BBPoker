@@ -26,6 +26,8 @@ BBPoker可将已经结束的无限注德州扑克记录导出成 bulk PHH 文件
 
 ## 小游戏与独立退款
 
+0.5.0 的炸弹池使用等额前注和零盲注，直接从翻牌开始。PHH 的标准无限注德州没有“跳过翻前下注”开关，导出会加入不改变积分的翻前过牌，并用 `_bbpoker_bomb_pot` 和 `_bbpoker_synthetic_preflop_checks` 标记这些仅供格式兼容的步骤。它们不是真实玩家决策，也不进入 BBPoker 的 VPIP / PFR 统计。时间牌使用记录不转换为扑克下注动作；需要原始记录时使用 JSON 导出。
+
 标准 `starting_stacks` 是进入本手德州时可用的积分：蘑菇入池和鱿鱼预留已在此前扣除。`finishing_stacks = startingStack + net` 只计算这手德州的变化，不能直接使用包含小游戏结算的房间余额。
 
 小游戏仅存为 PHH 允许的下划线自定义字段：
@@ -56,6 +58,7 @@ node --test test/phh.test.js
 python3.13 -m venv /tmp/tongzhuo-phh-check
 /tmp/tongzhuo-phh-check/bin/python -m pip install --index-url https://pypi.org/simple pokerkit==0.7.6
 POKERKIT_PYTHON=/tmp/tongzhuo-phh-check/bin/python node --test test/phh.test.js
+POKERKIT_PYTHON=/tmp/tongzhuo-phh-check/bin/python node --test test/room-options.test.js
 ```
 
 2026-09-29 已用官方 PyPI 的 **PokerKit 0.7.6**、Python 3.13 实际验证：8 手能被官方 `HandHistory.loads_all()` 解析，其中 7 手完整牌例回放后的最终德州积分逐人一致，涵盖单挑、多人稀疏座位、弃牌、部分亮牌、主池/边池、全下跑牌、只有盲注的全下、真实存档恢复后继续完成的牌局、超时过牌，以及与小游戏分账隔离。第 8 手故意隐藏一张摊牌底牌，仅验证格式与未知牌保存，不宣称能够重算其胜负。

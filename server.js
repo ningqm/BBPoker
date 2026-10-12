@@ -131,7 +131,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         const ip = clientIp(req, trustProxy); limited(`ip:${ip}`, 600);
         checkOrigin(req, res);
         if (req.method === 'OPTIONS') { if (!req.headers.origin) fail('缺少请求来源', 400); res.writeHead(204, { 'Cache-Control': 'no-store' }); return res.end(); }
-        if (path === '/api/health' && req.method === 'GET') return send(res, 200, { ok: true, app: 'BBPoker', version: '0.4.1', time: now() });
+        if (path === '/api/health' && req.method === 'GET') return send(res, 200, { ok: true, app: 'BBPoker', version: '0.4.2', time: now() });
         if (path === '/api/fairness' && req.method === 'GET') return send(res, 200, fairnessInfo);
         if (path === '/api/source/poker.js' || path === '/api/source/fairness.js') {
           if (req.method !== 'GET') fail('方法不支持', 405);

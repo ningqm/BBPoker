@@ -38,7 +38,16 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
   let board = [], street = 'preflop', pot = 0;
   for (const event of hand.log.slice(0, index)) {
     const p = byId.get(event.playerId);
-    if (event.type === 'street') {
+    if (event.type === 'allInLock') {
+      for (const id of hand.allIn?.playerIds ?? []) {
+        const player = byId.get(id), original = hand.players.find(p => p.id === id);
+        if (player && original) player.cards = [...original.cards];
+      }
+    } else if (event.type === 'runoutCard') {
+      if (!Array.isArray(event.board)) throw new Error('跑牌记录无效');
+      if (!board.length) for (const player of players) { player.bet = 0; player.lastAction = null; }
+      board = [...event.board]; street = event.street;
+    } else if (event.type === 'street') {
       if (!streets.has(event.street) || !Array.isArray(event.board)) throw new Error('牌谱轮次记录无效');
       street = event.street;
       board = [...event.board];
@@ -71,7 +80,8 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
     }
     // timeout/reconnect are informational; their actual action is a separate row.
   }
-  return { index, total, street: complete ? 'complete' : street, board, pot,
+  const equity = (hand.equityFrames ?? []).filter(frame => frame.logSeq <= index).at(-1)?.equity ?? null;
+  return { index, total, equity, street: complete ? 'complete' : street, board, pot,
     complete, lastEvent: index ? { ...hand.log[index - 1] } : null, players };
 }
 

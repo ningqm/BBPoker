@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>BBPoker</title>
+  <rect width="128" height="128" rx="28" fill="#146A58"/>
+  <path d="M22 30h18c14 0 22 6 22 17 0 7-4 12-9 14 7 2 11 8 11 16 0 13-9 21-24 21H22V30Zm13 12v15h4c7 0 10-3 10-8s-3-7-10-7h-4Zm0 27v17h5c7 0 11-3 11-9s-4-8-11-8h-5Z" fill="#A9D9C5"/>
+  <path d="M68 30h18c14 0 22 6 22 17 0 7-4 12-9 14 7 2 11 8 11 16 0 13-9 21-24 21H68V30Zm13 12v15h4c7 0 10-3 10-8s-3-7-10-7h-4Zm0 27v17h5c7 0 11-3 11-9s-4-8-11-8h-5Z" fill="#FFFDF5"/>
+</svg>

@@ -74,3 +74,90 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
   return { index, total, street: complete ? 'complete' : street, board, pot,
     complete, lastEvent: index ? { ...hand.log[index - 1] } : null, players };
 }
+
+export const REPLAY_SPEEDS = Object.freeze([0.5, 1, 1.5, 2, 4]);
+
+// Playback only advances a cursor. The server-filtered hand stays in the view,
+// and replaySnapshot remains the single source for cards, stacks and the pot.
+export function createReplayPlayback({ total = 0, speed = 1, onChange = () => {},
+  setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  total = Number.isSafeInteger(total) && total > 0 ? total : 0;
+  speed = REPLAY_SPEEDS.includes(speed) ? speed : 1;
+  let index = 0, playing = false, scrubbing = false, resumeAfterScrub = false;
+  let timer = null, generation = 0, disposed = false;
+  const snapshot = () => ({ index, total, speed, playing, scrubbing, ended: index === total });
+  const notify = () => { if (!disposed) onChange(snapshot()); };
+  function cancelTimer() {
+    generation++;
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  }
+  function schedule() {
+    if (disposed || !playing || index >= total) return;
+    const scheduledGeneration = generation;
+    timer = setTimer(() => {
+      // A cleared timeout can already be queued by the browser. Never allow it
+      // to advance a later hand, a paused replay or a newly positioned cursor.
+      if (disposed || !playing || scheduledGeneration !== generation) return;
+      timer = null;
+      index++;
+      if (index === total) playing = false;
+      notify();
+      // onChange may close, pause, seek or change speed. Do not queue a second
+      // timeout after any of those actions. There is no background catch-up.
+      if (scheduledGeneration === generation) schedule();
+    }, 1000 / speed);
+  }
+  function play() {
+    if (disposed || !total || playing) return false;
+    cancelTimer();
+    scrubbing = false; resumeAfterScrub = false;
+    if (index === total) index = 0;
+    playing = true;
+    schedule(); notify();
+    return true;
+  }
+  function pause() {
+    if (disposed) return false;
+    const changed = playing || scrubbing;
+    playing = false; scrubbing = false; resumeAfterScrub = false;
+    cancelTimer();
+    if (changed) notify();
+    return changed;
+  }
+  function seek(requestedIndex) {
+    if (disposed || !Number.isFinite(requestedIndex)) return false;
+    const next = Math.max(0, Math.min(total, Math.floor(requestedIndex)));
+    const changed = next !== index || playing;
+    cancelTimer(); playing = false; index = next;
+    if (!scrubbing) resumeAfterScrub = false;
+    if (changed) notify();
+    return changed;
+  }
+  function beginScrub() {
+    if (disposed || scrubbing) return false;
+    resumeAfterScrub = playing; scrubbing = true; playing = false;
+    cancelTimer(); notify();
+    return true;
+  }
+  function endScrub({ resume = true } = {}) {
+    if (disposed || !scrubbing) return false;
+    const shouldResume = resume && resumeAfterScrub && index < total;
+    scrubbing = false; resumeAfterScrub = false;
+    if (shouldResume) play(); else notify();
+    return true;
+  }
+  function setSpeed(next) {
+    if (disposed || !REPLAY_SPEEDS.includes(next) || next === speed) return false;
+    speed = next; cancelTimer();
+    if (playing) schedule();
+    notify();
+    return true;
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true; playing = false; scrubbing = false; resumeAfterScrub = false;
+    cancelTimer();
+  }
+  return { snapshot, play, pause, seek, beginScrub, endScrub, setSpeed, dispose };
+}

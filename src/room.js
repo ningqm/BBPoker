@@ -5,7 +5,7 @@ import { planEntry, commitEntry, needsEntry, entryState, setEntryMode, markEntry
 import { avatarImageId } from './avatar.js';
 import { calculateEquity } from './equity.js';
 import { aggregateAnalytics } from './analytics.js';
-import { recordFilters, resultMatches, recordTotals, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
+import { recordFilters, resultMatches, handBigBlind, holeMatches, recordTotals, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
 
 // At most 30 members can fund a room; keep even their summed ledger safe.
 const MAX_TOTAL_BUYIN = Math.floor(Number.MAX_SAFE_INTEGER / 30);
@@ -718,7 +718,7 @@ export class RoomService {
   }
   summary(h, userId) {
     const p = h.players.find(x => x.id === userId);
-    return { id: h.id, number: h.number, at: h.at, board: [...h.board], profit: p ? p.stack - p.startingStack : 0, miniProfit: h.miniChanges?.[userId] ?? 0,
+    return { id: h.id, number: h.number, at: h.at, bigBlind: handBigBlind(h), board: [...h.board], profit: p ? p.stack - p.startingStack : 0, miniProfit: h.miniChanges?.[userId] ?? 0,
       rabbit: this.rabbitFor(h, { summary: true }),
       winners: h.result.mainWinnerIds.map(id => ({ id, name: h.players.find(x => x.id === id)?.name ?? '朋友', amount: h.result.payouts[id] ?? 0 })) };
   }
@@ -799,9 +799,10 @@ export class RoomService {
     const cursor = handCursor(before), favoriteIds = new Set(this.user(userId)?.favoriteHands ?? []), count = Number(limit), filter = recordFilters(options);
     const filtered = this.db.hands.filter(h => {
       const p = h.players.find(p => p.id === userId);
-      return h.status === 'complete' && (p || includeObserved) && (!room || h.roomCode === room) && (favorites !== '1' || favoriteIds.has(h.id))
+      return h.status === 'complete' && (p || includeObserved && Boolean(this.db.rooms[h.roomCode]?.members[userId])) && (!room || h.roomCode === room) && (favorites !== '1' || favoriteIds.has(h.id))
         && Date.parse(h.at) >= filter.start && Date.parse(h.at) <= filter.end
-        && resultMatches((p ? p.stack - p.startingStack : 0) + (h.miniChanges?.[userId] ?? 0), filter.result)
+        && resultMatches((p ? p.stack - p.startingStack : 0) + (h.miniChanges?.[userId] ?? 0), filter.result, filter.minBB, handBigBlind(h))
+        && holeMatches(p?.cards, filter)
         && (filter.type === 'all' || Boolean(h.bombPot) === (filter.type === 'bomb'))
         && (!filter.q || `${h.number} ${h.id} ${h.roomName}`.toLocaleLowerCase('zh-CN').includes(filter.q));
     });
@@ -810,7 +811,7 @@ export class RoomService {
     const page = matches.slice(0, count), last = page.at(-1);
     return { hands: page.map(h => {
       const p = h.players.find(p => p.id === userId), net = p ? p.stack - p.startingStack : 0, miniNet = h.miniChanges?.[userId] ?? 0;
-      return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, board: [...h.board], cards: p ? [...p.cards] : [null, null], participated: Boolean(p),
+      return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, bigBlind: handBigBlind(h), board: [...h.board], cards: p ? [...p.cards] : [null, null], participated: Boolean(p),
         rabbit: this.rabbitFor(h, { summary: true }),
         net, miniNet, totalNet: net + miniNet, pot: (h.result?.pots ?? []).reduce((sum, pot) => sum + pot.amount, 0), bombPot: Boolean(h.bombPot), favorite: favoriteIds.has(h.id) };
     }), totals, nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.at, id: last.id })).toString('base64url') : null };

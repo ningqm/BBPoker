@@ -19,14 +19,51 @@ function boundary(value, end = false) {
 export function recordFilters(input = {}) {
   const start = boundary(input.from), end = boundary(input.to, true);
   if (start > end) fail('开始日期不能晚于结束日期');
-  const result = choice(input.result, ['all', 'win', 'loss', 'even'], '盈亏筛选');
+  const result = choice(input.result, ['all', 'win', 'loss', 'even', 'winOver', 'lossOver'], '盈亏筛选');
+  const minBB = thresholdBB(input.minBB, result === 'winOver' || result === 'lossOver');
+  const holeRanks = startingRanks(input.holeRanks), holeType = choice(input.holeType, ['all', 'pair', 'suited', 'offsuit'], '起手牌类型');
   const type = choice(input.type, ['all', 'holdem', 'bomb'], '牌局类型');
   const status = choice(input.status, ['all', 'active', 'closed'], '对局状态');
   if (!optional(input.q) && (typeof input.q !== 'string' || [...input.q].length > 80)) fail('搜索内容最多 80 字');
   const q = (input.q || '').trim().toLocaleLowerCase('zh-CN');
-  return { start, end, result, type, status, q };
+  return { start, end, result, minBB, holeRanks, holeType, type, status, q };
 }
-export function resultMatches(net, result) {
+function thresholdBB(value, required = false) {
+  if (optional(value)) { if (required) fail('请输入盈亏筛选的 BB 阈值'); return null; }
+  if (!['string', 'number'].includes(typeof value) || !/^\d+(?:\.\d{1,2})?$/.test(String(value))
+    || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1000000000) fail('BB 阈值需要是 0–1000000000 的数字，最多两位小数');
+  return Number(value);
+}
+const RANKS = '23456789TJQKA';
+function startingRanks(value) {
+  if (optional(value)) return '';
+  if (typeof value !== 'string') fail('起手牌点数需要是 1–2 个 23456789TJQKA 字母或数字');
+  const ranks = value.trim().toUpperCase();
+  if (!/^[23456789TJQKA]{1,2}$/.test(ranks)) fail('起手牌点数需要是 1–2 个 23456789TJQKA 字母或数字');
+  return [...ranks].sort((a, b) => RANKS.indexOf(b) - RANKS.indexOf(a)).join('');
+}
+export function handBigBlind(hand) {
+  const bb = hand.settings?.bigBlind ?? hand.bigBlind;
+  return Number.isSafeInteger(bb) && bb > 0 ? bb : null;
+}
+/** Only the viewer's own dealt cards may be passed here, never public or peer cards. */
+export function holeMatches(cards, filter) {
+  if (!filter.holeRanks && filter.holeType === 'all') return true;
+  if (!Array.isArray(cards) || cards.length !== 2 || !cards.every(card => typeof card === 'string' && /^[23456789TJQKA][cdhs]$/.test(card)) || cards[0] === cards[1]) return false;
+  const pair = cards[0][0] === cards[1][0], suited = cards[0][1] === cards[1][1];
+  if (filter.holeType === 'pair' && !pair || filter.holeType === 'suited' && (pair || !suited) || filter.holeType === 'offsuit' && (pair || suited)) return false;
+  if (!filter.holeRanks) return true;
+  const ranks = cards.map(card => card[0]);
+  return filter.holeRanks.length === 1 ? ranks.includes(filter.holeRanks) : startingRanks(ranks.join('')) === filter.holeRanks;
+}
+export function resultMatches(net, result, minBB = null, bigBlind = null) {
+  if (result === 'winOver' || result === 'lossOver') {
+    if (!Number.isSafeInteger(net) || !Number.isSafeInteger(bigBlind) || bigBlind <= 0 || minBB === null) return false;
+    if (result === 'winOver' ? net <= 0 : net >= 0) return false;
+    // Chips are integral; compare exact hundredths of BB without division or
+    // floating-point rounding at the strict greater-than boundary.
+    return BigInt(Math.abs(net)) * 100n > BigInt(Math.round(minBB * 100)) * BigInt(bigBlind);
+  }
   return result === 'all' || (result === 'win' && net > 0) || (result === 'loss' && net < 0) || (result === 'even' && net === 0);
 }
 export function recordTotals(rows, holdem = row => row.holdemNet, mini = row => row.miniNet) {
@@ -108,7 +145,7 @@ export function sessionLibrary(db, userId, input = {}) {
   for (const [key, row] of squidSettlementMap(db.ledger)) if (grouped.has(row.roomCode)) grouped.get(row.roomCode).settlements.set(key, row);
   const sessions = rooms.map(room => sessionRecord(db, room, userId, grouped.get(room.code)))
     .filter(row => (row.handCount > 0 || row.playerCount > 0) && Date.parse(row.at) >= filter.start && Date.parse(row.at) <= filter.end
-      && resultMatches(row.meNet, filter.result) && (filter.status === 'all' || row.status === filter.status)
+      && resultMatches(row.meNet, filter.result, filter.minBB, row.bigBlind) && (filter.status === 'all' || row.status === filter.status)
       && (!filter.q || `${row.name} ${row.code}`.toLocaleLowerCase('zh-CN').includes(filter.q)));
   const totals = recordTotals(sessions, r => r.meHoldemNet, r => r.meMiniNet);
   const { page, nextCursor } = pageRecords(sessions.map(s => ({ ...s, id: s.code })), input);

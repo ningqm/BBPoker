@@ -1,16 +1,18 @@
+import * as records from '../public/records.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequestGuard } from '../public/platform.js';
+import { createReplayPlayback } from '../public/replay.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function harness(){
   const calls=[],toasts=[],draws=[];let client,counter=0;
-  const context=vm.createContext({feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible'},
+  const context=vm.createContext({records,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
-    render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},
+    render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
     openModal(title,body,kind){client.state.modal={kind,title};},
     dialog:{open:false,innerHTML:''},clearInterval(){},

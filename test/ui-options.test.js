@@ -4,20 +4,22 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {settingsFor} from '../src/room.js';
 import {avatarMarkup,createAvatarCache} from '../public/avatar.js';
+import {reusableRoomSettings} from '../public/room-config.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
-function harness(){
+function harness(overrides={}){
   const modals=[];
-  const context=vm.createContext({avatarMarkup,createAvatarCache,apiUrl:path=>path,
+  const context=vm.createContext({avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+    requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
-    state:{user:{name:'小鱼'},timeOffset:0},
-    openModal(title,body,kind){modals.push({title,body,kind});},toast(message){throw new Error(message);},
+    state:{user:{name:'小鱼'},rooms:[],timeOffset:0},
+    openModal(title,body,kind){modals.push({title,body,kind});context.state.modal={kind};},toast(message){throw new Error(message);},...overrides,
   });
   vm.runInContext([
     section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),
     section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
-    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,buyinModal,roomClock,miniCutoff,avatar,seatActions};',
+    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,roomClock,miniCutoff,avatar,seatActions};',
   ].join('\n'),context);
   return {...context.client,modals};
 }
@@ -85,4 +87,42 @@ test('the final hand can still be voluntarily shown after a timed table closes a
   assert.match(c.seatActions(room,me),/data-action="show"/);
   assert.doesNotMatch(c.seatActions(room,me),/data-action="(?:buyin|sitout|stand)"/);
   assert.equal(c.seatActions(room,{seat:null,inHand:false}),'');
+});
+
+test('creation keeps only name, blinds and duration outside Advanced; expanding preserves field values',()=>{
+  const c=harness(),settings={...c.defaults,squid:true,squidUnitBB:7,bombPot:true,bombAnteBB:4,timeBankCards:8};
+  const closed=c.settingFields(settings,{roomName:'新桌'}),opened=c.settingFields(settings,{roomName:'新桌',advancedOpen:true});
+  assert.match(closed,/<details[^>]*data-advanced-settings\s*>/);assert.match(opened,/<details[^>]*data-advanced-settings open>/);
+  const advanced=closed.slice(closed.indexOf('<details'),closed.indexOf('</details>'));
+  for(const key of ['squid','bombPot','minBuyInBB','maxBuyInBB','maxPlayers','actionSeconds','timeBankCards','timeBankSeconds'])assert.match(advanced,new RegExp('name="'+key+'"'));
+  assert.deepEqual(c.readSettings(formFrom(closed)),c.readSettings(formFrom(opened)));
+  assert.match(closed,/鱿鱼 7 BB/);assert.match(closed,/炸弹池每 10 手 \/ 4 BB/);
+});
+function reuseFixture(c,{open=true}={}){
+  c.state.rooms=[{code:'123456',name:'上次的局',status:'closed'}];c.createModal();
+  const form=formFrom(c.modals.at(-1).body),selector={value:'123456',disabled:false,focus(){}},status={textContent:''},submit={disabled:false};
+  form.dataset={};form.isConnected=true;form.fields.get('name').value='我微调的新局';
+  let replacement='';const fields={disabled:false,set innerHTML(html){replacement=html;const parsed=formFrom(html);form.fields.clear();for(const [k,v]of parsed.fields)form.fields.set(k,v);}};
+  form.querySelector=selectorText=>({'#reuse-room-settings':selector,'.settings-fields':fields,'[type="submit"]':submit,'[data-settings-reuse-status]':status,'[data-advanced-settings]':{open}}[selectorText]||null);
+  const button={disabled:false,closest:()=>form};return {form,selector,status,submit,fields,button,get replacement(){return replacement;}};
+}
+test('loading an authorized prior room preserves the new name and Advanced state, then submits only fresh settings',async()=>{
+  const calls=[],c=harness({api:async path=>{calls.push(path);return{code:'123456',invite:'private',players:[{id:'friend'}],endsAt:123,settings:{...c.defaults,smallBlind:2,bigBlind:5,maxBuyInBB:null,squid:true,squidUnitBB:6,durationMinutes:120}};}}),f=reuseFixture(c);
+  await c.loadPreviousRoomSettings(f.button);assert.deepEqual(calls,['/api/rooms/123456']);
+  assert.equal(f.form.fields.get('name').value,'我微调的新局');assert.match(f.replacement,/data-advanced-settings open/);assert.doesNotMatch(f.replacement,/private|friend|name="invite"/);
+  const settings=c.readSettings(f.form);assert.equal(settings.bigBlind,5);assert.equal(settings.maxBuyInBB,null);assert.equal(settings.squidUnitBB,6);assert.equal(settings.durationMinutes,120);assert.doesNotThrow(()=>settingsFor(settings));
+  assert.equal(f.fields.disabled,false);assert.equal(f.submit.disabled,false);assert.match(f.status.textContent,/已沿用/);
+});
+test('pending config loads block duplicate reads and a closed or superseded form ignores late data',async()=>{
+  let release;let calls=0;const c=harness({api:()=>{calls++;return new Promise(resolve=>{release=resolve;});}}),f=reuseFixture(c,{open:false});
+  const pending=c.loadPreviousRoomSettings(f.button);assert.equal(f.submit.disabled,true);assert.equal(f.fields.disabled,true);
+  await c.loadPreviousRoomSettings(f.button);assert.equal(calls,1);
+  f.form.isConnected=false;c.createModal();release({settings:{...c.defaults,bigBlind:20}});await pending;
+  assert.equal(f.replacement,'');assert.equal(f.form.fields.get('bigBlind').value,'10');assert.equal(f.submit.disabled,false);
+});
+test('failed or unauthorized prior-room reads leave the current edited settings intact',async()=>{
+  const messages=[],c=harness({api:async()=>{throw new Error('请先通过邀请链接加入房间');},toast:text=>messages.push(text)}),f=reuseFixture(c);
+  f.form.fields.get('smallBlind').value='10';f.form.fields.get('bigBlind').value='20';await c.loadPreviousRoomSettings(f.button);
+  assert.equal(f.form.fields.get('bigBlind').value,'20');assert.equal(f.form.fields.get('name').value,'我微调的新局');assert.equal(f.replacement,'');assert.equal(f.submit.disabled,false);assert.match(messages[0],/邀请链接/);
+  f.selector.value='999999';await c.loadPreviousRoomSettings({...f.button,closest:()=>f.form});assert.equal(f.replacement,'');
 });

@@ -1,9 +1,9 @@
 {
   "name": "bbpoker",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
-  "description": "Invite-only, points-only, single-table Texas Hold'em for friends",
+  "description": "Points-only Texas Hold'em for friends with public or invited tables",
   "engines": {
     "node": ">=22"
   },
@@ -11,7 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js && node --check src/records.js && node --check public/room-config.js && node --check public/records.js && node --check src/equity.js && node --check src/analytics.js && node --check public/stats.js && node --check public/table-fun.js && node --check src/lobby.js && node --check public/lifecycle.js"
+    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js && node --check src/records.js && node --check public/room-config.js && node --check public/records.js && node --check src/equity.js && node --check src/analytics.js && node --check public/stats.js && node --check public/table-fun.js && node --check src/lobby.js && node --check public/lifecycle.js && node --check src/entry-blinds.js"
   },
   "license": "UNLICENSED"
 }

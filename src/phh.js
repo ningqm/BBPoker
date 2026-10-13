@@ -7,7 +7,7 @@
 
 const CARD = /^[2-9TJQKA][cdhs]$/;
 const PLAY_ACTIONS = new Set(['fold', 'check', 'call', 'raise', 'allin']);
-const PASSIVE_EVENTS = new Set(['ante', 'smallBlind', 'bigBlind', 'refund', 'payout', 'timeout', 'reconnect']);
+const PASSIVE_EVENTS = new Set(['ante', 'smallBlind', 'bigBlind', 'refund', 'payout', 'timeout', 'reconnect', 'allInLock', 'runoutCard']);
 
 // JSON string escapes are valid TOML basic-string escapes. Normalize lone
 // surrogates and escape DEL, which TOML does not allow literally in a string.

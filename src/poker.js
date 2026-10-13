@@ -124,16 +124,9 @@ function nextStreet(hand) {
   log(hand, { type: 'street', board: [...hand.board] });
 }
 
-function settle(hand) {
-  refundUncalled(hand);
+function settlementPots(hand) {
   const contenders = hand.players.filter(p => !p.folded);
-  const showdown = contenders.length > 1;
-  const evaluations = new Map(showdown ? contenders.map(p => [p.id, evaluate([...p.cards, ...hand.board])]) : []);
-  const result = {
-    pots: [], payouts: Object.fromEntries(hand.players.map(p => [p.id, 0])),
-    mainWinnerIds: [], handNames: {}, showdown,
-  };
-  for (const [id, value] of evaluations) result.handNames[id] = value.name;
+  const pots = [];
   const levels = [...new Set(hand.players.map(p => p.contributed).filter(n => n > 0))].sort((a, b) => a - b);
   let previous = 0;
   for (const level of levels) {
@@ -150,6 +143,23 @@ function settle(hand) {
     // last live hand if nobody remains eligible for that contribution tier.
     if (!eligible.length && contenders.length === 1) eligible = contenders;
     if (!eligible.length) throw new Error('底池没有可领奖玩家');
+    pots.push({ amount, eligibleIds: eligible.map(p => p.id) });
+  }
+  return pots;
+}
+
+function settle(hand) {
+  refundUncalled(hand);
+  const contenders = hand.players.filter(p => !p.folded);
+  const showdown = contenders.length > 1;
+  const evaluations = new Map(showdown ? contenders.map(p => [p.id, evaluate([...p.cards, ...hand.board])]) : []);
+  const result = {
+    pots: [], payouts: Object.fromEntries(hand.players.map(p => [p.id, 0])),
+    mainWinnerIds: [], handNames: {}, showdown,
+  };
+  for (const [id, value] of evaluations) result.handNames[id] = value.name;
+  for (const { amount, eligibleIds } of settlementPots(hand)) {
+    const eligible = contenders.filter(p => eligibleIds.includes(p.id));
     let winners = eligible;
     if (showdown && eligible.length > 1) {
       let best = evaluations.get(eligible[0].id).tuple;
@@ -174,6 +184,19 @@ function settle(hand) {
   hand.result = result;
   hand.status = 'complete';
   hand.actingId = null;
+  if (hand.runout) hand.runout.active = false;
+}
+
+function lockAllIn(hand) {
+  if (hand.allInLock) return;
+  // Match settlement's unmatched-tier refunds before freezing the EV cost basis.
+  const pots = settlementPots(hand);
+  const players = hand.players.filter(p => !p.folded).map(p => ({ id: p.id, seat: p.seat, cards: [...p.cards], contributed: p.contributed }));
+  hand.allInLock = {
+    version: 1, street: hand.street, board: [...hand.board], players, pots,
+    buttonSeat: hand.buttonSeat, logSeq: hand.log.length + 1,
+  };
+  log(hand, { type: 'allInLock', board: [...hand.board], playerIds: players.map(p => p.id) });
 }
 
 function advance(hand, afterSeat) {
@@ -191,15 +214,24 @@ function advance(hand, afterSeat) {
       return;
     }
     refundUncalled(hand);
+    if (mobile.length <= 1) lockAllIn(hand);
     if (hand.street === 'river') { settle(hand); return; }
+    if (mobile.length <= 1) {
+      if (hand.deferredRunout) {
+        hand.actingId = null;
+        hand.runout = { active: true, fromBoardCount: hand.board.length };
+        return;
+      }
+    }
     nextStreet(hand);
     afterSeat = hand.buttonSeat;
   }
 }
 
-export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, deck } = {}) {
+export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, deck, deferredRunout = false } = {}) {
   if (!Array.isArray(players) || players.length < 2 || players.length > 9) throw new Error('需要 2 至 9 位玩家');
   if (typeof bombPot !== 'boolean' || (bombPot && !integer(ante, 1))) throw new Error('炸弹池前注无效');
+  if (typeof deferredRunout !== 'boolean') throw new Error('跑牌设置无效');
   if (!integer(smallBlind, 1) || !integer(bigBlind, smallBlind) || !integer(ante)) throw new Error('盲注或前注无效');
   if (players.some(p => !p || typeof p.id !== 'string' || !p.id || !integer(p.seat) || !integer(p.stack, 1)) ||
       new Set(players.map(p => p.id)).size !== players.length || new Set(players.map(p => p.seat)).size !== players.length ||
@@ -208,14 +240,14 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   const shuffled = deck === undefined ? shuffleDeck() : [...deck];
   if (shuffled.length !== 52 || new Set(shuffled).size !== 52 || shuffled.some(c => !CARDS.includes(c))) throw new Error('牌堆必须含 52 张不同扑克牌');
   const hand = {
-    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot,
+    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot, deferredRunout,
     smallBlindSeat: null, bigBlindSeat: null, board: [], boardIndices: [],
     deck: Object.freeze(shuffled), deckCursor: 0, burnIndices: [],
     players: players.map(p => ({ id: p.id, name: p.name ?? '', seat: p.seat,
       startingStack: p.stack, stack: p.stack, cards: [], cardIndices: [], folded: false,
       allIn: false, bet: 0, contributed: 0, _acted: false, lastActedBet: null, reopenAt: null,
     })).sort((a, b) => a.seat - b.seat),
-    actingId: null, currentBet: bigBlind, minRaise: bigBlind, log: [], result: null,
+    actingId: null, currentBet: bigBlind, minRaise: bigBlind, log: [], result: null, allInLock: null, runout: null,
   };
   const order = clockwise(hand, buttonSeat);
   const sb = players.length === 2 ? hand.players.find(p => p.seat === buttonSeat) : order[0];
@@ -234,6 +266,26 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   }
   if (bombPot) nextStreet(hand);
   advance(hand, bombPot ? buttonSeat : bb.seat);
+  return hand;
+}
+
+/** Draw exactly one visible card after betting is locked; no equity code sees the deck. */
+export function advanceRunout(hand) {
+  if (hand.status !== 'playing' || !hand.runout?.active) return hand;
+  if (hand.actingId !== null || !hand.allInLock || hand.board.length >= 5) throw new Error('跑牌状态无效');
+  const count = hand.board.length;
+  if (count === 0 || count === 3 || count === 4) {
+    hand.street = count === 0 ? 'flop' : count === 3 ? 'turn' : 'river';
+    hand.burnIndices.push(draw(hand).index);
+    hand.currentBet = 0;
+    hand.minRaise = hand.bigBlind;
+    for (const p of hand.players) { p.bet = 0; p._acted = false; p.lastActedBet = null; p.reopenAt = null; }
+  }
+  const { card, index } = draw(hand);
+  hand.board.push(card);
+  hand.boardIndices.push(index);
+  log(hand, { type: hand.board.length < 3 ? 'runoutCard' : 'street', board: [...hand.board] });
+  if (hand.board.length === 5) settle(hand);
   return hand;
 }
 

@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createHand, applyAction, availableActions } from './poker.js';
+import { createHand, applyAction, availableActions, advanceRunout } from './poker.js';
 import { commitDeck, cardProof, VERIFICATION_VERSION, hash } from './fairness.js';
 import { avatarImageId } from './avatar.js';
+import { calculateEquity } from './equity.js';
+import { aggregateAnalytics } from './analytics.js';
 import { recordFilters, resultMatches, recordTotals, sessionRecord, sessionLibrary } from './records.js';
 
 const MAX_BUYIN = 1000000000;
@@ -273,7 +275,7 @@ export class RoomService {
     this.refreshTimeBanks(r, timestamp);
     const bombPot = s.bombPot && mayStartMini && (r.handNumber + 1) % s.bombEveryHands === 0;
     const h = createHand({ id: randomUUID(), players: players.map(m => ({ id: m.id, name: this.user(m.id).name, seat: m.seat, stack: m.stack })), buttonSeat, smallBlind: s.smallBlind, bigBlind: s.bigBlind,
-      bombPot, ante: bombPot ? s.bombAnteBB * s.bigBlind : 0 });
+      bombPot, ante: bombPot ? s.bombAnteBB * s.bigBlind : 0, deferredRunout: true });
     h.number = ++r.handNumber; h.at = new Date(timestamp).toISOString(); h.roomCode = r.code; h.roomName = r.name; h.settings = copy(s); h.shown = {};
     h.miniChanges = Object.fromEntries(players.map(m => [m.id, 0])); h.timeBankUses = []; h.audit = commitDeck(h);
     h.miniBefore = copy(r.mini); r.hand = h; r.buttonSeat = buttonSeat; r.status = 'playing';
@@ -281,12 +283,28 @@ export class RoomService {
   }
   afterAction(r, timestamp = Date.now()) {
     const h = r.hand;
+    this.recordEquity(h);
     for (const p of h.players) r.members[p.id].stack = p.stack;
     if (h.status === 'complete') {
       r.deadline = null; r.status = 'waiting'; this.finish(r);
       if (r.endsAt != null && timestamp >= r.endsAt) this.close(r, timestamp);
       else { r.autoDealPaused ??= false; this.reconcileAutoDeal(r, timestamp); }
+    } else if (h.runout?.active) {
+      r.deadline = null; h.runout.nextAt = timestamp + (h.board.length === h.allInLock.board.length ? 1800 : 1500);
     } else r.deadline = timestamp + r.settings.actionSeconds * 1000;
+  }
+  recordEquity(h) {
+    if (!h.allInLock) return;
+    // This lock contains only exposed contenders. Never pass the deck, burns or folded cards.
+    h.shown ??= {};
+    for (const p of h.allInLock.players) h.shown[p.id] = [0, 1];
+    h.allInEquity ??= calculateEquity(h.allInLock);
+    h.equityFrames ??= [];
+    if (!h.equityFrames.some(frame => frame.boardCount === h.board.length)) {
+      const equity = h.board.length === h.allInLock.board.length ? h.allInEquity : calculateEquity({ ...h.allInLock, board: h.board });
+      const reveal = [...h.log].reverse().find(e => ['street','runoutCard','allInLock'].includes(e.type));
+      h.equityFrames.push({ boardCount: h.board.length, board: [...h.board], logSeq: reveal?.seq ?? h.log.length, equity });
+    }
   }
   autoBlockReason(r, timestamp = Date.now()) {
     if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return null;
@@ -341,6 +359,7 @@ export class RoomService {
   }
   needsTick(r, timestamp = Date.now()) {
     if (r.status === 'closed') return false;
+    if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) return true;
     if (r.hand?.status === 'playing' && r.deadline != null && timestamp >= r.deadline) return true;
     if (r.endsAt != null && timestamp >= r.endsAt) return r.hand?.status !== 'playing';
     const plan = this.autoPlan(r, timestamp);
@@ -352,6 +371,9 @@ export class RoomService {
     if (!this.needsTick(r, timestamp)) return false;
     if (r.endsAt != null && timestamp >= r.endsAt && r.hand?.status !== 'playing') { this.close(r, timestamp); this.touch(r); return true; }
     const refreshed = this.refreshTimeBanks(r, timestamp);
+    if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) {
+      advanceRunout(r.hand); this.afterAction(r, timestamp); this.touch(r); return true;
+    }
     if (this.timeout(r, timestamp)) return true;
     const autoChanged = this.reconcileAutoDeal(r, timestamp);
     if (r.status !== 'closed' && r.hand?.status !== 'playing' && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
@@ -413,7 +435,7 @@ export class RoomService {
     r.status = 'closed'; r.closedAt = new Date(timestamp).toISOString(); r.pending = []; r.deadline = null; r.nextHandAt = null; r.autoWaitReason = null;
   }
   timeout(r, timestamp = Date.now()) {
-    if (r.hand?.status !== 'playing' || !r.deadline || timestamp < r.deadline) return false;
+    if (r.hand?.status !== 'playing' || r.hand.runout?.active || !r.deadline || timestamp < r.deadline) return false;
     const actor = r.hand.actingId, a = availableActions(r.hand, actor);
     applyAction(r.hand, actor, a.canCheck ? 'check' : 'fold');
     r.hand.log.push({ seq: r.hand.log.length + 1, street: r.hand.street, playerId: actor, type: 'timeout', amount: 0 });
@@ -444,6 +466,7 @@ export class RoomService {
     actions.canUseTimeBank = actions.canAct && timeBankCards > 0 && Number.isFinite(r.deadline) && timestamp < r.deadline;
     actions.timeBankCards = timeBankCards; actions.timeBankSeconds = r.settings.timeBankSeconds ?? DEFAULTS.timeBankSeconds;
     const publicHand = h ? { id: h.id, number: h.number, status: h.status, street: h.street, board: [...h.board], buttonSeat: h.buttonSeat,
+      runout: h.runout ? { active: h.runout.active, nextAt: h.runout.active ? h.runout.nextAt : null } : null, equity: copy(h.equityFrames?.at(-1)?.equity ?? null),
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
     return { code: r.code, name: r.name, status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(r.settings), approvalRequired: false }, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
@@ -473,6 +496,7 @@ export class RoomService {
     const r = this.room(roomCode); this.member(r, userId);
     const h = this.db.hands.find(x => x.roomCode === roomCode && x.id === handId); if (!h) fail('牌谱不存在', 404);
     return { id: h.id, number: h.number, at: h.at, roomCode, roomName: h.roomName, settings: copy(h.settings), board: [...h.board],
+      allIn: h.allInLock ? { logSeq: h.allInLock.logSeq, playerIds: h.allInLock.players.map(p => p.id) } : null, equityFrames: copy(h.equityFrames ?? []),
       favorite: h.players.some(p => p.id === userId) && (this.user(userId)?.favoriteHands ?? []).includes(h.id),
       buttonSeat: h.buttonSeat, smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, ante: h.ante ?? 0, bombPot: h.bombPot ?? false, timeBankUses: copy(h.timeBankUses ?? []),
       players: h.players.map(p => ({ id: p.id, name: p.name, seat: p.seat, startingStack: p.startingStack, endingStack: h.endingStacks[p.id], cards: this.cardsFor(h, p, userId), folded: p.folded,
@@ -536,31 +560,9 @@ export class RoomService {
     return this.db.ledger.filter(l => l.playerId === userId && l.type === 'mushroomRefund' && (!roomCode || l.roomCode === roomCode) && Date.parse(l.at) >= start && Date.parse(l.at) <= end)
       .map(l => ({ ...copy(l), roomName: this.room(l.roomCode).name }));
   }
-  stats(userId) {
-    const hands = this.db.hands.filter(h => h.players.some(p => p.id === userId));
-    let holdemNet = 0, miniNet = 0, vpip = 0, pfr = 0, wins = 0, showdowns = 0, preflopHands = 0; const curve = [], events = [];
-    for (const h of hands) {
-      const p = h.players.find(p => p.id === userId), actions = h.log.filter(a => a.playerId === userId && a.street === 'preflop');
-      events.push({ at: h.at, handId: h.id, holdemDelta: p.stack - p.startingStack, miniDelta: h.miniChanges?.[userId] ?? 0,
-        order: this.db.ledger.findIndex(l => l.playerId === userId && l.roomCode === h.roomCode && l.type === 'holdem' && l.note === `第 ${h.number} 手德州结算`) });
-      if ((h.result.payouts[userId] ?? 0) > 0) wins++;
-      if (h.result.showdown && !p.folded) showdowns++;
-      if (!h.bombPot) {
-        preflopHands++;
-        if (actions.some(a => ['call','raise','allin'].includes(a.type) && a.amount > 0)) vpip++;
-        if (actions.some(a => a.type === 'raise' || (a.type === 'allin' && a.isRaise))) pfr++;
-      }
-    }
-    const refunds = this.db.ledger.filter(l => l.playerId === userId && l.type === 'mushroomRefund');
-    for (const refund of refunds) events.push({ at: refund.at, handId: null, holdemDelta: 0, miniDelta: refund.amount, order: this.db.ledger.indexOf(refund), adjustment: '蘑菇池退款' });
-    events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.order - b.order);
-    for (const e of events) {
-      holdemNet += e.holdemDelta; miniNet += e.miniDelta;
-      curve.push({ at: e.at, handId: e.handId, net: holdemNet + miniNet, holdemNet, miniNet, ...(e.adjustment ? { adjustment: e.adjustment } : {}) });
-    }
-    return { hands: hands.length, wins, net: holdemNet + miniNet, holdemNet, miniNet, totalBuyIn: this.db.ledger.filter(l => l.playerId === userId && l.type === 'buyin').reduce((s, l) => s + l.amount, 0),
-      vpip: preflopHands ? Math.round(vpip / preflopHands * 1000) / 10 : 0, pfr: preflopHands ? Math.round(pfr / preflopHands * 1000) / 10 : 0, preflopHands, showdowns, curve,
-      sessions: Object.values(this.db.rooms).filter(r => r.members[userId]?.totalBuyIn > 0).length };
+  stats(userId, options = {}) {
+    if (options.room) this.member(this.room(options.room), userId);
+    return aggregateAnalytics(this.db, userId, options);
   }
 }
 

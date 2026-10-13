@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createHand, applyAction, availableActions, advanceRunout } from './poker.js';
+import { createHand, applyAction, availableActions, advanceRunout, rabbitRunout } from './poker.js';
 import { commitDeck, cardProof, VERIFICATION_VERSION, hash } from './fairness.js';
 import { avatarImageId } from './avatar.js';
 import { calculateEquity } from './equity.js';
@@ -10,6 +10,7 @@ const MAX_BUYIN = 1000000000;
 const TIME_BANK_WINDOW = 30 * 60 * 1000;
 const MINI_CUTOFF = 5 * 60 * 1000;
 const AUTO_DEAL_DELAY = 5000;
+const RABBIT_START_DELAY = 1000, RABBIT_CARD_DELAY = 650, RABBIT_END_HOLD = 1300;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 200, maxBuyIn: 2000, minBuyInBB: 20, maxBuyInBB: 200,
   actionSeconds: 15, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
@@ -19,12 +20,14 @@ export const now = () => new Date().toISOString();
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const copy = x => structuredClone(x);
 const EMOTES = new Set(['nice', 'gg', 'lol', 'wow', 'thanks', 'unlucky']);
+const THROW_EMOTES = new Set(['water', 'tomato', 'pat', 'cheers']);
 const CHAT_LIMIT = 100, CHAT_ID_LIMIT = 2000, FAVORITE_LIMIT = 1000;
 const OFFLINE_WAIT = '等待入座玩家回到牌桌';
 const compareHands = (a, b) => a.at === b.at ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : a.at < b.at ? 1 : -1;
 function chatProjection(message) {
   return { id: message.id, playerId: message.playerId, name: message.name, kind: message.kind,
-    ...(message.kind === 'text' ? { text: message.text } : { emote: message.emote }), at: message.at };
+    ...(message.kind === 'text' ? { text: message.text } : { emote: message.emote }),
+    ...(message.kind === 'throw' ? { targetId: message.targetId, targetName: message.targetName } : {}), at: message.at };
 }
 function handCursor(value) {
   if (!value) return null;
@@ -107,7 +110,8 @@ export class RoomService {
     return r;
   }
   chat(user, code, input, { ip = 'local', timestamp = Date.now() } = {}) {
-    const r = this.room(code); this.member(r, user.id);
+    const r = this.room(code), sender = this.member(r, user.id);
+    if (own(input, 'auto') || own(input, 'system')) fail('不能发送系统或自动消息');
     if (typeof input.messageId !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(input.messageId)) fail('缺少消息编号，请重试');
     const key = `${user.id}:${input.messageId}`;
     if (own(r.chatIds ?? {}, key)) {
@@ -123,14 +127,20 @@ export class RoomService {
       if (!text || [...text].length > 160) fail('聊天内容需要是 1–160 个字');
       content = { text };
     } else if (input.kind === 'emote' && EMOTES.has(input.emote)) content = { emote: input.emote };
+    else if (input.kind === 'throw' && THROW_EMOTES.has(input.emote)) {
+      if (!Number.isInteger(sender.seat)) fail('请先入座，再与朋友互动');
+      if (typeof input.targetId !== 'string' || input.targetId === user.id || !own(r.members, input.targetId) || !Number.isInteger(r.members[input.targetId].seat)) fail('请选择本桌另一位已入座的朋友');
+      content = { emote: input.emote, targetId: input.targetId, targetName: this.user(input.targetId)?.name ?? '朋友' };
+    }
     else fail('不支持的表情或消息类型');
     // Keep player limits separate from the shared IP allowance, so friends on
     // the same Wi-Fi can chat. Transport metadata never supplies author or time.
-    const limits = [[`user:${user.id}`, 20], [`ip:${ip}`, 120]];
+    const limits = [[`user:${user.id}`, 20, 1000], [`ip:${ip}`, 120, 0]];
+    if (input.kind === 'throw') limits.push([`throw:${user.id}`, 12, 3000]);
     const pending = [];
-    for (const [rateKey, maximum] of limits) {
+    for (const [rateKey, maximum, interval] of limits) {
       const times = (this.chatRates.get(rateKey) ?? []).filter(t => timestamp - t < 60000);
-      if (times.length >= maximum || (rateKey.startsWith('user:') && times.length && timestamp - times.at(-1) < 1000)) fail('消息发送太快，请稍后再试', 429);
+      if (times.length >= maximum || (times.length && timestamp - times.at(-1) < interval)) fail(input.kind === 'throw' ? '互动太频繁，请稍后再试' : '消息发送太快，请稍后再试', 429);
       pending.push([rateKey, [...times, timestamp]]);
     }
     if (this.chatRates.size >= 6000) {
@@ -257,6 +267,10 @@ export class RoomService {
     this.idle(r);
     if (r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return; }
     if (r.handNumber === 0) { r.autoDealPaused = false; this.start(r, timestamp); return; }
+    if (r.hand?.rabbit?.active) {
+      this.completeRabbit(r, timestamp); r.nextHandAt = null;
+      r.autoDealPaused = false; this.reconcileAutoDeal(r, timestamp); return;
+    }
     if (Number.isFinite(r.nextHandAt) && r.nextHandAt > timestamp && !r.autoDealPaused) fail('下一手正在倒计时，请稍候', 409);
     // Old clients and pre-upgrade completed rooms resume the same server clock.
     r.autoDealPaused = false; this.reconcileAutoDeal(r, timestamp);
@@ -265,6 +279,7 @@ export class RoomService {
     this.idle(r);
     if (r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return; }
     const { players, s, squid, mayStartMini, newSquid, buttonSeat, reserve } = this.prepareStart(r, timestamp);
+    this.completeRabbit(r, timestamp);
     r.nextHandAt = null; r.autoWaitReason = null;
     if (newSquid) {
       squid.active = true; squid.round++; squid.participants = players.map(m => m.id); squid.won = []; squid.reserves = {}; squid.unit = s.squidUnit;
@@ -286,7 +301,7 @@ export class RoomService {
     this.recordEquity(h);
     for (const p of h.players) r.members[p.id].stack = p.stack;
     if (h.status === 'complete') {
-      r.deadline = null; r.status = 'waiting'; this.finish(r);
+      r.deadline = null; r.status = 'waiting'; this.finish(r, timestamp);
       if (r.endsAt != null && timestamp >= r.endsAt) this.close(r, timestamp);
       else { r.autoDealPaused ??= false; this.reconcileAutoDeal(r, timestamp); }
     } else if (h.runout?.active) {
@@ -321,7 +336,10 @@ export class RoomService {
     if (!own(r, 'autoDealPaused')) return null;
     if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return { nextHandAt: null, autoWaitReason: null };
     const autoWaitReason = this.autoBlockReason(r, timestamp);
-    return { nextHandAt: autoWaitReason ? null : (Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY), autoWaitReason };
+    const rabbit = r.hand?.rabbit;
+    const rabbitHold = rabbit?.active ? rabbit.nextAt + Math.max(0, 4 - rabbit.board.length) * RABBIT_CARD_DELAY + RABBIT_END_HOLD
+      : Number.isFinite(rabbit?.finishedAt) ? rabbit.finishedAt + RABBIT_END_HOLD : 0;
+    return { nextHandAt: autoWaitReason ? null : Math.max(Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY, rabbitHold), autoWaitReason };
   }
   reconcileAutoDeal(r, timestamp = Date.now()) {
     if (r.status !== 'closed' && r.hand?.status !== 'playing' && r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return true; }
@@ -359,6 +377,7 @@ export class RoomService {
   }
   needsTick(r, timestamp = Date.now()) {
     if (r.status === 'closed') return false;
+    if (r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt) return true;
     if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) return true;
     if (r.hand?.status === 'playing' && r.deadline != null && timestamp >= r.deadline) return true;
     if (r.endsAt != null && timestamp >= r.endsAt) return r.hand?.status !== 'playing';
@@ -374,15 +393,18 @@ export class RoomService {
     if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) {
       advanceRunout(r.hand); this.afterAction(r, timestamp); this.touch(r); return true;
     }
+    if (r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt) {
+      this.revealRabbit(r, timestamp); this.reconcileAutoDeal(r, timestamp); this.touch(r); return true;
+    }
     if (this.timeout(r, timestamp)) return true;
     const autoChanged = this.reconcileAutoDeal(r, timestamp);
-    if (r.status !== 'closed' && r.hand?.status !== 'playing' && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
+    if (r.status !== 'closed' && r.hand?.status !== 'playing' && !r.hand?.rabbit?.active && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
       this.start(r, timestamp); this.touch(r); return true;
     }
     if (refreshed || autoChanged) this.touch(r);
     return refreshed || autoChanged;
   }
-  finish(r) {
+  finish(r, timestamp = Date.now()) {
     const h = r.hand; if (h.recorded) return;
     const squid = r.mini.squid, mushroom = r.mini.mushroom;
     const main = h.result.mainWinnerIds;
@@ -409,7 +431,32 @@ export class RoomService {
       this.log(r, p.id, 'holdem', net, `第 ${h.number} 手德州结算`);
       if (miniNet) this.log(r, p.id, 'mini', miniNet, `第 ${h.number} 手小游戏结算`);
     }
+    if (rabbitRunout(h)) h.rabbit = { version: 1, originalCount: h.board.length, board: [...h.board], indices: [], active: true, nextAt: timestamp + RABBIT_START_DELAY, finishedAt: null };
     this.db.hands.push(copy(h));
+  }
+  revealRabbit(r, timestamp = Date.now()) {
+    const h = r.hand, rabbit = h?.rabbit;
+    if (!rabbit?.active || h.status !== 'complete') return false;
+    const remaining = rabbitRunout(h), offset = rabbit.board.length - rabbit.originalCount;
+    if (!remaining || offset < 0 || offset >= remaining.cards.length) fail('补看进度无效', 500);
+    rabbit.board.push(remaining.cards[offset]); rabbit.indices.push(remaining.indices[offset]);
+    rabbit.active = rabbit.board.length < 5;
+    rabbit.nextAt = rabbit.active ? timestamp + RABBIT_CARD_DELAY : null;
+    if (!rabbit.active) rabbit.finishedAt = timestamp;
+    const archived = this.db.hands.find(hand => hand.id === h.id);
+    if (archived) archived.rabbit = copy(rabbit);
+    return true;
+  }
+  completeRabbit(r, timestamp = Date.now()) {
+    while (r.hand?.rabbit?.active) this.revealRabbit(r, timestamp);
+  }
+  rabbitFor(h, { summary = false } = {}) {
+    const rabbit = h?.rabbit;
+    if (!rabbit || (summary && rabbit.active)) return null;
+    const visible = { board: [...rabbit.board], originalCount: rabbit.originalCount };
+    if (summary) return visible;
+    return { ...visible, active: rabbit.active, nextAt: rabbit.active ? rabbit.nextAt : null,
+      finishedAt: rabbit.finishedAt ?? null, proofs: rabbit.indices.slice(0, rabbit.board.length - rabbit.originalCount).map(index => cardProof(h, index)) };
   }
   show(r, m, cmd) {
     this.idle(r); const h = r.hand;
@@ -421,6 +468,7 @@ export class RoomService {
   }
   close(r, timestamp = Date.now()) {
     this.idle(r);
+    this.completeRabbit(r, timestamp);
     const q = r.mini.squid, mushroom = r.mini.mushroom;
     for (const [id, reserve] of Object.entries(q.reserves)) r.members[id].stack += reserve;
     q.active = false; q.reserves = {};
@@ -456,6 +504,7 @@ export class RoomService {
   summary(h, userId) {
     const p = h.players.find(x => x.id === userId);
     return { id: h.id, number: h.number, at: h.at, board: [...h.board], profit: p ? p.stack - p.startingStack : 0, miniProfit: h.miniChanges?.[userId] ?? 0,
+      rabbit: this.rabbitFor(h, { summary: true }),
       winners: h.result.mainWinnerIds.map(id => ({ id, name: h.players.find(x => x.id === id)?.name ?? '朋友', amount: h.result.payouts[id] ?? 0 })) };
   }
   state(r, viewerId) {
@@ -466,6 +515,7 @@ export class RoomService {
     actions.canUseTimeBank = actions.canAct && timeBankCards > 0 && Number.isFinite(r.deadline) && timestamp < r.deadline;
     actions.timeBankCards = timeBankCards; actions.timeBankSeconds = r.settings.timeBankSeconds ?? DEFAULTS.timeBankSeconds;
     const publicHand = h ? { id: h.id, number: h.number, status: h.status, street: h.street, board: [...h.board], buttonSeat: h.buttonSeat,
+      rabbit: this.rabbitFor(h),
       runout: h.runout ? { active: h.runout.active, nextAt: h.runout.active ? h.runout.nextAt : null } : null, equity: copy(h.equityFrames?.at(-1)?.equity ?? null),
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
@@ -496,6 +546,7 @@ export class RoomService {
     const r = this.room(roomCode); this.member(r, userId);
     const h = this.db.hands.find(x => x.roomCode === roomCode && x.id === handId); if (!h) fail('牌谱不存在', 404);
     return { id: h.id, number: h.number, at: h.at, roomCode, roomName: h.roomName, settings: copy(h.settings), board: [...h.board],
+      rabbit: this.rabbitFor(h),
       allIn: h.allInLock ? { logSeq: h.allInLock.logSeq, playerIds: h.allInLock.players.map(p => p.id) } : null, equityFrames: copy(h.equityFrames ?? []),
       favorite: h.players.some(p => p.id === userId) && (this.user(userId)?.favoriteHands ?? []).includes(h.id),
       buttonSeat: h.buttonSeat, smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, ante: h.ante ?? 0, bombPot: h.bombPot ?? false, timeBankUses: copy(h.timeBankUses ?? []),
@@ -531,6 +582,7 @@ export class RoomService {
     return { hands: page.map(h => {
       const p = h.players.find(p => p.id === userId), net = p ? p.stack - p.startingStack : 0, miniNet = h.miniChanges?.[userId] ?? 0;
       return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, board: [...h.board], cards: p ? [...p.cards] : [null, null], participated: Boolean(p),
+        rabbit: this.rabbitFor(h, { summary: true }),
         net, miniNet, totalNet: net + miniNet, pot: (h.result?.pots ?? []).reduce((sum, pot) => sum + pot.amount, 0), bombPot: Boolean(h.bombPot), favorite: favoriteIds.has(h.id) };
     }), totals, nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.at, id: last.id })).toString('base64url') : null };
   }

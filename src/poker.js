@@ -124,6 +124,22 @@ function nextStreet(hand) {
   log(hand, { type: 'street', board: [...hand.board] });
 }
 
+/** Hypothetical remaining community cards, using the committed deck and burns.
+ * This read-only helper never advances the real hand or changes its settlement.
+ * Its complete result is private: callers reveal only the scheduled prefix.
+ */
+export function rabbitRunout(hand) {
+  if (hand.status !== 'complete' || !hand.result || hand.result.showdown || ![0, 3, 4].includes(hand.board.length)) return null;
+  const cards = [], indices = [];
+  let cursor = hand.deckCursor, boardCount = hand.board.length;
+  while (boardCount < 5) {
+    if ([0, 3, 4].includes(boardCount)) cursor++; // burn before each new street
+    if (cursor >= 52 || !CARDS.includes(hand.deck[cursor])) throw new Error('补看公共牌位置无效');
+    cards.push(hand.deck[cursor]); indices.push(cursor++); boardCount++;
+  }
+  return { cards, indices };
+}
+
 function settlementPots(hand) {
   const contenders = hand.players.filter(p => !p.folded);
   const pots = [];

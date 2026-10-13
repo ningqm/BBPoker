@@ -36,12 +36,12 @@ test('table layout keeps only the table, action dock and four grouped tools on t
 });
 
 
-test('squid suspension shows a compact ordinary-hand status without disabling normal play or confusing host pause',()=>{
-  const c=harness(),r=room();r.status='playing';r.hand={status:'playing',squidRound:null};r.mini={squid:{active:true,paused:true,round:2}};c.state.room=r;
-  assert.match(c.roomView(),/鱿鱼暂停 · 本手普通德州/);assert.match(c.autoDealText(r),/下一手继续普通德州/);
-  r.hand.status='complete';r.autoDeal.nextHandAt=15000;assert.equal(c.autoDealText(r,10000),'5 秒后发普通德州');
-  r.autoDeal.paused=true;assert.equal(c.autoDealText(r,10000),'自动发牌已暂停');
-  r.hand.status='playing';r.autoDeal.paused=false;r.mini.squid.paused=false;assert.match(c.roomView(),/本手普通德州 · 下一手恢复鱿鱼/);
+test('squid keeps continuing with absent players; only unavailable tables display a waiting state',()=>{
+  const c=harness(),r=room();r.status='playing';r.hand={status:'playing',squidRound:2};r.mini={squid:{active:true,round:2,participants:['me','friend','away'],won:[]}};c.state.room=r;
+  assert.doesNotMatch(c.roomView(),/鱿鱼暂停|本手普通德州/);assert.equal(c.autoDealText(r),'每手结束后自动继续');
+  r.mini.squid.blockerSince=1;assert.match(c.roomView(),/本手仍计鱿鱼.*等待玩家/);assert.match(c.autoDealText(r),/等待原轮玩家/);
+  r.hand.status='complete';r.autoDeal.paused=true;assert.equal(c.autoDealText(r,10000),'自动发牌已暂停');
+  r.hand.status='playing';r.autoDeal.paused=false;r.mini.squid.blockerSince=null;r.hand.squidRound=null;assert.match(c.roomView(),/本手普通德州.*下一手继续原轮/);
   r.actions={canAct:true,canFold:true,canCheck:true};assert.match(c.actionArea(r,r.players[0],true),/data-action="check"/);
 });
 
@@ -58,4 +58,25 @@ test('expired squid details explain automatic closure without repeating ordinary
   const expired=c.miniPanel(r);assert.match(expired,/等待窗口内恢复就继续原轮/);assert.match(expired,/按现有标记结算散桌/);
   assert.doesNotMatch(expired,/squid-settle-note|data-action="settle-squid"|两手之间/);
   r.expiryMode=null;const regular=c.miniPanel(r);assert.match(regular,/data-action="settle-squid"/);assert.match(regular,/两手之间/);
+});
+
+test('waiting entry offers one compact choice while actual hand participants never see another blind charge',()=>{
+  const c=harness(),r=room(),me=r.players[0];r.hand={status:'playing'};me.inHand=false;me.entryBlind={required:true,mode:'wait',reason:'new',live:10,dead:0,waitingFor:'bigBlind'};
+  let html=c.actionArea(r,me,true);assert.match(html,/等待大盲加入/);assert.equal((html.match(/data-action="entry-blind"/g)||[]).length,1);
+  me.inHand=true;html=c.actionArea(r,me,true);assert.doesNotMatch(html,/data-action="entry-blind"/);
+});
+
+test('absent-player settlement countdown has priority over dealing another hand',()=>{
+  const c=harness(),r=room();r.hand={status:'complete'};r.autoDeal.nextHandAt=15000;r.mini={squid:{active:true,absentSettlementAt:13000}};
+  assert.equal(c.autoDealText(r,10000),'3 秒后按现有标记结轮');assert.equal(c.autoDealText(r,14000),'正在结算本轮鱿鱼…');
+});
+
+test('spectators with a future entry quote do not render a duplicate participation notice',()=>{
+  const c=harness(),r=room(),me=r.players[0];me.seat=null;me.inHand=false;me.entryBlind={required:true,mode:'wait',live:10,dead:0};r.hand={status:'complete'};
+  const html=c.actionArea(r,me,true);assert.doesNotMatch(html,/lifecycle-queue|data-action="entry-blind"/);assert.match(html,/观战中 · 点击空座入座/);
+});
+
+test('sitting-out players retain a return action without a duplicate away notice',()=>{
+  const c=harness(),r=room(),me=r.players[0];me.sittingOut=true;me.inHand=false;me.entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};r.hand={status:'complete'};
+  const html=c.actionArea(r,me,true);assert.equal((html.match(/你已暂离/g)||[]).length,1);assert.doesNotMatch(html,/lifecycle-queue|data-action="entry-blind"/);assert.match(html,/data-action="sitout"/);
 });

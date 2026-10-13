@@ -13,7 +13,7 @@ function fixture(settings = {}, count = 3) {
   const service = new RoomService(store), room = service.create(users[0], { settings });
   for (const u of users.slice(1)) service.join(u, room.code, room.invite);
   const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
-  for (let i = 0; i < count; i++) cmd(i, 'sit', { seat: i, amountBB: 100 });
+  for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   return { users, store, service, room, cmd };
 }
 function finish(f, type = 'fold') {
@@ -109,6 +109,7 @@ test('time card reset uses fixed room windows, replaces rather than accumulates,
   const i = f.users.findIndex(u => u.id === f.room.hand.actingId);
   for (let n = 0; n < 5; n++) f.cmd(i, 'timebank');
   assert.throws(() => f.cmd(i, 'timebank'), /用完/); finish(f);
+  f.cmd(0, 'autoDeal', { paused: true }); // Keep the now-online fixture focused on the half-hour timer.
   f.service.completeRabbit(f.room, timestamp); // Isolate the half-hour time-bank timer after supplemental cards.
   f.cmd(i, 'stand'); f.cmd(i, 'sit', { seat: i, amountBB: 100 });
   assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 0);

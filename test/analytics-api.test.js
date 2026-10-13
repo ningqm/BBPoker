@@ -38,6 +38,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
     assert.equal(outsider.hands, 0); assert.equal(outsider.totalBuyIn, 0);
   });
 
+  for (const member of Object.values(room().members).filter(m => m.seat !== null)) app.service.connections.set(`${roomCode}:${member.id}`, 1);
   await command(0, 'start');
   while (room().hand.actingId) {
     const actor = users.findIndex(u => u.user.id === room().hand.actingId);
@@ -82,6 +83,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   const fresh = (await ok('/api/rooms', users[0].token, {})).room; roomCode = fresh.code;
   await ok(`/api/rooms/${roomCode}/join`, users[1].token, { invite: fresh.invite });
   for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
+  for (const member of Object.values(room().members).filter(m => m.seat !== null)) app.service.connections.set(`${roomCode}:${member.id}`, 1);
   await command(0, 'start'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'fold');
   const latest = structuredClone(app.store.data.hands[1]);
   await t.test('periods, custom dates, room scope and latest-hand limits consistently filter profits and all-in coverage', async () => {

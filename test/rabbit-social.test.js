@@ -109,7 +109,7 @@ test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE a
   for (const u of users.slice(1)) await api(u.token, `/api/rooms/${code}/join`, { invite: created.invite });
   const room = () => app.store.data.rooms[code];
   const command = (i, type, more = {}) => api(users[i].token, `/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...more });
-  for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
+  for (let i = 0; i < 2; i++) { await command(i, 'sit', { seat: i, amountBB: 100 }); app.service.connections.set(`${code}:${users[i].user.id}`, 1); }
   const throwBody = { messageId: randomUUID(), kind: 'throw', emote: 'cheers', targetId: users[1].user.id };
   const originalSave = app.store.save.bind(app.store), before = structuredClone(app.store.data);
   app.store.save = () => { throw Object.assign(new Error('rabbit throw write failure'), { code: 'EIO' }); };

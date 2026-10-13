@@ -19,6 +19,7 @@ function realExport(count = 3, folds = false, { foldStreet = 'preflop', rabbitCa
   for (let i = 0; i < count; i++) {
     if (i) service.join(users[i], room.code, room.invite);
     command(users[i], 'sit', { seat: i * (count === 2 ? 5 : 2), amount: 1000 });
+    service.connections.set(`${room.code}:${users[i].id}`, 1);
   }
   command(users[0], 'start');
   while (room.hand.status === 'playing') {

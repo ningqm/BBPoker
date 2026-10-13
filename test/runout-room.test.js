@@ -130,6 +130,7 @@ test('river all-in shows exact final equity but is excluded from runout-luck sam
   f.service.join(f.users[1], next.code, next.invite);
   const cmd = (i, type, extra = {}) => f.service.command(f.users[i], next.code, { type, commandId: randomUUID(), handId: next.hand?.id, actionSeq: next.hand?.log.length, ...extra });
   for (let i = 0; i < 2; i++) cmd(i, 'sit', { seat: i, amountBB: 100 });
+  for (const user of f.users.slice(0, 2)) f.service.connections.set(`${next.code}:${user.id}`, 1);
   cmd(0, 'start');
   while (next.hand.status === 'playing') {
     const actor = f.users.findIndex(u => u.id === next.hand.actingId), actions = f.service.state(next, next.hand.actingId).actions;
@@ -198,6 +199,7 @@ test('server persists each runout card before SSE, rolls back failed saves, and 
     } finally { clearTimeout(timeout); }
   };
   await until(s => s.hand === null);
+  app.service.connections.set(`${code}:${users[1].user.id}`, 1);
   await command(0, 'start'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'allin'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'call');
   const locked = await until(s => s.hand?.runout?.active);
   assert.equal(locked.hand.board.length, 0);

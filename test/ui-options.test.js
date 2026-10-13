@@ -144,3 +144,11 @@ test('elapsed clock does not disable start during a server-authorized squid exte
   c.tick();assert.equal(start.disabled,false);assert.equal(clock.dataset.squidExpiry,'true');assert.match(clock.textContent,/打完本轮鱿鱼/);
   c.state.room.expiryMode='wait-squid';c.tick();assert.equal(start.disabled,true);assert.match(clock.textContent,/等待鱿鱼恢复/);
 });
+
+test('mid-session buy-in defaults to waiting for a big blind and quotes a returner from server state',()=>{
+  const c=harness();c.state.room={meId:'a',startedAt:1,settings:{...c.defaults,minBuyIn:200,maxBuyIn:2000},players:[{id:'a',seat:null,stack:0}]};
+  c.buyinModal(2);let html=c.modals.at(-1).body;assert.match(html,/name="entryMode" value="wait" checked/);assert.match(html,/补盲加入 · 10 积分/);assert.match(html,/等过庄/);assert.match(html,/全员等盲无法开牌/);
+  c.state.room.players[0].entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};c.buyinModal(3);html=c.modals.at(-1).body;
+  assert.match(html,/补盲加入 · 15 积分/);assert.match(html,/补小盲 5 不抵跟注/);
+  c.state.room.players[0].seat=0;c.buyinModal();assert.doesNotMatch(c.modals.at(-1).body,/name="entryMode"/);
+});

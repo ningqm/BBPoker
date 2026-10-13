@@ -88,16 +88,16 @@ test('saved countdown survives restart without a new deck; overdue first reconne
   assert.equal(recovered.tick(savedRoom, f.time), false); assert.equal(persisted.hands.length, 1);
 });
 
-test('an unfinished squid never skips a busted participant; top-up resumes the same round', t => {
+test('an unfinished squid continues with two ready players and preserves the busted participant reserve', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.finish();
   assert.equal(f.room.mini.squid.active, true); const round = f.room.mini.squid.round, reserve = structuredClone(f.room.mini.squid.reserves);
   const busted = f.room.mini.squid.participants[0]; f.room.members[busted].stack = 0;
-  f.advance(5000); assert.equal(f.service.tick(f.room), true); assert.equal(f.room.handNumber, 1); assert.equal(f.room.nextHandAt, null);
-  assert.match(f.room.autoWaitReason, /鱿鱼轮中.*积分不足/); assert.equal(f.service.tick(f.room), false);
-  f.cmd(0, 'buyin', { amountBB: 20 }); assert.equal(f.room.nextHandAt, f.time + 5000);
   f.advance(5000); f.service.tick(f.room); assert.equal(f.room.handNumber, 2);
   assert.equal(f.room.mini.squid.round, round); assert.deepEqual(f.room.mini.squid.reserves, reserve);
-  assert.equal(f.room.hand.players.length, 3);
+  assert.equal(f.room.hand.players.length, 2); assert.ok(!f.room.hand.players.some(p => p.id === busted));
+  assert.throws(() => f.cmd(0, 'buyin', { amountBB: 20 }), /本手结束/);
+  assert.equal(f.room.hand.players.length, 2, 'top-up cannot insert a player into a live hand');
+  assert.equal(f.room.mini.squid.participants.includes(busted), true);
 });
 
 test('new squid waits for three players/reserves and the final five-minute cutoff lifts only the new-round requirement', t => {

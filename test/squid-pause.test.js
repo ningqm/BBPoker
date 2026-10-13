@@ -25,42 +25,45 @@ function fixture(t, settings = {}) {
   return { users, data, service, room, cmd, connect, start, win, get time() { return now; }, advance(ms) { now += ms; } };
 }
 
-test('fallback hands use normal blinds even when every configured hand is a bomb pot', t => {
+test('offline original players no longer turn a configured bomb hand into ordinary fallback', t => {
   const f = fixture(t, { bombPot: true, bombEveryHands: 1 });
   assert.equal(f.room.hand.bombPot, true); f.win(0); f.connect(3, false); f.start();
   const h = f.room.hand;
-  assert.equal(h.bombPot, false); assert.equal(h.ante, 0); assert.equal(h.street, 'preflop');
-  assert.equal(h.squidRound, null); assert.equal(h.settings.squid, false);
-  assert.equal(h.log.filter(e => e.type === 'smallBlind').length, 1);
-  assert.equal(h.log.filter(e => e.type === 'bigBlind').length, 1);
-  assert.equal(h.log.filter(e => e.type === 'ante').length, 0);
+  assert.equal(h.bombPot, true); assert.ok(h.ante > 0); assert.equal(h.street, 'flop');
+  assert.equal(h.squidRound, 1); assert.equal(h.settings.squid, true);
+  assert.equal(h.log.filter(e => e.type === 'smallBlind').length, 0);
+  assert.equal(h.log.filter(e => e.type === 'bigBlind').length, 0);
+  assert.equal(h.log.filter(e => e.type === 'ante').length, 3);
+  assert.equal(h.players.some(p => p.id === f.users[3].id), false);
   f.win(1);
-  assert.equal(f.service.handFor(f.users[4].id, f.room.code, h.id).squidRound, null);
-  assert.deepEqual(f.room.mini.squid.won, [f.users[0].id]);
+  assert.equal(f.service.handFor(f.users[4].id, f.room.code, h.id).squidRound, 1);
+  assert.deepEqual(f.room.mini.squid.won, [f.users[0].id, f.users[1].id]);
+  assert.ok(f.service.handFor(f.users[4].id, f.room.code, h.id).players.every(p => p.cards.every(c => c === null)), 'spectator history retains folded and unshown card privacy');
 });
 
-test('fallback is unavailable when a required player is also out of chips or sitting out', t => {
+test('an absent busted or sitting-out original player does not prevent two or more others continuing squid', t => {
   const f = fixture(t); f.win(0); f.connect(3, false);
   const member = f.room.members[f.users[3].id], stack = member.stack;
-  // Simulate an already persisted busted/legacy sit-out state without discarding any points.
+  // Simulate a persisted busted state without discarding any points.
   member.stack = 0; member.cashedOut += stack;
   f.service.connectionChanged(f.room, f.time);
   assert.equal(f.service.state(f.room, f.users[0].id).mini.squid.paused, false);
-  assert.equal(f.room.nextHandAt, null); assert.throws(f.start, /积分不足/);
+  assert.ok(Number.isFinite(f.room.nextHandAt)); f.start();
+  assert.equal(f.room.hand.squidRound, 1); assert.equal(f.room.hand.players.some(p => p.id === member.id), false); f.win(0);
   member.stack = stack; member.cashedOut -= stack; member.sittingOut = true;
   f.service.connectionChanged(f.room, f.time);
-  assert.equal(f.room.nextHandAt, null); assert.throws(f.start, /暂离/);
-  member.sittingOut = false; f.service.connectionChanged(f.room, f.time);
-  assert.ok(Number.isFinite(f.room.nextHandAt)); f.start(); assert.equal(f.room.hand.squidRound, null);
+  assert.ok(Number.isFinite(f.room.nextHandAt)); f.start();
+  assert.equal(f.room.hand.squidRound, 1); assert.equal(f.room.hand.players.some(p => p.id === member.id), false); f.win(0);
+  member.sittingOut = false; f.connect(3, true);
+  assert.ok(Number.isFinite(f.room.nextHandAt)); f.start(); assert.equal(f.room.hand.squidRound, 1);
 });
 
-test('a live all-in is not misclassified as busted and does not erase an existing offline grace clock', t => {
+test('a live all-in is not misclassified as busted; projections and rejected mid-hand settlement remain pure', t => {
   const f = fixture(t); f.win(0); f.connect(3, false); f.start();
-  const since = f.room.mini.squid.blockerSince;
   const actor = f.users.findIndex(u => u.id === f.room.hand.actingId);
   f.cmd(actor, 'allin'); assert.equal(f.room.members[f.users[actor].id].stack, 0);
-  assert.equal(f.service.squidBlock(f.room).offlineOnly, true);
-  assert.equal(f.room.mini.squid.blockerSince, since);
+  assert.equal(f.service.squidBlock(f.room), null);
+  assert.equal(f.room.mini.squid.blockerSince ?? null, null);
   const before = structuredClone(f.data);
   f.service.state(f.room, f.users[0].id); f.service.autoPlan(f.room, f.time); f.service.needsTick(f.room, f.time);
   assert.deepEqual(f.data, before, 'public projections and scheduling reads are side effect free');
@@ -68,29 +71,34 @@ test('a live all-in is not misclassified as busted and does not erase an existin
   assert.deepEqual(f.data, before, 'direct mid-hand settlement cannot alter balances');
 });
 
-test('upgrading an active legacy squid hand retains its original round while an explicit ordinary marker never changes', t => {
+test('upgrading a legacy squid hand retains eligibility while a saved explicit ordinary marker never changes', t => {
   const f = fixture(t), round = f.room.mini.squid.round;
   delete f.room.hand.squidRound;
   assert.equal(f.service.state(f.room, f.users[0].id).hand.squidRound, round);
   f.connect(3, false); f.win(0); assert.deepEqual(f.room.mini.squid.won, [f.users[0].id]);
-  f.start(); assert.equal(f.room.hand.squidRound, null);
-  f.connect(3, true); f.win(1);
+  f.start();
+  // A 0.11.1 server could persist a hand under the now-removed ordinary fallback.
+  // Its explicit contract must remain ordinary when 0.12 resumes that save.
+  f.room.hand.squidRound = null; f.room.hand.settings.squid = false;
+  f.connect(3, true); assert.equal(f.service.state(f.room, f.users[0].id).hand.squidRound, null); f.win(1);
   assert.deepEqual(f.room.mini.squid.won, [f.users[0].id]);
   f.start(); assert.equal(f.room.hand.squidRound, round);
 });
 
-test('a newcomer currently playing an ordinary hand is not presented as waiting when the old round becomes ready', t => {
+test('a newcomer waits for the next squid round even when an absent original player reconnects mid-hand', t => {
   const f = fixture(t); f.win(0); f.connect(3, false);
   f.cmd(4, 'sit', { seat: 4, amountBB: 100 }); f.connect(4, true); f.start();
-  f.connect(3, true);
+  const hand = structuredClone(f.room.hand); f.connect(3, true);
   let view = f.service.state(f.room, f.users[4].id);
-  assert.equal(view.hand.squidRound, null); assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, null);
-  f.win(4); view = f.service.state(f.room, f.users[4].id);
+  assert.equal(view.hand.squidRound, 1); assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, 'squid');
+  assert.equal(view.players.find(p => p.id === f.users[4].id).cards.length, 0); assert.deepEqual(f.room.hand, hand);
+  f.win(1); view = f.service.state(f.room, f.users[4].id);
   assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, 'squid');
+  assert.equal(view.players.find(p => p.id === f.users[4].id).squidReserve, 0);
 });
 
 test('overtime waiting does not repeatedly write or refresh an already observed deadline', t => {
-  const f = fixture(t); f.win(0); f.connect(3, false); f.cmd(0, 'autoDeal', { paused: true });
+  const f = fixture(t); f.win(0); for (const i of [0, 2, 3]) f.connect(i, false); f.cmd(0, 'autoDeal', { paused: true });
   f.advance(f.room.endsAt - f.time); assert.equal(f.service.tick(f.room, f.time), true);
   const deadline = f.service.state(f.room, f.users[0].id).mini.squid.expiryGraceEndsAt;
   const snapshot = structuredClone(f.data);

@@ -24,7 +24,7 @@ function harness(){
     section('function stopLobbyPolling(','async function route('),
     section('function lobbyRoomCard(','function career('),
     section('function departureModal(','function rulesModal('),
-    'globalThis.client={stopLobbyPolling,loadLobby,joinPublicRoom,joinInviteModal,lobbyRoomCard,departureModal,confirmDeparture,settleSquidModal,participationNotice};',
+    'globalThis.client={stopLobbyPolling,loadLobby,joinPublicRoom,joinInviteModal,lobbyRoomCard,departureModal,confirmDeparture,settleSquidModal,participationNotice,entryBlindModal,confirmEntryBlind};',
   ].join('\n'),context);
   return {...context.client,state,requests,context,pending,timers,paths,messages,commands,get renders(){return renders;}};
 }
@@ -76,14 +76,14 @@ test('public join submits no invitation, ignores double-clicks, and cannot join 
 
 test('mid-hand seats and squid waiting have distinct guidance, and pending exit is cancellable',()=>{
   const r=squidRoom();
-  assert.match(lifecycle.buyinTiming(r),/下一轮/);delete r.mini;assert.match(lifecycle.buyinTiming(r),/下一手/);
+  assert.match(lifecycle.buyinTiming(r),/下一轮/);delete r.mini;assert.match(lifecycle.buyinTiming(r),/后续符合条件/);
   r.hand.status='complete';assert.match(lifecycle.buyinTiming(r,false),/补充积分/);
   assert.equal(lifecycle.participation(r,{seat:1,waitingFor:'squid'}).label,'等待下一轮鱿鱼');
   assert.equal(lifecycle.participation(r,{seat:1,pendingDeparture:'stand'}).canCancel,true);
   assert.equal(lifecycle.participation(r,{seat:1,sittingOut:true}).canReturn,true);
 });
 
-test('exit quote binds the user round and fee, including zero for newcomers and marked players',()=>{
+test('departure quote retains the round liability without immediately forfeiting it',()=>{
   const r=squidRoom();assert.equal(lifecycle.departurePlan(r,r.players[0],'stand').cost,40);
   assert.equal(lifecycle.departurePlan(r,{id:'new',seat:3},'stand').round,0);
   assert.equal(lifecycle.departurePlan(r,{id:'new',seat:3,inHand:false},'stand').queued,false);
@@ -92,7 +92,7 @@ test('exit quote binds the user round and fee, including zero for newcomers and 
   assert.equal(lifecycle.departurePlan(r,{id:'b',seat:1},'stand').won,true);
 });
 
-test('a changed exit fee or hand boundary requires fresh confirmation before any command',async()=>{
+test('changed round liability or hand boundary requires a fresh departure confirmation',async()=>{
   const c=harness();c.state.room=squidRoom();c.departureModal('sitout');assert.match(c.state.modal.body,/40 积分/);
   c.state.room.mini.squid.unit=30;await c.confirmDeparture();assert.equal(c.commands.length,0);assert.match(c.state.modal.body,/60 积分/);
   await c.confirmDeparture();assert.equal(c.commands.length,1);
@@ -116,31 +116,31 @@ test('leaving the lobby during a public join cannot navigate back or leave its n
 });
 
 
-test('ordinary fallback hand remains ordinary after reconnect and only the next hand restores squid',()=>{
-  const room=squidRoom();room.hand.squidRound=null;room.mini.squid.paused=true;
-  let mode=lifecycle.squidMode(room);assert.equal(mode.countsForSquid,false);assert.match(mode.label,/鱿鱼暂停.*本手普通德州/);assert.match(mode.note,/普通手不获得鱿鱼标记/);
-  room.mini.squid.paused=false;mode=lifecycle.squidMode(room);assert.equal(mode.ordinaryHand,true);assert.match(mode.label,/下一手恢复鱿鱼/);
-  room.hand.squidRound=4;assert.equal(lifecycle.squidMode(room).countsForSquid,true);assert.equal(lifecycle.squidMode(room).label,'');
-  room.mini.squid.paused=true;assert.match(lifecycle.squidMode(room).label,/本手仍计鱿鱼/);
+test('a restored ordinary hand keeps its original mode and never promises a mid-hand squid conversion',()=>{
+  const room=squidRoom();room.hand.squidRound=null;
+  let mode=lifecycle.squidMode(room);assert.equal(mode.countsForSquid,false);assert.match(mode.label,/本手普通德州.*下一手继续原轮/);
+  room.hand.squidRound=4;mode=lifecycle.squidMode(room);assert.equal(mode.countsForSquid,true);assert.equal(mode.label,'');
+  room.mini.squid.blockerSince=100;mode=lifecycle.squidMode(room);assert.match(mode.label,/本手仍计鱿鱼/);assert.match(mode.note,/不足两人/);
 });
 
-test('a paused round retains its exit fee but an ordinary hand does not promise earning a squid mark',()=>{
-  const c=harness(),room=squidRoom();room.mini.squid.paused=true;room.hand.squidRound=null;c.state.room=room;
-  const plan=lifecycle.departurePlan(room,room.players[0],'stand');assert.equal(plan.cost,40);assert.equal(plan.round,4);assert.equal(plan.canEarnMark,false);
-  c.departureModal('stand');assert.match(c.state.modal.body,/40 积分/);assert.match(c.state.modal.body,/不会为你增加鱿鱼标记/);assert.doesNotMatch(c.state.modal.body,/如果本手获得标记/);
-  assert.match(lifecycle.buyinTiming(room),/下一手普通德州/);assert.match(lifecycle.buyinTiming(room),/原轮恢复后/);
+test('departure clearly keeps reserve and settlement responsibility, including a marked player',()=>{
+  const c=harness(),room=squidRoom();room.players[0].squidReserve=40;c.state.room=room;
+  c.departureModal('stand');assert.match(c.state.modal.body,/最多覆盖.*40 积分/);assert.match(c.state.modal.body,/不会随离座取走/);assert.match(c.state.modal.body,/不重新收鱿鱼预留/);
+  assert.doesNotMatch(c.state.modal.body,/离开需支付|立即结算|视为失败/);
+  room.mini.squid.won.push('a');c.departureModal('stand');assert.match(c.state.modal.body,/已获得本轮鱿鱼标记/);assert.match(c.state.modal.body,/结算权益/);
 });
 
-test('an unmarked original participant queues exit during a fallback hand even if not dealt into it',()=>{
-  const room=squidRoom();room.hand.squidRound=null;room.mini.squid.paused=true;room.players[0].inHand=false;
-  const plan=lifecycle.departurePlan(room,room.players[0],'stand');assert.equal(plan.queued,true);assert.equal(plan.cost,40);assert.equal(plan.canEarnMark,false);
-  assert.equal(lifecycle.departurePlan(room,{id:'new',seat:3,inHand:false},'stand').queued,false);
+test('only an actual current-hand participant queues departure; squid responsibility is retained either way',()=>{
+  const room=squidRoom();room.players[0].inHand=false;
+  const plan=lifecycle.departurePlan(room,room.players[0],'stand');assert.equal(plan.queued,false);assert.equal(plan.cost,40);assert.equal(plan.participant,true);
+  room.players[0].inHand=true;assert.equal(lifecycle.departurePlan(room,room.players[0],'stand').queued,true);
 });
 
-test('an expired suspended squid does not advertise another ordinary hand or participation for newcomers',()=>{
-  const room=squidRoom();room.expiryMode='wait-squid';room.mini.squid.paused=true;room.hand.squidRound=null;
-  assert.match(lifecycle.squidMode(room).label,/本手普通德州.*结束后等待原轮恢复/);assert.match(lifecycle.squidMode(room).note,/不再开启普通手/);
-  assert.match(lifecycle.buyinTiming(room),/不会再开启新的普通手/);
+test('expired squid waits for eligible original players and does not promise newcomer participation',()=>{
+  const room=squidRoom();room.expiryMode='wait-squid';room.mini.squid.blockerSince=100;
+  assert.match(lifecycle.squidMode(room).label,/已到时.*本手结束后等待原轮/);assert.match(lifecycle.squidMode(room).note,/不足两人/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/新入座者不参加原轮/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'a'}),/重新入座不会再收/);
   room.hand.status='complete';assert.match(lifecycle.squidMode(room).label,/期间不开新手/);
   assert.equal(lifecycle.lobbyTime(1000,2000),'已到时 · 等待收尾');
 });
@@ -153,4 +153,59 @@ test('lobby status distinguishes an unstarted room, a hand break and expired rec
   const expired=c.lobbyRoomCard(room({status:'waiting',handNumber:2,endsAt:1}));
   assert.match(expired,/>等待收尾<\/span>/);assert.doesNotMatch(expired,/等待开局/);
   assert.match(c.lobbyRoomCard(room({status:'playing',handNumber:2,endsAt:1})),/>进行中<\/span>/);
+});
+
+const entryPlayer=(overrides={})=>({id:'a',seat:0,entryBlind:{required:true,mode:'wait',reason:'new',live:10,dead:0,waitingFor:'bigBlind'},...overrides});
+test('server entry quotes distinguish waiting, post-and-wait-for-button, and same-hand reconnect',()=>{
+  const room=squidRoom(),player=entryPlayer();room.players=[player];
+  assert.equal(lifecycle.participation(room,player).label,'等待大盲加入');
+  player.entryBlind.mode='post';player.entryBlind.waitingFor='button';assert.match(lifecycle.participation(room,player).label,/等待过庄/);
+  player.entryBlind.reason='missed';player.entryBlind.dead=5;const quoted=lifecycle.entryBlindView(room,player);assert.equal(quoted.total,15);assert.equal(quoted.dead,5);
+  player.inHand=true;assert.equal(lifecycle.entryBlindView(room,player),null);assert.equal(lifecycle.participation(room,player).label,'正在参与本手');
+  player.inHand=false;room.status='closed';assert.equal(lifecycle.entryBlindView(room,player),null);
+});
+
+test('new squid participants wait for the round even if they opted to post; returning originals get their existing reserve explanation',()=>{
+  const room=squidRoom(),player=entryPlayer({waitingFor:'squid'});player.entryBlind.mode='post';
+  assert.equal(lifecycle.participation(room,player).label,'等待下一轮鱿鱼');
+  assert.match(lifecycle.participation(room,player).note,/本轮结束后生效/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'a'}),/资格.*预留都保留/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/等下一轮/);
+});
+
+test('entry controls use the server quote and submit mode only, never a client-calculated charge',async()=>{
+  const c=harness();c.state.room=squidRoom();c.state.room.players=[entryPlayer()];
+  c.entryBlindModal();assert.match(c.state.modal.body,/补盲加入 · 10 积分/);assert.match(c.state.modal.body,/同手重连不会重复收盲/);
+  await c.confirmEntryBlind('fake');assert.equal(c.commands.length,0);
+  await c.confirmEntryBlind('post');assert.deepEqual(c.commands.map(c=>JSON.parse(JSON.stringify(c))),[{type:'entryBlind',payload:{mode:'post'}}]);
+});
+
+test('returning with missed blinds displays live and dead amounts, preserves squid identity, and refreshes stale quotes',async()=>{
+  const c=harness();c.state.room=squidRoom();const p=entryPlayer({sittingOut:true});p.entryBlind.reason='missed';p.entryBlind.dead=5;c.state.room.players=[p];
+  c.entryBlindModal(true);assert.match(c.state.modal.body,/补小盲 5 积分进底池、不抵跟注/);
+  p.entryBlind.live=20;await c.confirmEntryBlind('post');assert.equal(c.commands.length,0);assert.match(c.state.modal.body,/补盲加入 · 25 积分/);
+  await c.confirmEntryBlind('wait');assert.deepEqual(c.commands.map(c=>JSON.parse(JSON.stringify(c))),[{type:'sitout',payload:{value:false,entryMode:'wait'}}]);
+});
+
+test('stale room changes or a new hand cannot charge through an old entry dialog',async()=>{
+  const c=harness();c.state.room=squidRoom();const p=entryPlayer();c.state.room.players=[p];c.entryBlindModal();
+  c.state.room.code='654321';await c.confirmEntryBlind('post');assert.equal(c.commands.length,0);
+  c.state.room.code='123456';p.inHand=true;await c.confirmEntryBlind('post');assert.equal(c.commands.length,0);assert.equal(c.state.modal,null);
+});
+
+test('absent-player settlement buffer explains how a returning unmarked player can still continue',()=>{
+  const room=squidRoom();room.hand.status='complete';room.mini.squid.absentSettlementAt=Date.now()+5000;
+  const mode=lifecycle.squidMode(room);assert.equal(mode.settlingAbsentees,true);assert.match(mode.label,/即将.*结算/);assert.match(mode.note,/及时回来.*仍可继续/);
+});
+
+test('entry choice explains a table waiting for everyone without silently changing their preference',()=>{
+  const c=harness();c.state.room=squidRoom();c.state.room.players=[entryPlayer(),{id:'b',seat:1}];c.entryBlindModal();
+  assert.match(c.state.modal.body,/全员等盲无法开牌，至少一人改选补盲/);assert.equal(c.commands.length,0);
+  assert.equal(c.state.room.players[0].entryBlind.mode,'wait');
+});
+
+test('seat badges stay short on mobile while detailed participation instructions remain available',()=>{
+  const room=squidRoom(),player=entryPlayer();assert.equal(lifecycle.entryBlindView(room,player).seatLabel,'等大盲');
+  player.entryBlind.mode='post';player.entryBlind.waitingFor='button';assert.equal(lifecycle.entryBlindView(room,player).seatLabel,'等过庄');
+  player.entryBlind.waitingFor=null;assert.equal(lifecycle.entryBlindView(room,player).seatLabel,'待补盲');assert.match(lifecycle.entryBlindView(room,player).label,/已选补盲/);
 });

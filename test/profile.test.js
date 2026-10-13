@@ -91,7 +91,7 @@ test('profile changes broadcast to the table while chat and dealt-hand names rem
   const f = await fixture(t), owner = await f.guest('旧昵称', 2), peer = await f.guest('旁观朋友', 3);
   const room = (await f.api('/api/rooms', { settings: { approvalRequired: false } }, owner.token, 201)).room;
   await f.api(`/api/rooms/${room.code}/join`, { invite: room.invite }, peer.token);
-  for (const [seat, player] of [owner, peer].entries()) await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token);
+  for (const [seat, player] of [owner, peer].entries()) { await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token); f.app.service.connections.set(`${room.code}:${player.user.id}`, 1); }
   await f.api(`/api/rooms/${room.code}/chat`, { kind: 'text', text: '旧消息', messageId: randomUUID() }, owner.token);
   await f.api(`/api/rooms/${room.code}/action`, { type: 'start', commandId: randomUUID() }, owner.token);
   const oldHand = structuredClone(f.app.store.data.rooms[room.code].hand), oldChat = structuredClone(f.app.store.data.rooms[room.code].chat);
@@ -143,7 +143,7 @@ async function seatedTable(f) {
   const players = [await f.guest('时钟甲'), await f.guest('时钟乙')];
   const room = (await f.api('/api/rooms', { settings: { durationMinutes: 60 } }, players[0].token, 201)).room;
   await f.api(`/api/rooms/${room.code}/join`, { invite: room.invite }, players[1].token);
-  for (const [seat, player] of players.entries()) await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token);
+  for (const [seat, player] of players.entries()) { await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token); f.app.service.connections.set(`${room.code}:${player.user.id}`, 1); }
   await f.api(`/api/rooms/${room.code}/action`, { type: 'start', commandId: randomUUID() }, players[0].token);
   const command = async (user, type) => {
     const hand = f.app.store.data.rooms[room.code].hand;

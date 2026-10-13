@@ -20,7 +20,7 @@ function fixture(count = 4) {
     while (room.hand.status === 'playing') command(users.findIndex(u => u.id === room.hand.actingId), 'fold');
     return store.data.hands.at(-1);
   };
-  const seat = () => { command(0, 'sit', { seat: 0, amount: 1000 }); command(1, 'sit', { seat: 1, amount: 1000 }); };
+  const seat = () => { command(0, 'sit', { seat: 0, amount: 1000 }); command(1, 'sit', { seat: 1, amount: 1000 }); for (const user of users.slice(0, 2)) service.connections.set(`${room.code}:${user.id}`, 1); };
   return { store, service, room, users, chat, command, play, seat };
 }
 
@@ -152,7 +152,9 @@ test('HTTP chat/SSE and personal favorites survive encrypted restart without exp
   assert.deepEqual(JSON.parse(update.split('data: ')[1].split('\n\n')[0]).chat.at(-1), emoji);
   controller.abort(); await reader.cancel().catch(() => {});
   const command = async (i, type, extra = {}) => api(users[i], `/api/rooms/${room.code}/action`, { type, commandId: randomUUID(), handId: app.store.data.rooms[room.code].hand?.id, actionSeq: app.store.data.rooms[room.code].hand?.log.length, ...extra });
-  await command(0, 'sit', { seat: 0, amount: 1000 }); await command(1, 'sit', { seat: 1, amount: 1000 }); await command(0, 'start');
+  await command(0, 'sit', { seat: 0, amount: 1000 }); await command(1, 'sit', { seat: 1, amount: 1000 });
+  for (const user of users.slice(0, 2)) app.service.connections.set(`${room.code}:${user.user.id}`, 1);
+  await command(0, 'start');
   const actor = users.findIndex(u => u.user.id === app.store.data.rooms[room.code].hand.actingId); await command(actor, 'fold');
   const library = await api(users[0], '/api/hands?limit=20'); assert.equal(library.hands.length, 1);
   const id = library.hands[0].id;

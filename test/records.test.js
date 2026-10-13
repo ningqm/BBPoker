@@ -15,6 +15,7 @@ function fixture() {
   for(const user of users.slice(1,3))service.join(user,room.code,room.invite);
   const command=(user,type,payload={})=>service.command(user,room.code,{type,commandId:randomUUID(),handId:room.hand?.id,actionSeq:room.hand?.log.length,...payload});
   command(users[0],'sit',{seat:0,amount:1000});command(users[1],'sit',{seat:1,amount:1000});
+  for(const user of users.slice(0,2))service.connections.set(`${room.code}:${user.id}`,1);
   command(users[0],'start');
   while(room.hand.status==='playing')command(users.find(user=>user.id===room.hand.actingId),'fold');
   const template=structuredClone(store.data.hands[0]);store.data.hands=[];
@@ -132,7 +133,9 @@ test('HTTP records require login and room membership, reject malformed filters, 
   for(const path of ['/api/sessions','/api/hands',`/api/sessions/${room.code}`])await api(null,path,undefined,401);
   await api(users[3],`/api/sessions/${room.code}`,undefined,403);await api(users[3],`/api/sessions?room=${room.code}`,undefined,403);
   const command=async(i,type,payload={})=>{const internal=app.store.data.rooms[room.code];return api(users[i],`/api/rooms/${room.code}/action`,{type,commandId:randomUUID(),handId:internal.hand?.id,actionSeq:internal.hand?.log.length,...payload});};
-  await command(0,'sit',{seat:0,amount:1000});await command(1,'sit',{seat:1,amount:1000});await command(0,'start');
+  await command(0,'sit',{seat:0,amount:1000});await command(1,'sit',{seat:1,amount:1000});
+  for(const user of users.slice(0,2))app.service.connections.set(`${room.code}:${user.user.id}`,1);
+  await command(0,'start');
   const foldedId=app.store.data.rooms[room.code].hand.actingId;await command(users.findIndex(u=>u.user.id===foldedId),'fold');
   const observer=await api(users[2],`/api/sessions/${room.code}`);assert.equal(observer.session.players.length,2);noSecrets(observer);
   assert.deepEqual((await api(users[2],'/api/hands')).hands,[]);

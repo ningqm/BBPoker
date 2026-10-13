@@ -90,6 +90,7 @@ test('legacy binding keeps exact player, room, hand and ledger ownership while r
     const service = new RoomService(store), room = service.create(legacy, { settings: { approvalRequired: false } }); roomCode = room.code;
     service.join(peer, room.code, room.invite);
     for (const [i, user] of [legacy, peer].entries()) service.command(user, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() });
+    for (const user of [legacy, peer]) service.connections.set(`${room.code}:${user.id}`, 1);
     service.command(legacy, room.code, { type: 'start', commandId: randomUUID() });
     service.command(service.user(room.hand.actingId), room.code, { type: 'fold', handId: room.hand.id, actionSeq: room.hand.log.length, commandId: randomUUID() });
     // This test isolates account ownership; opening/revoking a stream must not

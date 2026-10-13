@@ -29,6 +29,7 @@ async function setup(t) {
       const { room: s } = await cmd(users[seat], 'sit', { seat, amount });
       const pending = s.pending.find(p => p.playerId === users[seat].user.id);
       if (pending) await cmd(users[0], 'approve', { requestId: pending.id });
+      app.service.connections.set(`${room.code}:${users[seat].user.id}`, 1);
     }
   }
   async function win(targetId) {

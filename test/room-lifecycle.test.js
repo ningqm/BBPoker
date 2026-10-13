@@ -52,20 +52,35 @@ test('squid entrants wait for the next round while the fixed original roster com
   assert.equal(f.service.state(f.room, f.users[3].id).players.find(p => p.id === f.users[3].id).waitingFor, 'squid');
   f.service.start(f.room); assert.deepEqual(f.room.hand.players.map(p => p.id), roster); f.win(1);
   assert.equal(f.room.mini.squid.active, false); conserved(f.room);
-  f.service.start(f.room); assert.equal(f.room.mini.squid.round, 2); assert.equal(f.room.mini.squid.participants.length, 4); conserved(f.room);
+  f.service.start(f.room); assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.hand.squidRound, null);
+  assert.equal(f.room.hand.players.some(p => p.id === f.users[3].id), false); assert.deepEqual(f.room.mini.squid.reserves, {});
+  for (let i = 0; !f.room.mini.squid.active; i++) {
+    assert.ok(i < 5, 'the big blind must reach the newcomer');
+    f.win(f.users.findIndex(u => u.id === f.room.hand.players[0].id)); f.service.start(f.room); conserved(f.room);
+  }
+  assert.equal(f.room.mini.squid.round, 2); assert.equal(f.room.mini.squid.participants.length, 4);
+  assert.ok(f.room.hand.players.some(p => p.id === f.users[3].id)); conserved(f.room);
 });
 
-test('unmarked departure requires a current quote, settles once, and cannot clear liability by rejoining', t => {
+test('unmarked departure requires a current quote and retains its original reserve through rejoining', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start');
   assert.throws(() => f.cmd(0, 'stand'), /确认/);
   assert.throws(() => f.cmd(0, 'stand', { expectedSquidRound: 0, expectedSquidCost: 0 }), /重新确认/);
-  const commandId = randomUUID(), quote = f.consent(0);
+  const commandId = randomUUID(), quote = f.consent(0), reserve = f.room.mini.squid.reserves[f.users[0].id];
   f.cmd(0, 'stand', { ...quote, commandId }); f.cmd(0, 'stand', { ...quote, commandId }); f.win(1);
+  assert.equal(f.room.members[f.users[0].id].seat, null); assert.equal(f.room.mini.squid.active, true);
+  assert.equal(f.store.data.ledger.filter(row => row.type === 'squidSettlement').length, 0);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id], reserve); conserved(f.room);
+  f.cmd(0, 'sit', { seat: 0, amountBB: 100 });
+  assert.equal(f.service.waitingFor(f.room, f.room.members[f.users[0].id]), null);
+  assert.equal(f.room.mini.squid.round, quote.expectedSquidRound); assert.equal(f.room.mini.squid.reserves[f.users[0].id], reserve);
+  assert.equal(f.service.stats(f.users[0].id).miniNet, 0);
+  f.cmd(0, 'stand', { ...quote, commandId }); assert.equal(f.room.members[f.users[0].id].seat, 0, 'retry cannot stand the returning player a second time');
+  f.service.start(f.room); assert.ok(f.room.hand.players.some(p => p.id === f.users[0].id)); f.win(2);
   const rows = f.store.data.ledger.filter(row => row.type === 'squidSettlement');
   assert.equal(rows.length, 3); assert.equal(new Set(rows.map(row => row.roundSettlementId)).size, 1);
   assert.equal(rows.find(row => row.playerId === f.users[0].id).amount, -40); assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), 0);
-  f.cmd(0, 'stand', { ...quote, commandId }); assert.equal(f.store.data.ledger.filter(row => row.type === 'squidSettlement').length, 3);
-  f.cmd(0, 'sit', { seat: 0, amountBB: 100 }); assert.equal(f.service.stats(f.users[0].id).miniNet, -40); conserved(f.room);
+  assert.equal(f.service.stats(f.users[0].id).miniNet, -40); conserved(f.room);
 });
 
 test('a marked player may leave and receives the final settlement without joining the finishing hand', t => {
@@ -79,12 +94,21 @@ test('a marked player may leave and receives the final settlement without joinin
   assert.equal(f.service.exportAdjustments(f.users[0].id, f.room.code).filter(row => row.type === 'squidSettlement').length, 1); conserved(f.room);
 });
 
-test('multiple pending departures and retries choose one recorded forfeit without duplicate transfers', t => {
+test('multiple pending departures retain liabilities and settle all absent unmarked players exactly once', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start');
-  f.cmd(0, 'stand', f.consent(0)); f.cmd(1, 'sitout', { value: true, ...f.consent(1) }); f.win(2);
-  const q = f.room.mini.squid, rows = f.store.data.ledger.filter(row => row.type === 'squidSettlement');
-  assert.equal(q.lastResult.reason, 'forfeit'); assert.equal(q.lastResult.loserId, f.users[0].id); assert.equal(rows.length, 3);
-  assert.equal(f.room.members[f.users[1].id].sittingOut, true); assert.equal(f.room.hand.miniChanges[f.users[0].id], -40); conserved(f.room);
+  const firstId=randomUUID(), secondId=randomUUID(), firstQuote=f.consent(0), secondQuote=f.consent(1);
+  f.cmd(0, 'stand', { ...firstQuote, commandId:firstId }); f.cmd(1, 'sitout', { value: true, ...secondQuote, commandId:secondId }); f.win(2);
+  const q = f.room.mini.squid;
+  assert.equal(q.active, true); assert.equal(f.store.data.ledger.filter(row => row.type === 'squidSettlement').length, 0);
+  assert.equal(f.room.members[f.users[0].id].seat, null); assert.equal(f.room.members[f.users[1].id].sittingOut, true);
+  assert.equal(q.absentSettlementAt, f.time+5000); f.advance(4999); f.service.tick(f.room,f.time); assert.equal(q.active,true);
+  f.advance(1); f.service.tick(f.room,f.time);
+  const rows=f.store.data.ledger.filter(row => row.type === 'squidSettlement');
+  assert.equal(q.lastResult.reason,'absent'); assert.equal(rows.length,3); assert.equal(new Set(rows.map(row=>row.roundSettlementId)).size,1);
+  assert.deepEqual(q.lastResult.changes,{[f.users[0].id]:-20,[f.users[1].id]:-20,[f.users[2].id]:40});
+  assert.equal(f.room.hand.miniChanges[f.users[0].id],0,'between-hand settlement must not rewrite the finished hand');
+  f.cmd(0,'stand',{...firstQuote,commandId:firstId});f.cmd(1,'sitout',{value:true,...secondQuote,commandId:secondId});
+  assert.equal(f.store.data.ledger.filter(row=>row.type==='squidSettlement').length,3); conserved(f.room);
 });
 
 test('ordinary automatic dealing excludes offline players and requires two online players', t => {
@@ -94,27 +118,27 @@ test('ordinary automatic dealing excludes offline players and requires two onlin
   assert.deepEqual(f.room.hand.players.map(p => p.id), [f.users[0].id, f.users[1].id]); conserved(f.room);
 });
 
-test('offline squid permits ordinary dealing; only observed continuous 90 seconds permits partial settlement between hands', t => {
+test('an absent squid player does not block two peers; insufficient players require continuous observed 90-second waiting', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.win(0); f.connect(1, false);
-  const since = f.room.mini.squid.blockerSince; assert.equal(since, f.time); assert.ok(Number.isFinite(f.room.nextHandAt));
-  // Isolate the server grace clock from the independent automatic ordinary deals.
-  f.cmd(0, 'autoDeal', { paused: true }); assert.equal(f.room.nextHandAt, null);
-  assert.throws(() => f.cmd(0, 'settleSquid', { timestamp: f.time + 90000 }), /90 秒/);
-  f.advance(89999); assert.equal(f.service.state(f.room, f.users[0].id).mini.squid.canSettle, false);
-  f.connect(1, true); assert.equal(f.room.mini.squid.blockerSince, null); f.connect(1, false);
-  assert.equal(f.room.mini.squid.blockerSince, f.time); f.advance(90000); f.service.tick(f.room, f.time);
-  f.connect(3, true); assert.throws(() => f.cmd(3, 'settleSquid'), /90 秒/);
-  assert.equal(f.service.state(f.room, f.users[0].id).mini.squid.canSettle, true); f.cmd(0, 'settleSquid');
-  assert.deepEqual(f.room.mini.squid.lastResult.changes, { [f.users[0].id]: 40, [f.users[1].id]: -20, [f.users[2].id]: -20 }); conserved(f.room);
+  assert.equal(f.room.mini.squid.blockerSince,null);assert.ok(Number.isFinite(f.room.nextHandAt));assert.equal(f.service.state(f.room,f.users[2].id).mini.squid.paused,false);
+  f.connect(0,false); // Leave one unmarked player online, so nobody can finish the round by themselves.
+  const since=f.room.mini.squid.blockerSince;assert.equal(since,f.time);assert.equal(f.room.nextHandAt,null);
+  assert.throws(() => f.cmd(2,'settleSquid',{timestamp:f.time+90000}),/90 秒/);
+  f.advance(89999);assert.equal(f.service.state(f.room,f.users[2].id).mini.squid.canSettle,false);
+  f.connect(1,true);assert.equal(f.room.mini.squid.blockerSince,null);f.connect(1,false);
+  assert.equal(f.room.mini.squid.blockerSince,f.time);f.advance(90000);f.service.tick(f.room,f.time);
+  f.connect(3,true);assert.throws(()=>f.cmd(3,'settleSquid'),/90 秒/);
+  assert.equal(f.service.state(f.room,f.users[2].id).mini.squid.canSettle,true);f.cmd(2,'settleSquid');
+  assert.deepEqual(f.room.mini.squid.lastResult.changes,{[f.users[0].id]:40,[f.users[1].id]:-20,[f.users[2].id]:-20});conserved(f.room);
 });
 
 test('restart resets the observation grace and GET projections never mutate saved lifecycle state', t => {
-  const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.win(0); f.connect(1, false); f.advance(90000);
+  const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.win(0); f.connect(0, false); f.connect(1, false); f.advance(90000);
   const data = structuredClone(f.store.data), r = data.rooms[f.room.code], recovered = new RoomService({ data });
-  recovered.connections.set(`${r.code}:${f.users[0].id}`, 1); const before = structuredClone(data);
-  assert.equal(recovered.state(r, f.users[0].id).mini.squid.canSettle, false); assert.deepEqual(data, before);
+  recovered.connections.set(`${r.code}:${f.users[2].id}`, 1); const before = structuredClone(data);
+  assert.equal(recovered.state(r, f.users[2].id).mini.squid.canSettle, false); assert.deepEqual(data, before);
   recovered.connectionChanged(r, f.time, { reconnected: true }); assert.equal(r.mini.squid.blockerSince, f.time);
-  assert.equal(recovered.canSettleSquid(r, f.users[0].id, f.time + 89999), false); assert.equal(recovered.canSettleSquid(r, f.users[0].id, f.time + 90000), true); conserved(r);
+  assert.equal(recovered.canSettleSquid(r, f.users[2].id, f.time + 89999), false); assert.equal(recovered.canSettleSquid(r, f.users[2].id, f.time + 90000), true); conserved(r);
 });
 
 test('closing an unfinished round preserves earned markers and returns the unused reserve exactly once', t => {

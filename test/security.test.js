@@ -34,7 +34,7 @@ function fixture(settings = {}) {
   };
   return { store, users, service, room, command };
 }
-function seat(f, count = 3) { for (let i = 0; i < count; i++) f.command(i, 'sit', { seat: i, amount: 1000 }); }
+function seat(f, count = 3) { for (let i = 0; i < count; i++) { f.command(i, 'sit', { seat: i, amount: 1000 }); f.service.connections.set(`${f.room.code}:${f.users[i].id}`, 1); } }
 function finishWithFolds(f) {
   for (let i = 0; f.room.hand.status === 'playing'; i++) {
     assert.ok(i < 30);
@@ -256,6 +256,7 @@ test('regression: career curve applies an earlier room refund before hands from 
   for (let i = 0; i < 3; i++) {
     if (i) f.service.join(f.users[i], second.code, second.invite);
     command(i, 'sit', { seat: i, amount: 1000 });
+    f.service.connections.set(`${second.code}:${f.users[i].id}`, 1);
   }
   command(0, 'start');
   while (second.hand.status === 'playing') command(f.users.findIndex(u => u.id === second.hand.actingId), 'fold');
@@ -309,7 +310,7 @@ test('security: failed HTTP persistence rolls back the full attempted action and
   const room = app.service.create(user, { settings: { approvalRequired: false } });
   const peer = { id: 'rollback-peer', name: '朋友', avatar: 1 };
   app.store.data.users.peer = peer; app.service.join(peer, room.code, room.invite);
-  for (const [i, u] of [user, peer].entries()) app.service.command(u, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() });
+  for (const [i, u] of [user, peer].entries()) { app.service.command(u, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() }); app.service.connections.set(`${room.code}:${u.id}`, 1); }
   app.service.command(user, room.code, { type: 'start', commandId: randomUUID() }); app.store.save();
   const before = structuredClone(app.store.data), disk = readFileSync(app.store.file);
   const endpoint = `http://127.0.0.1:${app.server.address().port}/api/rooms/${room.code}/action`;

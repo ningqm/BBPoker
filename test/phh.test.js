@@ -66,6 +66,7 @@ async function recoveredHistory() {
     app.service.join(users[1], code, room.invite);
     command(users[0], 'sit', { seat: 0, amount: 1000 });
     command(users[1], 'sit', { seat: 5, amount: 1000 });
+    for (const user of users) app.service.connections.set(`${code}:${user.id}`, 1);
     command(users[0], 'start');
     const beforeLog = structuredClone(room.hand.log);
     app.store.save();

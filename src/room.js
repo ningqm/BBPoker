@@ -7,16 +7,18 @@ import { calculateEquity } from './equity.js';
 import { aggregateAnalytics } from './analytics.js';
 import { recordFilters, resultMatches, recordTotals, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
 
-const MAX_BUYIN = 1000000000;
+// At most 30 members can fund a room; keep even their summed ledger safe.
+const MAX_TOTAL_BUYIN = Math.floor(Number.MAX_SAFE_INTEGER / 30);
+const BUYIN_MIN_BB = 100, BUYIN_MAX_BB = 1000, BUYIN_STEP_BB = 50;
 const TIME_BANK_WINDOW = 30 * 60 * 1000;
 const MINI_CUTOFF = 5 * 60 * 1000;
 const AUTO_DEAL_DELAY = 5000;
 const SQUID_BLOCK_GRACE = 90000, EMPTY_ROOM_TIMEOUT = 30 * 60000;
 const RABBIT_START_DELAY = 1000, RABBIT_CARD_DELAY = 650, RABBIT_END_HOLD = 1300;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
-  minBuyIn: 200, maxBuyIn: 2000, minBuyInBB: 20, maxBuyInBB: 200,
+  minBuyIn: 1000, maxBuyIn: 10000, minBuyInBB: BUYIN_MIN_BB, maxBuyInBB: BUYIN_MAX_BB, buyInStepBB: BUYIN_STEP_BB, maxTotalBuyInBB: null,
   actionSeconds: 15, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
-  mushroom: false, mushroomUnit: 5, bombPot: false, bombEveryHands: 10, bombAnteBB: 2,
+  mushroom: false, mushroomUnit: 5, bombPot: false, bombIntervalMinutes: 10, bombAnteBB: 2,
   durationMinutes: 60, timeBankCards: 3, timeBankSeconds: 30 });
 export const now = () => new Date().toISOString();
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -50,25 +52,24 @@ export function settingsFor(input = {}, original = DEFAULTS) {
   const s = { ...DEFAULTS, ...original };
   for (const k of Object.keys(DEFAULTS)) if (own(input, k)) s[k] = input[k];
   integer(s.maxPlayers, 2, 9, '人数'); integer(s.smallBlind, 1, 1000, '小盲'); integer(s.bigBlind, s.smallBlind * 2, 2000, '大盲');
-  // New clients configure BB units. Old saved rooms and clients can still send
-  // integer point amounts, but never use Infinity as the no-limit sentinel.
-  for (const [points, bb, minimum, maximum] of [['minBuyIn', 'minBuyInBB', 10, MAX_BUYIN], ['maxBuyIn', 'maxBuyInBB', 10, MAX_BUYIN], ['squidUnit', 'squidUnitBB', 1, 1000000]]) {
-    if (own(input, bb)) {
-      const value = input[bb];
-      if (points === 'maxBuyIn' && value === null) s[points] = null;
-      else { integer(value, minimum, Math.floor(maximum / s.bigBlind), bb === 'squidUnitBB' ? '鱿鱼大盲数' : '带入大盲数'); s[points] = value * s.bigBlind; }
-    } else if (!own(input, points) && s.bigBlind !== original.bigBlind) {
-      // Adjust untouched values with a newly chosen blind, while keeping old
-      // non-BB-multiple saved amounts exactly unchanged during ordinary play.
-      s[points] = original[points] === null ? null : original[points] * s.bigBlind / original.bigBlind;
-    }
-    if (!(points === 'maxBuyIn' && s[points] === null)) integer(s[points], points === 'squidUnit' ? 1 : minimum * s.bigBlind, maximum, points === 'squidUnit' ? '鱿鱼积分' : '带入积分');
-    s[bb] = s[points] === null ? null : s[points] / s.bigBlind;
+  // Each transfer has the same limits, including old point-based clients.
+  // Old min/max settings cannot weaken the new rule or cap a winning stack.
+  s.minBuyInBB = BUYIN_MIN_BB; s.maxBuyInBB = BUYIN_MAX_BB; s.buyInStepBB = BUYIN_STEP_BB;
+  s.minBuyIn = BUYIN_MIN_BB * s.bigBlind; s.maxBuyIn = BUYIN_MAX_BB * s.bigBlind;
+  if (s.maxTotalBuyInBB !== null) {
+    integer(s.maxTotalBuyInBB, BUYIN_MIN_BB, Math.floor(MAX_TOTAL_BUYIN / s.bigBlind), '每人本场累计带入上限（BB）');
+    if (s.maxTotalBuyInBB % BUYIN_STEP_BB !== 0) fail('累计带入上限需要是 50 BB 的整数倍');
   }
-  if (s.maxBuyIn !== null && s.maxBuyIn < s.minBuyIn) fail('最高带入不能低于最低带入');
+  if (own(input, 'squidUnitBB')) {
+    integer(input.squidUnitBB, 1, Math.floor(1000000 / s.bigBlind), '鱿鱼大盲数'); s.squidUnit = input.squidUnitBB * s.bigBlind;
+  } else if (!own(input, 'squidUnit') && s.bigBlind !== original.bigBlind) s.squidUnit = original.squidUnit * s.bigBlind / original.bigBlind;
+  integer(s.squidUnit, 1, 1000000, '鱿鱼积分'); s.squidUnitBB = s.squidUnit / s.bigBlind;
+  // Hand-count schedules are deliberately not interpreted as minutes. Old
+  // open tables migrate to the default 10-minute clock on their next start.
+  delete s.bombEveryHands;
   integer(s.actionSeconds, 15, 90, '思考时间'); integer(s.durationMinutes, 30, 720, '牌桌时长（分钟）');
   integer(s.timeBankCards, 0, 20, '时间牌数量'); integer(s.timeBankSeconds, 5, 120, '每张时间牌秒数');
-  integer(s.bombEveryHands, 1, 100, '炸弹池间隔手数'); integer(s.bombAnteBB, 1, 1000, '炸弹池前注大盲数');
+  integer(s.bombIntervalMinutes, 1, 120, '炸弹池间隔（分钟）'); integer(s.bombAnteBB, 1, 1000, '炸弹池前注大盲数');
   for (const k of ['approvalRequired', 'squid', 'mushroom', 'bombPot']) if (typeof s[k] !== 'boolean') fail('玩法开关格式错误');
   if (input.mushroom === true) fail('蘑菇玩法已停用，历史牌谱和旧池退款仍保留');
   s.mushroom = false; s.approvalRequired = false;
@@ -98,7 +99,7 @@ export class RoomService {
     let code; do { code = randomBytes(4).readUInt32BE() % 900000 + 100000; } while (this.db.rooms[code]);
     code = String(code);
     const r = { code, name: cleanName(body.name, `${user.name}必赢的局`), hostId: user.id, access, invite: randomBytes(24).toString('base64url'), status: 'waiting', settings,
-      createdAt: now(), updatedAt: now(), revision: 1, rulesVersion: 4, startedAt: null, endsAt: null, autoDealPaused: false, nextHandAt: null, autoWaitReason: null, members: {}, pending: [], hand: null, handNumber: 0, buttonSeat: -1, deadline: null, commandIds: {},
+      createdAt: now(), updatedAt: now(), revision: 1, rulesVersion: 5, startedAt: null, endsAt: null, nextBombAt: null, autoDealPaused: false, nextHandAt: null, autoWaitReason: null, members: {}, pending: [], hand: null, handNumber: 0, buttonSeat: -1, deadline: null, commandIds: {},
       mini: { squid: { active: false, round: 0, participants: [], won: [], reserves: {}, unit: settings.squidUnit, lastResult: null }, mushroom: { pool: 0, unit: settings.mushroomUnit, contributions: {}, smallBlindId: null, lastResult: null } } };
     this.db.rooms[code] = r; this.joinMember(r, user); this.syncLifecycle(r); return r;
   }
@@ -230,14 +231,22 @@ export class RoomService {
   }
   buyin(r, m, cmd) { this.idle(r); if (m.seat === null) fail('请先选择座位'); this.requestBuyin(r, m, m.seat, this.buyinAmount(r, cmd)); }
   buyinAmount(r, cmd) {
-    const amount = own(cmd, 'amountBB') ? integer(cmd.amountBB, 1, Math.floor(MAX_BUYIN / r.settings.bigBlind), '带入大盲数') * r.settings.bigBlind : cmd.amount;
-    if (r.rulesVersion >= 2 && (!Number.isSafeInteger(amount) || amount % r.settings.bigBlind !== 0)) fail('带入需要是完整的大盲数量');
+    const amount = own(cmd, 'amountBB') ? integer(cmd.amountBB, BUYIN_MIN_BB, BUYIN_MAX_BB, '单次带入大盲数') * r.settings.bigBlind : cmd.amount;
+    this.validateBuyin(r, null, amount);
     return amount;
   }
+  validateBuyin(r, m, amount) {
+    const bb = r.settings.bigBlind;
+    integer(amount, BUYIN_MIN_BB * bb, BUYIN_MAX_BB * bb, '单次带入积分');
+    if (amount % (BUYIN_STEP_BB * bb) !== 0) fail('每次带入需要是 50 BB 的整数倍（100–1000 BB）');
+    if (!m) return;
+    const total = m.totalBuyIn + amount;
+    if (!Number.isSafeInteger(total) || total > MAX_TOTAL_BUYIN) fail('本场累计带入超过安全计数范围');
+    const limitBB = r.settings.maxTotalBuyInBB;
+    if (limitBB != null && total > limitBB * bb) fail(`本场累计带入不能超过 ${limitBB} BB（已带入 ${m.totalBuyIn / bb} BB）`);
+  }
   requestBuyin(r, m, seat, amount) {
-    integer(amount, m.seat === null ? r.settings.minBuyIn : 1, r.settings.maxBuyIn ?? MAX_BUYIN, '带入积分');
-    if (r.settings.maxBuyIn !== null && m.stack + amount > r.settings.maxBuyIn) fail(`补码后桌上积分不能超过 ${r.settings.maxBuyIn}`);
-    if (m.totalBuyIn + amount > MAX_BUYIN) fail('本场累计带入达到上限');
+    this.validateBuyin(r, m, amount);
     const request = { id: randomUUID(), playerId: m.id, name: this.user(m.id).name, seat, amount, at: now() };
     // A fresh valid request replaces only this player's uncredited legacy
     // approval request; other players' reserved seats remain protected.
@@ -251,7 +260,7 @@ export class RoomService {
     if (m.seat !== null) this.idle(r);
     if (m.seat === null && Object.values(this.db.rooms).some(other => other.code !== r.code && other.status !== 'closed' && other.members[m.id]?.seat != null)) fail('你已在另一桌入座，请先离座后再加入本桌', 409);
     if (Object.values(r.members).some(x => x.id !== m.id && x.seat === p.seat)) fail('座位已被占用');
-    if (r.settings.maxBuyIn !== null && m.stack + p.amount > r.settings.maxBuyIn) fail('申请后筹码已变化，请重新申请带入');
+    this.validateBuyin(r, m, p.amount);
     if (m.seat === null) m.waitingSquidRound = r.mini.squid.active && !r.mini.squid.participants.includes(m.id) ? r.mini.squid.round : null;
     if (m.seat === null) markEntrySeat(r, m, p.seat);
     m.seat = p.seat; m.stack += p.amount; m.totalBuyIn += p.amount; m.sittingOut = false; m.pendingDeparture = null;
@@ -295,6 +304,7 @@ export class RoomService {
     if (r.mini.squid.active || r.mini.mushroom.pool > 0) fail('小游戏尚有进行中的轮次或积累池，请先结束整场后新建房间');
     if (r.pending.length) fail('请先处理带入申请');
     if (Object.values(r.members).some(m => m.seat !== null && m.seat >= next.maxPlayers)) fail('减少人数前，请让超出座位范围的玩家离座');
+    if (next.maxTotalBuyInBB !== null && Object.values(r.members).some(m => m.totalBuyIn > next.maxTotalBuyInBB * next.bigBlind)) fail('累计带入上限不能低于本场已有带入');
     r.settings = next; r.mini.squid.unit = next.squidUnit; r.mini.mushroom.unit = next.mushroomUnit;
   }
   online(r, id) { return (this.connections.get(`${r.code}:${id}`) ?? 0) > 0; }
@@ -395,6 +405,11 @@ export class RoomService {
     const q = r.mini.squid, block = this.squidBlock(r);
     return Boolean(r.hand?.status !== 'playing' && block && q.participants.includes(userId) && this.online(r, userId) && q.blockerEpoch === this.observationId && q.blockerKey === block.key && Number.isFinite(q.blockerSince) && timestamp - q.blockerSince >= SQUID_BLOCK_GRACE);
   }
+  bombDueAt(r, settings = r.settings) {
+    if (r.status === 'closed' || !settings.bombPot || !Number.isFinite(r.startedAt)) return null;
+    if (Number.isFinite(r.nextBombAt)) return r.nextBombAt;
+    return r.startedAt + (settings.bombIntervalMinutes ?? DEFAULTS.bombIntervalMinutes) * 60000;
+  }
   prepareStart(r, timestamp = Date.now(), { requireOnline = false } = {}) {
     let candidates = Object.values(r.members).filter(m => m.seat !== null && !m.sittingOut && m.stack > 0 && (!requireOnline || this.online(r, m.id))).sort((a, b) => a.seat - b.seat);
     const s = settingsFor({}, r.settings), squid = r.mini.squid;
@@ -404,9 +419,10 @@ export class RoomService {
       candidates = candidates.filter(m => squid.participants.includes(m.id));
     }
     if (candidates.length < 2) fail('至少需要两位已入座且有积分的朋友');
-    // A bomb hand has no natural big blind. Use an ordinary hand whenever
-    // someone is waiting to enter, including an every-hand bomb configuration.
-    const bombPot = s.bombPot && mayStartMini && (r.handNumber + 1) % s.bombEveryHands === 0 && !candidates.some(m => needsEntry(r, m));
+    // A due timer waits for the next eligible hand; it never interrupts play
+    // or stacks missed occurrences. Entry still gets a natural blind first.
+    const bombAt = this.bombDueAt(r, s);
+    const bombPot = s.bombPot && mayStartMini && bombAt !== null && timestamp >= bombAt && !candidates.some(m => needsEntry(r, m));
     let entryPlan = planEntry(r, candidates, { bombPot });
     const newSquid = s.squid && !squid.active && mayStartMini && entryPlan.players.length === candidates.length;
     if (newSquid && candidates.length < 3) fail('鱿鱼玩法至少需要三人');
@@ -448,6 +464,8 @@ export class RoomService {
     this.refreshTimeBanks(r, timestamp);
     const h = createHand({ id: randomUUID(), players: players.map(m => ({ id: m.id, name: this.user(m.id).name, seat: m.seat, stack: m.stack })), buttonSeat, smallBlind: s.smallBlind, bigBlind: s.bigBlind,
       entryPosts: entryPlan.posts, bombPot, ante: bombPot ? s.bombAnteBB * s.bigBlind : 0, deferredRunout: true });
+    // Commit the clock only after the hand is successfully constructed.
+    r.nextBombAt = !s.bombPot ? null : bombPot ? timestamp + s.bombIntervalMinutes * 60000 : this.bombDueAt(r, s);
     h.number = ++r.handNumber; h.at = new Date(timestamp).toISOString(); h.roomCode = r.code; h.roomName = r.name; h.settings = copy(s); h.shown = {};
     h.squidRound = squid.active && !ordinaryFallback ? squid.round : null; h.settings.squid = h.squidRound !== null;
     if (h.squidRound !== null) { r.squidOvertimeWaitSince = null; r.squidOvertimeEpoch = null; }
@@ -707,6 +725,7 @@ export class RoomService {
   state(r, viewerId) {
     this.member(r, viewerId); const h = r.hand;
     const timestamp = Date.now(), bank = this.member(r, viewerId).timeBank;
+    const currentSettings = r.status === 'closed' ? r.settings : settingsFor({}, r.settings), nextBombAt = this.bombDueAt(r, currentSettings);
     const timeBankCards = bank?.remaining ?? (r.settings.timeBankCards ?? DEFAULTS.timeBankCards);
     const mini = copy(r.mini), block = this.squidBlock(r);
     const expiry = this.expiryState(r, timestamp);
@@ -726,7 +745,7 @@ export class RoomService {
       runout: h.runout ? { active: h.runout.active, nextAt: h.runout.active ? h.runout.nextAt : null } : null, equity: copy(h.equityFrames?.at(-1)?.equity ?? null),
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
-    return { code: r.code, name: r.name, access: r.access === 'public' ? 'public' : 'invite', status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(r.settings), approvalRequired: false }, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
+    return { code: r.code, name: r.name, access: r.access === 'public' ? 'public' : 'invite', status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(currentSettings), approvalRequired: false }, nextBombAt, bombDue: nextBombAt !== null && timestamp >= nextBombAt, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
       expiryMode: expiry.mode, autoDeal: { paused: own(r, 'autoDealPaused') ? Boolean(r.autoDealPaused) : r.handNumber > 0, nextHandAt: r.nextHandAt ?? null, waitReason: this.autoBlockReason(r, timestamp), delaySeconds: AUTO_DEAL_DELAY / 1000 },
       miniGamesCutoffAt: r.endsAt == null ? null : r.endsAt - MINI_CUTOFF,
       timeBankResetAt: r.startedAt == null ? null : (r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW < r.endsAt ? r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW : null),

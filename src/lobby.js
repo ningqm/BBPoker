@@ -10,7 +10,9 @@ export function lobbyDirectory(db, userId) {
         status: room.hand?.status === 'playing' ? 'playing' : 'waiting', access, joined,
         seatedCount: Object.values(room.members).filter(member => Number.isInteger(member.seat)).length,
         maxPlayers: room.settings.maxPlayers, smallBlind: room.settings.smallBlind, bigBlind: room.settings.bigBlind,
-        squid: room.settings.squid === true, handNumber: room.handNumber ?? 0, endsAt: room.endsAt ?? null,
+        squid: room.settings.squid === true, bombPot: room.settings.bombPot === true,
+        bombIntervalMinutes: room.settings.bombIntervalMinutes ?? 10,
+        handNumber: room.handNumber ?? 0, endsAt: room.endsAt ?? null,
         canJoin: joined || (access === 'public' && Object.keys(room.members).length < 30) };
     });
   return { rooms, limit: 10 };

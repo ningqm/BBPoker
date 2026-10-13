@@ -124,3 +124,38 @@ test('advanced filters reject malformed inputs rather than silently widening the
   ]) assert.throws(() => recordFilters(query), error => error.status === 400, JSON.stringify(query));
   for (const maxHands of ['all', '1', '100000', 7]) assert.ok(recordFilters({ maxHands }));
 });
+
+test('opponent appearance uses current profiles by stable ID and projects only the public whitelist', () => {
+  const f = fixture(), hand = f.add('own'), peer = f.users[1];
+  Object.assign(peer, { name: '新的昵称', avatar: 8, avatarImage: 'a'.repeat(32) });
+  delete f.db.users.alice; f.db.users['legacy-private-token-key'] = peer;
+  for (const key of ['username', 'passwordHash', 'recoveryHash', 'token', 'sessions', 'avatarUpload']) {
+    Object.defineProperty(peer, key, { enumerable: true, get() { throw new Error(`must not read private profile ${key}`); } });
+  }
+  Object.defineProperty(hand.players.find(p => p.id === 'alice'), 'cards', { get() { throw new Error('must not inspect opponent cards'); } });
+  const result = f.service.handLibrary('me'), row = rowFor(result, 'alice');
+  assert.deepEqual([row.id, row.name, row.avatar, row.avatarImage], ['alice', '新的昵称', 8, 'a'.repeat(32)]);
+  assert.deepEqual(Object.keys(row).sort(), ['id', 'name', 'avatar', 'avatarImage', 'hands', 'net', 'netBB', 'bbHands', 'wins', 'losses', 'even', 'headsUpHands', 'headsUpNet', 'headsUpNetBB', 'headsUpBBHands', 'lastAt'].sort());
+  assert.deepEqual(result.opponentOptions, [{ id: 'alice', name: '新的昵称' }]);
+  Object.assign(peer, { avatar: 3, avatarImage: 'b'.repeat(32) });
+  const updated = rowFor(f.service.handLibrary('me'), 'alice');
+  assert.deepEqual([updated.avatar, updated.avatarImage], [3, 'b'.repeat(32)]);
+  assert.deepEqual([updated.hands, updated.net, updated.netBB], [row.hands, row.net, row.netBB]);
+  assert.deepEqual(f.service.handLibrary('observer').opponents.rows, []);
+});
+
+test('opponent appearance sanitizes invalid or missing metadata and never lists unmet accounts', () => {
+  const f = fixture(); f.add('own'); const peer = f.users[1];
+  Object.assign(f.users[4], { avatar: 11, avatarImage: 'f'.repeat(32) });
+  const bad = { toString() { throw new Error('avatar values must not be coerced'); } };
+  for (const [avatar, avatarImage] of [[-1, '../private'], [12, 'A'.repeat(32)], ['2', ['a'.repeat(32)]], [1.5, 'data:image/png;base64,private'], [bad, bad], [undefined, undefined]]) {
+    Object.assign(peer, { avatar, avatarImage });
+    const result = f.service.handLibrary('me'), row = rowFor(result, 'alice');
+    assert.equal(row.avatar, 0); assert.equal(row.avatarImage, null);
+    assert.deepEqual(result.opponents.rows.map(row => row.id), ['alice']);
+    assert.equal(JSON.stringify(result.opponents).includes('f'.repeat(32)), false);
+  }
+  delete f.db.users.alice;
+  const missing = rowFor(f.service.handLibrary('me'), 'alice');
+  assert.deepEqual([missing.name, missing.avatar, missing.avatarImage], ['alice', 0, null]);
+});

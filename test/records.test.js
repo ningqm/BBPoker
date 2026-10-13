@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+const pointTotals = ({ bb, ...points }) => points;
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -90,7 +91,7 @@ test('hand result/date/type/text filters apply before pagination and totals cove
   const first=f.service.handLibrary('me',query),second=f.service.handLibrary('me',{...query,before:first.nextCursor});
   assert.equal(first.hands.length,2);assert.equal(second.hands.length,1);assert.equal(second.nextCursor,null);
   assert.equal(new Set([...first.hands,...second.hands].map(h=>h.id)).size,3);
-  assert.deepEqual(first.totals,{count:3,net:45,holdemNet:10,miniNet:35,wins:3,losses:0,even:0});assert.deepEqual(second.totals,first.totals);
+  assert.deepEqual(pointTotals(first.totals), {count:3,net:45,holdemNet:10,miniNet:35,wins:3,losses:0,even:0});assert.deepEqual(second.totals,first.totals);
   for(const item of [...first.hands,...second.hands]){assert.equal(item.participated,true);assert.equal(item.totalNet,item.net+item.miniNet);assert.equal(item.players,undefined);assert.equal(item.deck,undefined);assert.equal(item.log,undefined);assert.deepEqual(item.cards,f.store.data.hands.find(h=>h.id===item.id).players.find(p=>p.id==='me').cards);}
   assert.equal(f.service.handLibrary('me',{...query,result:'loss'}).hands[0].id,'loss');
   assert.equal(f.service.handLibrary('me',{...query,result:'even'}).hands[0].id,'even');
@@ -108,7 +109,7 @@ test('session lists filter and paginate stable ties, with aggregate totals and n
   const first=f.service.sessions('me',query),second=f.service.sessions('me',{...query,before:first.nextCursor});
   assert.equal(first.sessions.length,2);assert.equal(second.sessions.length,1);
   assert.equal(new Set([...first.sessions,...second.sessions].map(r=>r.code)).size,3);
-  assert.deepEqual(first.totals,{count:3,net:45,holdemNet:30,miniNet:15,wins:3,losses:0,even:0});assert.deepEqual(first.totals,second.totals);
+  assert.deepEqual(pointTotals(first.totals), {count:3,net:45,holdemNet:30,miniNet:15,wins:3,losses:0,even:0});assert.deepEqual(first.totals,second.totals);
   for(const row of [...first.sessions,...second.sessions]){assert.equal(row.players,undefined);assert.equal(row.id,undefined);noSecrets(row);}
   assert.equal(f.service.sessions('me',{...query,status:'active'}).sessions.length,0);
   assert.equal(f.service.sessions('me',{q:'100002'}).sessions[0].code,'100002');

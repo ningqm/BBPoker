@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import * as lifecycle from '../public/lifecycle.js';
+import * as money from '../public/money.js';
 import {createRequestGuard} from '../public/platform.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
@@ -12,7 +13,7 @@ function harness(){
   const requests=createRequestGuard(),timers=new Map(),pending=[],paths=[],messages=[],commands=[];
   const state={user:{id:'a'},page:'lobby',rooms:[],timeOffset:0,lobby:{rooms:[],filter:'all',loading:false,loaded:false,error:'',request:0,timer:null,controller:null,joining:'',limit:10}};
   let sequence=0,renders=0;
-  const context=vm.createContext({lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
+  const context=vm.createContext({...money,lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
     clearTimeout:id=>timers.delete(id),setTimeout:(fn,ms)=>{timers.set(++sequence,{fn,ms});return sequence;},
     api:(path,body,options={})=>{const result=deferred();pending.push({path,body,options,...result});return result.promise;},
     navigate:path=>paths.push(path),render:()=>renders++,toast:message=>messages.push(message),

@@ -28,7 +28,7 @@ test('only the first hand needs host start; a completed hand deals exactly once 
   assert.equal(service.needsTick(room, f.time + 100000), false);
   f.cmd(0, 'start'); const first = room.hand.id; f.finish();
   assert.equal(room.nextHandAt, f.time + 5000);
-  assert.deepEqual(service.state(room, f.users[1].id).autoDeal, { paused: false, nextHandAt: f.time + 5000, waitReason: null, delaySeconds: 5 });
+  assert.deepEqual(service.state(room, f.users[1].id).autoDeal, { paused: false, nextHandAt: f.time + 5000, waitReason: null, delaySeconds: 5, rebuyGrace: null });
   f.advance(4999); assert.equal(service.tick(room), false);
   assert.throws(() => f.cmd(0, 'start'), e => e.status === 409);
   assert.equal(room.hand.id, first); f.advance(1); assert.equal(service.tick(room), true);

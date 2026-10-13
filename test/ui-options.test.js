@@ -6,23 +6,31 @@ import vm from 'node:vm';
 import {settingsFor} from '../src/room.js';
 import {avatarMarkup,createAvatarCache} from '../public/avatar.js';
 import {reusableRoomSettings} from '../public/room-config.js';
+import * as money from '../public/money.js';
+import {betPresetOptions,betActionLabel,revealOptions,rebuyPrompt} from '../public/table-controls.js';
+import {createTurnCountdown} from '../public/table-feedback.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
-function harness(overrides={}){
-  const modals=[];
-  const context=vm.createContext({lifecycle,avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+function harness({unit='points',...overrides}={}){
+  money.setDisplayUnit(unit);
+  const modals=[],listeners=new Map(),commands=[];
+  const context=vm.createContext({...money,lifecycle,betPresetOptions,betActionLabel,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
-    state:{user:{name:'小鱼'},rooms:[],timeOffset:0},
-    openModal(title,body,kind){modals.push({title,body,kind});context.state.modal={kind};},toast(message){throw new Error(message);},...overrides,
+    state:{user:{name:'小鱼'},rooms:[],timeOffset:0,connected:true,feedbackResync:false},
+    openModal(title,body,kind){modals.push({title,body,kind});context.state.modal={kind};},closeModal(){context.state.modal=null;},
+    async command(type,payload){commands.push({type,...payload});return true;},toast(message){throw new Error(message);},...overrides,
+    document:{querySelectorAll:()=>[],...overrides.document,addEventListener(type,fn){listeners.set(type,fn);}},
   });
   vm.runInContext([
-    section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),
+    section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),section('const card=','const feedback='),
+    section('function seatHoleCards(','function seatView('),section('function actionArea(','function career('),section('function participationNotice(','function rulesModal('),
     section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function tick(){','setInterval(tick,'),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
-    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,updateBuyinSummary,roomClock,miniCutoff,tick,avatar,seatActions};',
+    section("document.addEventListener('submit'",'function resetPrivateView('),
+    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,updateBuyinSummary,roomClock,miniCutoff,tick,syncRebuyPrompt,avatar,seatActions,actionArea};',
   ].join('\n'),context);
-  return {...context.client,modals};
+  return {...context.client,document:context.document,modals,commands,submit(form){return listeners.get('submit')({target:form,preventDefault(){}});}};
 }
 // Form field adapter is built from the real rendered settings, so missing names,
 // disabled controls, null caps and the user's actual typed values are exercised.
@@ -39,10 +47,29 @@ function formFrom(html){
   }
   return {fields,elements:{namedItem:name=>fields.get(name)},matches:()=>true,querySelector:()=>null};
 }
+
+function buyinFormFrom(html){
+  const fields=new Map(),ids=new Map(),buttons=[];
+  const formTag=html.match(/<form\b[^>]*>/)?.[0]||'';
+  const attribute=(tag,name)=>tag.match(new RegExp('(?:^|\\s)'+name+'="([^"]*)"'))?.[1];
+  const dataset=Object.fromEntries(['seat','big-blind','unit'].map(key=>[key.replace(/-([a-z])/g,(_,c)=>c.toUpperCase()),attribute(formTag,'data-'+key)]));
+  for(const [tag] of html.matchAll(/<input\b[^>]*>/g)){
+    const field={id:attribute(tag,'id'),name:attribute(tag,'name'),type:attribute(tag,'type'),value:attribute(tag,'value')||'',
+      min:attribute(tag,'min'),max:attribute(tag,'max'),step:attribute(tag,'step'),disabled:/\sdisabled(?:\s|>)/.test(tag),
+      checked:/\schecked(?:\s|>)/.test(tag),attributes:{},validationMessage:'',setAttribute(k,v){this.attributes[k]=v;},setCustomValidity(message){this.validationMessage=message;}};
+    if(field.id)ids.set('#'+field.id,field);
+    if(field.name&&(field.type!=='radio'||field.checked||!fields.has(field.name)))fields.set(field.name,field);
+  }
+  for(const [tag] of html.matchAll(/<button\b[^>]*data-action="buyin-preset"[^>]*>/g))buttons.push({dataset:{value:attribute(tag,'data-value')},classList:{toggle(){}},setAttribute(){}});
+  const summary={textContent:''},submit={disabled:/type="submit" disabled/.test(html),isConnected:true};
+  return {id:'buyin-form',dataset,fields,ids,elements:{namedItem:name=>fields.get(name)},
+    querySelector:selector=>selector==='[data-buyin-points]'?summary:selector==='[type=submit]'?submit:ids.get(selector)||null,
+    querySelectorAll:()=>buttons,summary};
+}
 test('room presets submit BB settings, direct buy-in and defaults without hidden mushroom/approval controls',()=>{
   const c=harness(),html=c.settingFields(c.defaults),form=formFrom(html),s=c.readSettings(form);
   assert.equal(s.smallBlind,5);assert.equal(s.bigBlind,10);assert.equal(s.minBuyInBB,100);assert.equal(s.maxBuyInBB,1000);
-  assert.equal(s.actionSeconds,15);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
+  assert.equal(s.actionSeconds,30);assert.equal(settingsFor({}).actionSeconds,30);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
   assert.equal(s.bombPot,false);assert.equal(s.bombAnteBB,2);assert.equal(s.bombIntervalMinutes,10);
   assert.equal(s.squid,false);assert.equal(s.squidUnitBB,2);
   assert.doesNotThrow(()=>settingsFor(s));
@@ -67,22 +94,38 @@ test('disabled mini-game amounts retain valid preferences and discard an invalid
   form.fields.get('bombPot').checked=true;form.fields.get('bombAnteBB').disabled=false;form.fields.get('bombAnteBB').value='7';
   assert.equal(c.readSettings(form).bombPot,true);assert.equal(c.readSettings(form).bombAnteBB,7);
 });
-test('buy-ins cap each transaction and cumulative spend, independently of remaining stack',()=>{
-  const c=harness();c.state.room={meId:'a',settings:{...c.defaults,maxTotalBuyInBB:1000},players:[{id:'a',seat:0,stack:55,totalBuyIn:8000}]};
-  c.buyinModal();let html=c.modals.at(-1).body;assert.match(html,/name="amountBB"[^>]*min="100" max="200" step="50"/);assert.match(html,/合计 2,000 积分/);assert.match(html,/剩余 200 BB/);
-  c.state.room.players[0].totalBuyIn=9500;c.buyinModal();html=c.modals.at(-1).body;assert.match(html,/剩余额度不足/);assert.match(html,/type="submit" disabled/);
-  c.state.room.settings.maxTotalBuyInBB=null;c.buyinModal();html=c.modals.at(-1).body;assert.match(html,/本场累计带入不限/);assert.match(html,/name="amountBB"[^>]*max="1000"/);
-  c.state.room.players[0].seat=null;c.state.room.settings.maxTotalBuyInBB=1000;c.state.room.players[0].totalBuyIn=8500;c.buyinModal(2);html=c.modals.at(-1).body;assert.match(html,/name="amountBB"[^>]*max="150"/);assert.match(html,/剩余 150 BB/);
-});
-test('BB sliders, numbers and shortcuts stay synchronized without coercing invalid typed amounts',()=>{
-  const c=harness(),input={value:'200',min:'100',max:'1000',disabled:false},range={value:'200',attrs:{},setAttribute(k,v){this.attrs[k]=v;}},summary={textContent:''},selected=[];
-  const buttons=[100,200,500,1000].map(value=>({dataset:{value:String(value)},classList:{toggle:(k,v)=>{if(v)selected.push(value);}},setAttribute(){}}));
-  const form={id:'buyin-form',dataset:{bigBlind:'10'},elements:{namedItem:()=>input},querySelector:q=>q==='#buyin-range'?range:summary,querySelectorAll:()=>buttons};
-  c.updateBuyinSummary(form,{id:'buyin-range',value:'500'});assert.equal(input.value,'500');assert.equal(range.value,'500');assert.equal(summary.textContent,'合计 5,000 积分');assert.equal(range.attrs['aria-valuetext'],'500 BB');
-  input.value='150';c.updateBuyinSummary(form);assert.equal(range.value,'150');assert.equal(summary.textContent,'合计 1,500 积分');
-  input.value='125';c.updateBuyinSummary(form);assert.equal(input.value,'125');assert.equal(range.value,'150');assert.match(summary.textContent,/50 BB 的整数倍/);
-  input.value='';c.updateBuyinSummary(form);assert.match(summary.textContent,/50 BB 的整数倍/);
-});
+for(const unit of ['bb','points']){
+  test(`${unit} buy-ins retain the 100–1000 BB transaction limits and cumulative cap`,()=>{
+    const c=harness({unit}),scale=unit==='bb'?1:10;
+    c.state.room={meId:'a',settings:{...c.defaults,maxTotalBuyInBB:1000},players:[{id:'a',seat:0,stack:55,totalBuyIn:8000}]};
+    c.buyinModal();let form=buyinFormFrom(c.modals.at(-1).body),input=form.fields.get('amountDisplay');
+    assert.equal(input.min,String(100*scale));assert.equal(input.max,String(200*scale));assert.equal(input.step,String(50*scale));
+    assert.equal(input.value,String(200*scale));assert.equal(form.fields.get('amountBB').value,'200');
+    c.state.room.players[0].totalBuyIn=9500;c.buyinModal();assert.match(c.modals.at(-1).body,/剩余额度不足/);assert.match(c.modals.at(-1).body,/type="submit" disabled/);
+    c.state.room.settings.maxTotalBuyInBB=null;c.buyinModal();form=buyinFormFrom(c.modals.at(-1).body);
+    assert.equal(form.fields.get('amountDisplay').max,String(1000*scale));assert.match(c.modals.at(-1).body,/本场累计带入不限/);
+    c.state.room.players[0].seat=null;c.state.room.settings.maxTotalBuyInBB=1000;c.state.room.players[0].totalBuyIn=8500;c.buyinModal(2);form=buyinFormFrom(c.modals.at(-1).body);
+    assert.equal(form.fields.get('amountDisplay').max,String(150*scale));assert.equal(form.fields.get('amountBB').value,'150');
+  });
+  test(`${unit} sliders and typed amounts submit exact BB payloads without rounding invalid entries`,async()=>{
+    const c=harness({unit}),scale=unit==='bb'?1:10;
+    c.state.room={meId:'a',settings:{...c.defaults,maxTotalBuyInBB:null},players:[{id:'a',seat:null,stack:0,totalBuyIn:0}]};
+    c.buyinModal(2);const form=buyinFormFrom(c.modals.at(-1).body),input=form.fields.get('amountDisplay'),range=form.ids.get('#buyin-range'),stored=form.fields.get('amountBB');
+    c.updateBuyinSummary(form,{id:'buyin-range',value:'500'});
+    assert.equal(input.value,String(500*scale));assert.equal(range.value,'500');assert.equal(stored.value,'500');
+    assert.equal(form.summary.textContent,unit==='bb'?'带入 500 BB':'带入 5,000 积分');
+    for(const amountBB of [100,150,1000]){
+      input.value=String(amountBB*scale);c.updateBuyinSummary(form);await c.submit(form);
+      assert.equal(range.value,String(amountBB));assert.equal(stored.value,String(amountBB));
+      assert.deepEqual(JSON.parse(JSON.stringify(c.commands.at(-1))),{type:'sit',amountBB,seat:2,entryMode:'wait'});
+    }
+    for(const invalid of [50,125,1050]){
+      input.value=String(invalid*scale);c.updateBuyinSummary(form);
+      assert.equal(input.value,String(invalid*scale));assert.equal(stored.value,'');assert.notEqual(input.validationMessage,'');
+    }
+    input.value='';c.updateBuyinSummary(form);assert.equal(stored.value,'');assert.notEqual(input.validationMessage,'');
+  });
+}
 test('room duration and mini cutoff are computed against supplied server time, including an active final hand',()=>{
   const c=harness(),room={status:'playing',settings:{durationMinutes:60},endsAt:3600000,miniGamesCutoffAt:3300000};
   assert.equal(c.roomClock(room,0),'剩余 60:00');assert.equal(c.miniCutoff(room,3299999),false);assert.equal(c.miniCutoff(room,3300000),true);
@@ -96,9 +139,12 @@ test('avatar images use fixed local paths and malicious profile data never becom
 
 
 test('the final hand can still be voluntarily shown after a timed table closes and players are stood up',()=>{
-  const c=harness(),room={status:'closed',hand:{status:'complete'}},me={seat:null,inHand:true};
-  assert.match(c.seatActions(room,me),/data-action="show"/);
-  assert.doesNotMatch(c.seatActions(room,me),/data-action="(?:buyin|sitout|stand)"/);
+  const c=harness(),me={id:'hero',seat:null,inHand:true,cards:['As','Kh'],shownIndices:[]},room={meId:'hero',status:'closed',hand:{id:'last-hand',status:'complete'},players:[me],settings:{bigBlind:10}};
+  c.state.connected=true;c.state.room=room;
+  const html=c.actionArea(room,me,true);assert.match(html,/detached-final-cards/);assert.equal((html.match(/data-action="show-card"/g)||[]).length,2);assert.match(html,/data-hand="last-hand"/);
+  assert.doesNotMatch(html,/data-action="(?:buyin|sitout|stand|show)"/);assert.equal(c.seatActions(room,me),'');
+  me.seat=0;assert.doesNotMatch(c.actionArea(room,me,true),/detached-final-cards|data-action="show-card"/);
+  me.seat=null;me.inHand=false;assert.doesNotMatch(c.actionArea(room,me,true),/detached-final-cards|data-action="show-card"/);
   assert.equal(c.seatActions(room,{seat:null,inHand:false}),'');
 });
 
@@ -161,7 +207,7 @@ test('mid-session buy-in defaults to waiting for a big blind and quotes a return
   const c=harness();c.state.room={meId:'a',startedAt:1,settings:{...c.defaults,minBuyIn:200,maxBuyIn:2000},players:[{id:'a',seat:null,stack:0}]};
   c.buyinModal(2);let html=c.modals.at(-1).body;assert.match(html,/name="entryMode" value="wait" checked/);assert.match(html,/补盲加入 · 10 积分/);assert.match(html,/等过庄/);assert.match(html,/全员等盲无法开牌/);
   c.state.room.players[0].entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};c.buyinModal(3);html=c.modals.at(-1).body;
-  assert.match(html,/补盲加入 · 15 积分/);assert.match(html,/补小盲 5 不抵跟注/);
+  assert.match(html,/补盲加入 · 15 积分/);assert.match(html,/补小盲 5 积分 不抵跟注/);
   c.state.room.players[0].seat=0;c.buyinModal();assert.doesNotMatch(c.modals.at(-1).body,/name="entryMode"/);
 });
 
@@ -172,4 +218,64 @@ test('bomb presets and custom minutes submit a timer rather than a hand count',(
   assert.equal(c.readSettings(form).bombIntervalMinutes,15);assert.equal(hidden,true);assert.equal(c.readSettings(form).bombEveryHands,undefined);
   c.applySettingPreset({dataset:{value:'custom'},closest:()=>form,parentElement:{querySelectorAll:()=>[]}},'bomb');
   assert.equal(hidden,false);form.fields.get('bombIntervalMinutes').value='23';assert.equal(c.readSettings(form).bombIntervalMinutes,23);
+});
+
+function rebuyRoom(c){
+  const room={code:'rebuy-room',meId:'hero',status:'waiting',hand:{id:'busted-hand',status:'complete'},settings:{...c.defaults},players:[{id:'hero',seat:0,stack:0,totalBuyIn:2000}],autoDeal:{paused:false,rebuyGrace:{handId:'busted-hand',pendingIds:['hero'],startsAt:5000,endsAt:10000}}};
+  Object.assign(c.state,{room,page:'room',connected:true,busy:false,timeOffset:6000-Date.now()});return room;
+}
+
+test('automatic rebuy prompts once in the extra window, never submits money, and dismissing it does not extend time',()=>{
+  const c=harness(),room=rebuyRoom(c),before=JSON.stringify(room.autoDeal.rebuyGrace);
+  c.syncRebuyPrompt(room,4999);assert.equal(c.modals.length,0);
+  c.syncRebuyPrompt(room,6000);assert.equal(c.modals.length,1);assert.equal(c.state.modal.autoRebuyHand,'busted-hand');assert.match(c.modals[0].body,/data-rebuy-countdown/);assert.equal(c.commands.length,0);
+  c.state.modal=null;c.syncRebuyPrompt(room,7000);assert.equal(c.modals.length,1);assert.equal(JSON.stringify(room.autoDeal.rebuyGrace),before);
+  c.syncRebuyPrompt(room,10000);assert.equal(c.modals.length,1);assert.equal(c.commands.length,0);
+});
+
+test('rebuy prompt defers behind other dialogs and hidden/offline states, then closes only its own expired dialog',()=>{
+  const v=harness({document:{visibilityState:'hidden'}}),r=rebuyRoom(v);
+  v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);
+  v.state.connected=false;v.document.visibilityState='visible';v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);
+  v.state.connected=true;v.state.modal={kind:'hand-library'};v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);assert.equal(v.state.modal.kind,'hand-library');
+  v.state.modal=null;v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,1);
+  v.syncRebuyPrompt(r,10000);assert.equal(v.state.modal,null);
+  v.state.modal={kind:'buyin'};v.syncRebuyPrompt(r,11000);assert.equal(v.state.modal.kind,'buyin');
+});
+
+test('rebuy prompt waits for a fresh snapshot and does not consume its one-time prompt while resynchronizing',()=>{
+  const c=harness(),room=rebuyRoom(c);
+  c.state.feedbackResync=true;c.syncRebuyPrompt(room,6000);
+  assert.equal(c.modals.length,0);assert.equal(c.state.rebuyPrompted,undefined);
+  c.state.feedbackResync=false;c.state.busy=true;c.syncRebuyPrompt(room,6500);
+  assert.equal(c.modals.length,0);assert.equal(c.state.rebuyPrompted,undefined);
+  c.state.busy=false;c.syncRebuyPrompt(room,7000);
+  assert.equal(c.modals.length,1);assert.equal(c.state.modal.autoRebuyHand,'busted-hand');
+  assert.equal(c.commands.length,0);
+});
+
+test('expired automatic rebuy dialogs close even while disconnected, hidden, busy or waiting for a fresh snapshot',()=>{
+  for(const blocked of [{connected:false},{busy:true},{feedbackResync:true},{hidden:true}]){
+    const c=harness(),room=rebuyRoom(c);c.syncRebuyPrompt(room,6000);
+    assert.equal(c.state.modal.autoRebuyHand,'busted-hand');
+    Object.assign(c.state,blocked);if(blocked.hidden)c.document.visibilityState='hidden';
+    c.syncRebuyPrompt(room,10000);assert.equal(c.state.modal,null,JSON.stringify(blocked));
+    assert.equal(c.commands.length,0);
+    c.state.modal={kind:'buyin'};c.syncRebuyPrompt(room,11000);
+    assert.equal(c.state.modal.kind,'buyin','a manually opened dialog is not timed out');
+  }
+});
+
+test('sit and rebuy confirmations cannot submit from disconnected or resynchronizing table data',async()=>{
+  for(const isSit of [false,true])for(const blocked of [{connected:false,feedbackResync:false},{connected:true,feedbackResync:true}]){
+    const messages=[],c=harness({toast:message=>messages.push(message)}),room=rebuyRoom(c);
+    if(isSit)room.players[0].seat=null;
+    c.buyinModal(isSit?2:undefined);const form=buyinFormFrom(c.modals.at(-1).body);
+    Object.assign(c.state,blocked);await c.submit(form);
+    assert.equal(c.commands.length,0);assert.match(messages.at(-1),/正在同步牌桌/);
+    assert.equal(form.querySelector('[type=submit]').disabled,false);assert.equal(c.state.modal.kind,'buyin');
+    c.state.connected=true;c.state.feedbackResync=false;await c.submit(form);
+    assert.equal(c.commands.length,1);assert.equal(c.commands[0].type,isSit?'sit':'buyin');
+    assert.equal(c.commands[0].amountBB,200);assert.equal(c.state.modal,null);
+  }
 });

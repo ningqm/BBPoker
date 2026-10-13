@@ -1,11 +1,12 @@
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
-import {createTableFeedback} from '../public/table-feedback.js';
+import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { apiUrl, createRequestGuard, clearIdentity, readIdentity, writeIdentity } from '../public/platform.js';
+import * as money from '../public/money.js';
 
 const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -26,7 +27,7 @@ const clientSource = [
   section('function resetPrivateView(', 'function resumeTable('),
   section('function resumeTable(', "window.addEventListener('hashchange'"),
   section('async function boot(', '\nboot();'),
-  'globalThis.client={state,api,command,normalizeState,loadMe,route,adoptIdentity,resumeTable,boot};',
+  'globalThis.client={state,api,command,normalizeState,loadMe,route,adoptIdentity,resumeTable,boot,stopStream};',
 ].join('\n');
 
 function deferred() {
@@ -54,7 +55,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({funTracker:createTableFunTracker(),statsUI,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
+  const context = vm.createContext({...money,funTracker:createTableFunTracker(),statsUI,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {
@@ -97,7 +98,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
     room: room('old-user'), page: 'room',
   });
   return {
-    ...client, pending, renders, toasts, streams, location: context.location, document: context.document,
+    ...client, pending, renders, toasts, streams, location: context.location, document: context.document, turnCountdown:context.turnCountdown,
     advanceTime(milliseconds) {
       clock += milliseconds;
       for (const [id, timer] of [...timers]) if (timer.at <= clock) {
@@ -266,6 +267,7 @@ test('identity adoption removes private state and aborts its stream before stora
   client.state.stats = { hands: 9 };
   client.state.rooms = [{ code: '123456' }];
   client.state.replay = { hand: { private: true } };
+  client.state.sessionDetailData = { code:'123456',players:[{id:'old-user',net:1234}] };
   client.state.modal = { kind: 'show' };
   client.state.revealed.add(0);
 
@@ -277,6 +279,7 @@ test('identity adoption removes private state and aborts its stream before stora
   assert.equal(client.state.stats, null);
   assert.equal(client.state.rooms.length, 0);
   assert.equal(client.state.replay, null);
+  assert.equal(client.state.sessionDetailData, null, 'unit-switch cached results belong to the old identity');
   assert.equal(client.state.modal, null);
   assert.equal(client.state.revealed.size, 0);
   assert.equal(client.state.page, 'loading');
@@ -372,4 +375,14 @@ test('a server-rejected squid exit quote refreshes the table without repeating a
   client.pending[0].resolve({ok:false,status:409,json:async()=>({error:'本轮状态已变化，请重新确认退出费用'})});
   assert.equal(await result,false);assert.equal(client.state.busy,false);assert.equal(client.pending.length,1);
   assert.deepEqual(client.streams,['123456']);assert.match(client.toasts[0][0],/重新确认/);
+});
+
+
+test('even an immediate reconnect resets the countdown baseline before the next periodic tick',()=>{
+  const c=clientHarness(),view={code:'123456',meId:'old-user',deadline:30000,hand:{id:'same-hand',actionSeq:4,status:'playing',actingId:'old-user'}};
+  c.turnCountdown.update(view,{now:22000});
+  assert.equal(c.turnCountdown.update(view,{now:23000}).sound,'countdown');
+  c.stopStream();
+  assert.equal(c.turnCountdown.update(view,{now:24000}).sound,null,'the first restored frame cannot replay a skipped warning');
+  assert.equal(c.turnCountdown.update(view,{now:25000}).sound,'countdown');
 });

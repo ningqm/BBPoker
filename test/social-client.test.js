@@ -11,8 +11,8 @@ import { createReplayPlayback } from '../public/replay.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function harness(){
-  const calls=[],toasts=[],draws=[];let client,counter=0;
-  const context=vm.createContext({THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
+  const calls=[],toasts=[],draws=[],audioFeedback=[];let client,counter=0;
+  const context=vm.createContext({THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},playFeedback(value){audioFeedback.push(value);},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
     render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},tick(){},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
@@ -31,7 +31,7 @@ function harness(){
     'globalThis.client={state,requests,captureRoomChanges,sendChat,chatPanel,loadLibrary,handLibrary,favoriteHand,replayModal,closeModal};',
   ].join('\n'),context);
   client=context.client;client.state.user={id:'me',name:'Me'};client.state.room={code:'123456',meId:'me',chat:[]};client.state.page='room';
-  return {...client,calls,toasts,draws};
+  return {...client,calls,toasts,draws,audioFeedback};
 }
 function deferredRoom(chat=[]){return {code:'123456',meId:'me',chat,hand:{id:'hand1',number:1,status:'playing',board:[],actingId:'me',actionSeq:0,log:[]}};}
 
@@ -124,4 +124,18 @@ test('rabbit reveal animates independently without changing real board feedback'
   c.captureRoomChanges(null,first);const next=structuredClone(first);next.hand.rabbit.board=['As'];c.captureRoomChanges(first,next);
   assert.equal(c.state.boardMotion.from,0);assert.equal(c.state.boardMotion.count,1);assert.equal(c.state.motion,null);
   c.state.feedbackResync=true;const restored=structuredClone(next);restored.hand.rabbit.board=['As','Kd'];c.captureRoomChanges(next,restored);assert.equal(c.state.boardMotion,null);assert.equal(c.state.funEffects.length,0);
+});
+
+test('live action feedback forwards speech and chips once, while muting and resync consume old events silently',()=>{
+  const c=harness(),first=deferredRoom();c.captureRoomChanges(null,first);
+  const called=structuredClone(first);called.hand.actionSeq=1;called.hand.log=[{seq:1,type:'call',playerId:'friend',amount:10,street:'preflop'}];
+  c.captureRoomChanges(first,called);
+  assert.equal(c.audioFeedback.at(-1).speech,'call');assert.equal(c.audioFeedback.at(-1).chips,true);
+  c.captureRoomChanges(called,called);assert.equal(c.audioFeedback.at(-1).speech,undefined);
+  c.state.sound=false;const beforeMute=c.audioFeedback.length;
+  const raised=structuredClone(called);raised.hand.actionSeq=2;raised.hand.log.push({seq:2,type:'raise',playerId:'me',to:30,street:'preflop'});
+  c.captureRoomChanges(called,raised);assert.equal(c.audioFeedback.length,beforeMute);
+  c.state.sound=true;c.captureRoomChanges(raised,raised);assert.equal(c.audioFeedback.at(-1).speech,undefined);
+  const folded=structuredClone(raised);folded.hand.actionSeq=3;folded.hand.log.push({seq:3,type:'fold',playerId:'friend',street:'preflop'});
+  c.state.feedbackResync=true;c.captureRoomChanges(raised,folded);assert.equal(c.audioFeedback.at(-1).speech,undefined);
 });

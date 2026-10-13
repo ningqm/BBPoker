@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setDisplayUnit } from '../public/money.js';
+test.beforeEach(() => setDisplayUnit('bb'));
 import { createHand, applyAction, availableActions } from '../src/poker.js';
 import { formatHandBB, renderHandOverview } from '../public/hand-overview.js';
 
@@ -32,12 +34,12 @@ function filtered(h, viewer = 'a') {
     log: structuredClone(h.log), result: structuredClone(h.result) };
 }
 
-test('BB formatting preserves small amounts and falls back to exact points without a historical blind', () => {
+test('BB formatting preserves small amounts and explicitly marks missing historical blinds', () => {
   assert.equal(formatHandBB(25, 10, { signed: true }), '+2.5 BB');
   assert.equal(formatHandBB(-25, 10, { signed: true }), '-2.5 BB');
   assert.equal(formatHandBB(0, 10, { signed: true }), '0 BB');
   assert.equal(formatHandBB(1, 2000), '0.0005 BB');
-  for (const bb of [undefined, null, 0, -1, '10', Infinity]) assert.equal(formatHandBB(1050, bb, { signed: true }), '+1,050 积分');
+  for (const bb of [undefined, null, 0, -1, '10', Infinity]) assert.equal(formatHandBB(1050, bb, { signed: true }), '— BB');
   for (const amount of [undefined, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) assert.equal(formatHandBB(amount, 10), '—');
 });
 
@@ -169,6 +171,7 @@ test('all user text is escaped; unknown event fields are not printed or executed
 });
 
 test('historical missing position and blind values do not invent tags or hide real point amounts', () => {
+  setDisplayUnit('points');
   const hand = basic(); delete hand.settings; delete hand.buttonSeat; delete hand.smallBlindSeat; delete hand.bigBlindSeat;
   hand.players.forEach(p => delete p.seat);
   const html = renderHandOverview(hand, 'a');

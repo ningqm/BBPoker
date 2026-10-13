@@ -1,24 +1,26 @@
 import test from 'node:test';
 import * as lifecycle from '../public/lifecycle.js';
+import {formatChips,chipInputValue,getDisplayUnit,unitLabel} from '../public/money.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { raiseFromSlider, sliderFromRaise } from '../public/table-feedback.js';
+import { betPresetOptions, betActionLabel, revealOptions } from '../public/table-controls.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(){
-  const context=vm.createContext({lifecycle,sliderFromRaise,raiseFromSlider,Date,
+  const context=vm.createContext({lifecycle,sliderFromRaise,raiseFromSlider,betPresetOptions,betActionLabel,revealOptions,Date,formatChips,chipInputValue,getDisplayUnit,unitLabel,boardCard:()=>'<span class="fixture-board-card"></span>',streetNames:{preflop:'翻前',flop:'翻牌'},
     state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
-  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel,bombStatus};'].join('\n'),context);
+  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel,bombStatus};'].join('\n'),context);
   return context.client;
 }
 function room(){return {code:'123456',name:'朋友必赢的局',meId:'me',hostId:'me',status:'waiting',settings:{smallBlind:5,bigBlind:10,maxPlayers:9,timeBankCards:3,timeBankSeconds:30},players:[{id:'me',seat:0,stack:1000,inHand:true,cards:['As','Kd']},{id:'friend',seat:1,stack:1000}],actions:{},autoDeal:{paused:false,nextHandAt:null,waitReason:null}};}
-test('a completed hand offers countdown and show cards, without a manual next-hand start',()=>{
+test('a completed hand keeps the countdown but removes duplicated cards and the old show dialog from the dock',()=>{
   const c=harness(),r=room();r.hand={id:'h1',number:1,status:'complete'};r.autoDeal.nextHandAt=15000;
   assert.equal(c.autoDealText(r,10000),'5 秒后自动发下一手');assert.equal(c.autoDealText(r,15000),'正在准备下一手…');
-  const html=c.actionArea(r,r.players[0],true);assert.doesNotMatch(html,/data-action="start"/);assert.match(html,/data-auto-deal/);assert.match(html,/data-action="show"/);
+  const html=c.actionArea(r,r.players[0],true);assert.doesNotMatch(html,/data-action="start"|data-action="show"|my-hand-summary|my-cards/);assert.match(html,/data-auto-deal/);
   r.autoDeal.paused=true;assert.match(c.actionArea(r,r.players[0],true),/data-action="resume-deal"/);assert.doesNotMatch(c.actionArea(r,r.players[1],false),/data-action="resume-deal"/);
 });
 test('first hand still starts with the host, and waiting causes are useful to players',()=>{
@@ -26,9 +28,19 @@ test('first hand still starts with the host, and waiting causes are useful to pl
   r.hand={status:'complete'};r.autoDeal.waitReason='等待至少两位玩家入座';assert.equal(c.autoDealText(r),'等待至少两位玩家入座');
   r.status='closed';assert.doesNotMatch(c.actionArea(r,r.players[0],true),/data-action="(?:start|resume-deal|buyin)"/);
 });
+test('the rebuy grace countdown promises only a waiting window, and then shows the actual insufficient-player reason',()=>{
+  const c=harness(),r=room();r.hand={status:'complete'};r.players[0].stack=0;
+  r.autoDeal.waitReason='insufficient_players';r.autoDeal.rebuyGrace={pendingIds:['me'],startsAt:5000,endsAt:10000};
+  assert.equal(c.autoDealText(r,6000),'补码等待 · 还剩 4 秒');
+  assert.doesNotMatch(c.autoDealText(r,6000),/自动发|自动继续/);
+  assert.equal(c.autoDealText(r,9999),'补码等待 · 还剩 1 秒');
+  assert.equal(c.autoDealText(r,10000),'等待至少 2 位可参与的玩家');
+  r.autoDeal.paused=true;assert.equal(c.autoDealText(r,6000),'自动发牌已暂停');
+});
 test('raise amount remains exact while the nonlinear slider expresses the corresponding position',()=>{
-  const c=harness(),r=room();r.hand={status:'playing'};r.actions={canAct:true,canFold:true,canCheck:true,canRaise:true,minRaiseTo:20,maxRaiseTo:100000,canUseTimeBank:true,timeBankCards:3};c.state.raise=1234;
-  const html=c.actionArea(r,r.players[0],true);assert.match(html,/id="raise-range" min="0" max="1000"/);assert.match(html,new RegExp('value="'+sliderFromRaise(1234,20,100000,10)+'"'));assert.match(html,/id="raise-input" min="20" max="100000" step="1" value="1234"/);assert.match(html,/123\.4 BB/);assert.match(html,/data-action="timebank"/);
+  const c=harness(),r=room();r.hand={status:'playing',currentBet:0,pot:300};r.actions={canAct:true,canFold:true,canCheck:true,canRaise:true,minRaiseTo:20,maxRaiseTo:100000,canUseTimeBank:true,timeBankCards:3};c.state.room=r;c.state.raise=1234;
+  const html=c.actionArea(r,r.players[0],true);assert.match(html,/id="raise-range" min="0" max="1000"/);assert.match(html,new RegExp('value="'+sliderFromRaise(1234,20,100000,10)+'"'));assert.match(html,/<output id="raise-amount"[^>]*>下注 <b>1,234 积分<\/b>/);assert.doesNotMatch(html,/id="raise-input"|my-hand-summary|my-cards/);assert.match(html,/data-action="timebank"/);
+  for(const id of ['min','third','half','two-thirds','pot','over','all'])assert.match(html,new RegExp('data-preset="'+id+'"'));
 });
 test('table layout keeps only the table, action dock and four grouped tools on the main screen',()=>{
   const c=harness();c.state.room=room();const html=c.roomView();assert.match(html,/class="table-bottom"/);assert.match(html,/class="table-toolbar"/);assert.doesNotMatch(html,/side-stack|activity-list|data-action="stand"|data-action="verify"/);
@@ -102,7 +114,7 @@ test('table tool strip keeps play-related tools and removes general data and leg
 });
 
 test('seat status colors follow the visible lifecycle state before stale betting flags',()=>{
-  const context=vm.createContext({lifecycle,state:{},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
+  const context=vm.createContext({lifecycle,formatChips,chipInputValue,getDisplayUnit,unitLabel,revealOptions,state:{},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
   vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const layouts=','function boardCard('),'globalThis.draw=seatView;'].join('\n'),context);
   const r=room(),p=r.players[1];r.hand={status:'playing',actingId:'me'};p.connected=true;p.inHand=true;p.allIn=true;
   let html=context.draw(1,r);assert.match(html,/data-tone="allin">ALL IN/);
@@ -116,15 +128,26 @@ test('seat status colors follow the visible lifecycle state before stale betting
 });
 
 test('the last available chips are labeled all-in both for a call and the raise amount controls',()=>{
-  const c=harness(),r=room(),me=r.players[0];r.hand={status:'playing'};r.actions={canAct:true,canFold:true,canCheck:false,callAmount:me.stack,canRaise:false,canAllIn:false};
+  const c=harness(),r=room(),me=r.players[0];c.state.room=r;r.hand={status:'playing',currentBet:10};r.actions={canAct:true,canFold:true,canCheck:false,callAmount:me.stack,canRaise:false,canAllIn:false};
   assert.match(c.actionArea(r,me,true),/data-action="call"[^>]*data-allin="true"[^>]*>全下跟注/);
   r.actions={...r.actions,callAmount:10,canRaise:true,minRaiseTo:20,maxRaiseTo:1000};c.state.raise=1000;
   assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="true"[^>]*>全下至 1,000/);
   c.state.raise=20;assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="false"[^>]*>加至 20/);
-  const nodes=new Map(['#raise-button','#raise-range','#raise-input','#raise-bb'].map(id=>[id,{dataset:{},setAttribute(){}}]));
+  const nodes=new Map(['#raise-button','#raise-range','#raise-amount'].map(id=>[id,{dataset:{},setAttribute(){}}]));
   c.state.room=r;
-  const context=vm.createContext({state:c.state,$:id=>nodes.get(id),sliderFromRaise,num:value=>String(value)});
-  vm.runInContext(section('function setRaise(value){','document.addEventListener(')+';globalThis.adjust=setRaise;',context);
+  const context=vm.createContext({state:c.state,$:id=>nodes.get(id),document:{querySelectorAll:()=>[]},betActionLabel,betPresetOptions,sliderFromRaise,chipInputValue,unitLabel,esc:String,chips:value=>formatChips(value,r.settings.bigBlind),num:value=>String(value)});
+  vm.runInContext(section('function setRaise(','document.addEventListener(')+';globalThis.adjust=setRaise;',context);
   context.adjust(1000);assert.equal(nodes.get('#raise-button').dataset.allin,'true');assert.match(nodes.get('#raise-button').textContent,/全下至/);
-  context.adjust(25);assert.equal(nodes.get('#raise-button').dataset.allin,'false');assert.equal(nodes.get('#raise-input').value,25);assert.match(nodes.get('#raise-button').textContent,/加至 25/);
+  context.adjust(25);assert.equal(nodes.get('#raise-button').dataset.allin,'false');assert.match(nodes.get('#raise-amount').innerHTML,/加至 <b>25 积分/);assert.match(nodes.get('#raise-button').textContent,/加至 25/);
+});
+
+test('bet preset availability is visible and short all-ins do not expose an impossible raise slider',()=>{
+  const c=harness(),r=room();c.state.room=r;r.hand={status:'playing',currentBet:50,pot:105};r.players[0].bet=20;
+  r.actions={canAct:true,canFold:true,canCheck:false,callAmount:30,canRaise:true,minRaiseTo:100,maxRaiseTo:150};
+  const html=c.actionArea(r,r.players[0],true);
+  assert.match(html,/<button[^>]*data-preset="third"[^>]*title="低于最小加注额"[^>]*disabled/);
+  assert.match(html,/<button[^>]*data-preset="pot"[^>]*title="筹码不足，可选择全下"[^>]*disabled/);
+  assert.match(html,/<button[^>]*data-preset="half"[^>]*title="加至 117 积分"[^>]*>/);
+  r.actions={...r.actions,canRaise:false,canAllIn:true,maxRaiseTo:70};
+  const short=c.actionArea(r,r.players[0],true);assert.doesNotMatch(short,/raise-range|raise-preset|data-action="raise"/);assert.match(short,/data-action="allin"/);
 });

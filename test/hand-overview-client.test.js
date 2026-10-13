@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {createReplayPlayback} from '../public/replay.js';
+import {createTurnCountdown} from '../public/table-feedback.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 function harness(){
@@ -29,7 +30,7 @@ test('current turn notice follows actual table actor without replacing filter in
   const notice={hidden:true},clock={textContent:'',classList:{toggle(){}}};
   const state={room:{hand:{status:'playing',actingId:'me'},meId:'me',deadline:Date.now()+15000,settings:{}},timeOffset:0};
   const document={querySelectorAll(selector){return selector==='[data-history-turn]'?[notice]:selector==='[data-turn-clock]'?[clock]:[];}};
-  const context=vm.createContext({state,document,Date});vm.runInContext(section('function tick(){','setInterval(tick,400);')+';globalThis.tick=tick',context);
+  const context=vm.createContext({state,document,Date,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},syncRebuyPrompt(){}});vm.runInContext(section('function tick(){','setInterval(tick,400);')+';globalThis.tick=tick',context);
   context.tick();assert.equal(notice.hidden,false);assert.match(clock.textContent,/1[45]s/);
   state.room.hand.actingId='friend';context.tick();assert.equal(notice.hidden,true);
   state.room.hand.actingId='me';state.room.hand.status='complete';context.tick();assert.equal(notice.hidden,true);

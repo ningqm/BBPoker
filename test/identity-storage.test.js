@@ -1,6 +1,6 @@
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
-import {createTableFeedback} from '../public/table-feedback.js';
+import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ function browserStorage(t) {
 function tab() {
   const calls = [];
   const context = vm.createContext({clearTimeout,statsUI,funTracker:createTableFunTracker(),
-    feedback:createTableFeedback(),
+    feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },
     stopStream() {}, closeModal() {}, render() {}, toast() {}, resumeTable() {},

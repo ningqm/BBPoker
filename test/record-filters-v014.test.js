@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+const pointTotals = ({ bb, ...points }) => points;
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,7 +59,7 @@ test('mixed-stakes hand thresholds use each historical BB, preserve mini totals,
   f.hand('mini-loser', { net: 100, mini: -201, bb: 10 }); f.hand('even', { net: 10, mini: -10 });
   const wins = f.service.handLibrary('me', { result: 'winOver', minBB: '10' });
   assert.deepEqual(ids(wins), ['mini-winner', 'win-20bb']);
-  assert.deepEqual(wins.totals, { count: 2, net: 201, holdemNet: 0, miniNet: 201, wins: 2, losses: 0, even: 0 });
+  assert.deepEqual(pointTotals(wins.totals), { count: 2, net: 201, holdemNet: 0, miniNet: 201, wins: 2, losses: 0, even: 0 });
   assert.deepEqual(ids(f.service.handLibrary('me', { result: 'lossOver', minBB: '10' })), ['loss-20bb', 'mini-loser']);
   assert.equal(f.service.handLibrary('me', { result: 'winOver', minBB: '0' }).totals.count, 4);
   assert.equal(f.service.handLibrary('me', { result: 'lossOver', minBB: '0' }).totals.count, 3);
@@ -121,7 +122,7 @@ test('rank/result/date/type/favorite/text filters combine before pagination and 
   const first = f.service.handLibrary('me', query), second = f.service.handLibrary('me', { ...query, before: first.nextCursor });
   assert.equal(first.hands.length, 50); assert.equal(second.hands.length, 7); assert.equal(second.nextCursor, null);
   assert.equal(new Set([...first.hands, ...second.hands].map(h => h.id)).size, 57);
-  assert.deepEqual(first.totals, { count: 57, net: 57 * 112, holdemNet: 57 * 111, miniNet: 57, wins: 57, losses: 0, even: 0 });
+  assert.deepEqual(pointTotals(first.totals), { count: 57, net: 57 * 112, holdemNet: 57 * 111, miniNet: 57, wins: 57, losses: 0, even: 0 });
   assert.deepEqual(first.totals, second.totals);
   for (const row of first.hands) {
     assert.deepEqual(row.cards, ['As', 'Ks']); assert.equal(row.bigBlind, 10);
@@ -135,7 +136,7 @@ test('absent squid beneficiary keeps genuine per-hand profit but can never match
   assert.deepEqual(ids(found), ['squid-payout']); assert.equal(found.hands[0].participated, false);
   assert.deepEqual(found.hands[0].cards, [null, null]); assert.equal(found.hands[0].net, 0);
   assert.equal(found.hands[0].miniNet, 40); assert.equal(found.hands[0].totalNet, 40);
-  assert.deepEqual(found.totals, { count: 1, net: 40, holdemNet: 0, miniNet: 40, wins: 1, losses: 0, even: 0 });
+  assert.deepEqual(pointTotals(found.totals), { count: 1, net: 40, holdemNet: 0, miniNet: 40, wins: 1, losses: 0, even: 0 });
   assert.deepEqual(ids(f.service.history('observer', f.room.code, { ...query, holeRanks: 'A' })), []);
   assert.deepEqual(ids(f.service.history('observer', f.room.code, { ...query, holeType: 'pair' })), []);
   assert.deepEqual(ids(f.service.handLibrary('observer', query)), []);
@@ -167,7 +168,7 @@ test('session thresholds use each session BB and authoritative mini ledger exact
   const first = f.service.sessions('me', query), second = f.service.sessions('me', { ...query, before: first.nextCursor });
   assert.equal(first.sessions.length, 1); assert.equal(second.sessions.length, 1); assert.equal(second.nextCursor, null);
   assert.deepEqual(new Set([...first.sessions, ...second.sessions].map(s => s.code)), new Set([f.room.code, '100003']));
-  assert.deepEqual(first.totals, { count: 2, net: 201, holdemNet: 0, miniNet: 201, wins: 2, losses: 0, even: 0 });
+  assert.deepEqual(pointTotals(first.totals), { count: 2, net: 201, holdemNet: 0, miniNet: 201, wins: 2, losses: 0, even: 0 });
   assert.deepEqual(second.totals, first.totals);
   assert.deepEqual(f.service.sessions('me', { result: 'lossOver', minBB: '10' }).sessions.map(s => s.code), ['100004']);
   assert.equal(f.service.sessions('me', { ...query, holeRanks: 'QQ', holeType: 'pair' }).totals.count, 2);

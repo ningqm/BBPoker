@@ -44,7 +44,7 @@ test('room presets submit BB settings, direct buy-in and defaults without hidden
   assert.equal(s.squid,false);assert.equal(s.squidUnitBB,2);
   assert.doesNotThrow(()=>settingsFor(s));
   assert.doesNotMatch(html,/蘑菇|name="(?:approvalRequired|minBuyIn|maxBuyIn)"/);
-  c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);
+  c.state.createKeyRequired=true;c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);assert.doesNotMatch(c.modals.at(-1).body,/建房口令|name="createKey"/);
 });
 test('turning on unlimited buy-in submits null; switching blind presets keeps BB counts unchanged',()=>{
   const c=harness(),form=formFrom(c.settingFields(c.defaults));

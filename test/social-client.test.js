@@ -1,3 +1,4 @@
+import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function harness(){
   const calls=[],toasts=[],draws=[];let client,counter=0;
-  const context=vm.createContext({createRequestGuard,URLSearchParams,Date,Set,Map,profileEditor:null,
+  const context=vm.createContext({feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible'},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
     render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
@@ -28,7 +29,7 @@ function harness(){
   client=context.client;client.state.user={id:'me',name:'Me'};client.state.room={code:'123456',meId:'me',chat:[]};client.state.page='room';
   return {...client,calls,toasts,draws};
 }
-function deferredRoom(chat=[]){return {code:'123456',meId:'me',chat,hand:{id:'hand1',status:'playing',board:[],actingId:'me'}};}
+function deferredRoom(chat=[]){return {code:'123456',meId:'me',chat,hand:{id:'hand1',number:1,status:'playing',board:[],actingId:'me',actionSeq:0,log:[]}};}
 
 test('chat fails and retries the same message id; a different draft gets a fresh id',async()=>{
   const c=harness();c.state.chatDraft='你好';
@@ -65,9 +66,9 @@ test('initial and replayed chat state cannot create unread messages; only fresh 
 
 test('live turn and card effects occur only for changed game state, not a chat SSE refresh',()=>{
   const c=harness(),first=deferredRoom();c.captureRoomChanges(null,first);assert.equal(c.state.motion,null);
-  const next=deferredRoom();next.hand.board=['As','Kd','2c'];next.hand.actingId='friend';c.captureRoomChanges(first,next);
+  const next=deferredRoom();next.hand.board=['As','Kd','2c'];next.hand.actingId='friend';next.hand.actionSeq=1;next.hand.log=[{seq:1,type:'check',playerId:'me'}];c.captureRoomChanges(first,next);
   assert.equal(c.state.motion.newBoard,true);assert.equal(c.state.motion.actor,'friend');assert.equal(c.state.motion.board,0);
-  c.captureRoomChanges(next,{...next,chat:[{id:'x'}]});assert.equal(c.state.motion.newBoard,false);assert.equal(c.state.motion.actor,null);assert.equal(c.state.motion.win,false);
+  const started=c.state.motion.at;c.captureRoomChanges(next,{...next,chat:[{id:'x'}]});assert.equal(c.state.motion.newBoard,true,'the same effect retains its original timestamp until CSS finishes');assert.equal(c.state.motion.at,started);assert.equal(c.state.motion.win,false);
 });
 
 test('chat body, sender and draft are escaped and only known emotes are rendered',()=>{

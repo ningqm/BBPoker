@@ -123,7 +123,7 @@ test('security: host transfer accepts only an actual room member and cannot stra
 test('security: a delayed reveal for a previous hand never exposes cards from the current hand', () => {
   const f = fixture(); seat(f); f.command(0, 'start'); finishWithFolds(f);
   const previousHandId = f.room.hand.id;
-  f.command(0, 'start'); finishWithFolds(f);
+  f.service.start(f.room); finishWithFolds(f);
   assert.throws(() => f.command(0, 'show', { handId: previousHandId, indices: [0, 1] }), e => e.status === 409);
   assert.equal(Object.hasOwn(f.room.hand.shown, f.users[0].id), false);
   f.command(0, 'show', { handId: f.room.hand.id, indices: [0] });
@@ -172,7 +172,7 @@ test('settlement: squid reserves plus legacy mushroom pools remain conserved and
   f.command(0, 'start'); conserved(f.room); finishWithFolds(f); conserved(f.room);
   assert.equal(f.room.mini.squid.active, true);
   assert.throws(() => f.command(0, 'stand'), /鱿鱼/);
-  f.command(0, 'start'); conserved(f.room); finishWithFolds(f); conserved(f.room);
+  f.service.start(f.room); conserved(f.room); finishWithFolds(f); conserved(f.room);
   assert.equal(f.room.mini.squid.active, false);
   assert.ok(f.room.mini.mushroom.pool > 0);
   f.command(0, 'stand'); conserved(f.room);

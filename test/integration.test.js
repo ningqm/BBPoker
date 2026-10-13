@@ -128,7 +128,9 @@ test('squid conserves points, legacy mushroom pool refunds remain included on cl
   assert.equal(account(s), 3000); assert.equal(s.mini.mushroom.pool, 20);
   await f.cmd(f.users[0], 'stand', {}, 400);
   s = await f.win(f.users[0].user.id); assert.equal(account(s), 3000); assert.ok(s.mini.squid.active);
-  s = (await f.cmd(f.users[0], 'start')).room; s = await f.win(f.users[1].user.id);
+  // The auto-deal timer is covered independently; advance this settlement fixture to its next hand.
+  f.app.service.start(f.app.store.data.rooms[f.room.code]); f.app.store.save();
+  s = await f.win(f.users[1].user.id);
   assert.equal(account(s), 3000); assert.equal(s.mini.squid.active, false);
   assert.equal(s.mini.squid.lastResult.loserId, f.users[2].user.id);
   assert.equal(s.mini.squid.lastResult.amount, 40);

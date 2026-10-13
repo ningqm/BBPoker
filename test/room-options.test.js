@@ -47,7 +47,7 @@ test('legacy fractional BB equivalents remain playable without changing stored p
   f.room.settings = { maxPlayers: 9, smallBlind: 5, bigBlind: 10, minBuyIn: 105, maxBuyIn: 1001, actionSeconds: 30,
     approvalRequired: true, squid: false, squidUnit: 5, mushroom: false, mushroomUnit: 1 };
   f.cmd(1, 'buyin', { amount: 1 }); assert.equal(f.room.pending.length, 0);
-  for (let n = 0; n < 2; n++) { f.cmd(0, 'start'); finish(f); }
+  for (let n = 0; n < 2; n++) { f.service.start(f.room); finish(f); }
   assert.equal(f.room.settings.squidUnit, 5); assert.equal(f.room.settings.squidUnitBB, .5);
   assert.equal(f.room.settings.minBuyIn, 105); assert.equal(f.room.settings.maxBuyIn, 1001);
 });
@@ -122,7 +122,7 @@ test('last five minutes skip new squid and bomb rounds while an existing squid r
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
   const f = fixture({ squid: true, bombPot: true, bombEveryHands: 1 }); f.cmd(0, 'start');
   const round = f.room.mini.squid.round; assert.equal(f.room.hand.bombPot, true); finish(f);
-  timestamp = f.room.endsAt - 300000; f.cmd(0, 'start');
+  timestamp = f.room.endsAt - 300000; f.service.start(f.room);
   assert.equal(f.room.hand.bombPot, false); assert.equal(f.room.mini.squid.round, round);
   const winner = f.room.mini.squid.participants.find(id => !f.room.mini.squid.won.includes(id));
   while (f.room.hand.status === 'playing') {
@@ -131,7 +131,7 @@ test('last five minutes skip new squid and bomb rounds while an existing squid r
   }
   // Distinct winners complete the current round, but the cutoff bars a new one.
   assert.equal(f.room.mini.squid.active, false);
-  f.cmd(0, 'start'); assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.mini.squid.round, round);
+  f.service.start(f.room); assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.mini.squid.round, round);
 });
 
 test('expiry finishes current hand, returns unfinished reserves, closes once, and permits a final voluntary reveal', t => {
@@ -178,7 +178,7 @@ test('bomb frequency and preflop statistics count the intended opportunities onl
   const f = fixture({ bombPot: true, bombEveryHands: 2 }); f.cmd(0, 'start');
   assert.equal(f.room.hand.bombPot, false); finish(f, 'call');
   const before = f.service.stats(f.users[0].id); assert.equal(before.vpip, 100); assert.equal(before.preflopHands, 1);
-  f.cmd(0, 'start'); assert.equal(f.room.hand.bombPot, true); finish(f);
+  f.service.start(f.room); assert.equal(f.room.hand.bombPot, true); finish(f);
   const after = f.service.stats(f.users[0].id); assert.equal(after.hands, 2); assert.equal(after.preflopHands, 1); assert.equal(after.vpip, 100);
 });
 

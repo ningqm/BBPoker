@@ -1,3 +1,4 @@
+import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -35,6 +36,7 @@ function browserStorage(t) {
 function tab() {
   const calls = [];
   const context = vm.createContext({
+    feedback:createTableFeedback(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },
     stopStream() {}, closeModal() {}, render() {}, toast() {}, resumeTable() {},

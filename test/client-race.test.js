@@ -1,3 +1,4 @@
+import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -51,7 +52,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({
+  const context = vm.createContext({feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {

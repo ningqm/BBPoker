@@ -92,6 +92,9 @@ test('legacy binding keeps exact player, room, hand and ledger ownership while r
     for (const [i, user] of [legacy, peer].entries()) service.command(user, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() });
     service.command(legacy, room.code, { type: 'start', commandId: randomUUID() });
     service.command(service.user(room.hand.actingId), room.code, { type: 'fold', handId: room.hand.id, actionSeq: room.hand.log.length, commandId: randomUUID() });
+    // This test isolates account ownership; opening/revoking a stream must not
+    // independently start or cancel an automatic-deal countdown during the snapshot.
+    service.command(legacy, room.code, { type: 'autoDeal', paused: true, commandId: randomUUID() });
   });
   assert.equal((await f.api('/api/session/restore', { token: legacyToken })).user.username, null);
   const before = structuredClone({ rooms: f.app.store.data.rooms, hands: f.app.store.data.hands, ledger: f.app.store.data.ledger });

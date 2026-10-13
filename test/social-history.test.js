@@ -16,7 +16,7 @@ function fixture(count = 4) {
   const command = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
   const chat = (i, input = {}, timestamp = 100000) => service.chat(users[i], room.code, { messageId: randomUUID(), kind: 'text', text: '好牌', ...input }, { timestamp, ip: 'shared-wifi' });
   const play = () => {
-    command(0, 'start');
+    service.start(room);
     while (room.hand.status === 'playing') command(users.findIndex(u => u.id === room.hand.actingId), 'fold');
     return store.data.hands.at(-1);
   };
@@ -80,7 +80,7 @@ test('personal hand pages exclude spectators and live hands, keep folded privacy
   const f = fixture(); f.seat();
   const hands = [f.play(), f.play(), f.play()];
   for (const h of hands) h.at = '2026-10-12T01:00:00.000Z';
-  f.command(0, 'start');
+  f.service.start(f.room);
   const first = f.service.handLibrary(f.users[0].id, { limit: '2' });
   assert.equal(first.hands.length, 2); assert.ok(first.nextCursor);
   assert.deepEqual(f.service.handLibrary(f.users[2].id).hands, []);
@@ -116,7 +116,7 @@ test('favorites are personal, bounded and available only for completed participa
   assert.throws(() => f.service.favoriteHand(f.users[2].id, hand.id, true), e => e.status === 404);
   assert.throws(() => f.service.favoriteHand(f.users[3].id, hand.id, true), e => e.status === 404);
   assert.throws(() => f.service.favoriteHand(user.id, hand.id, 'yes'), e => e.status === 400);
-  f.command(0, 'start'); assert.throws(() => f.service.favoriteHand(user.id, f.room.hand.id, true), e => e.status === 404);
+  f.service.start(f.room); assert.throws(() => f.service.favoriteHand(user.id, f.room.hand.id, true), e => e.status === 404);
   user.favoriteHands = Array.from({ length: 1000 }, (_, i) => `older${i}`);
   assert.throws(() => f.service.favoriteHand(user.id, hand.id, true), /最多收藏/);
   f.service.favoriteHand(user.id, hand.id, false); assert.equal(user.favoriteHands.length, 1000);

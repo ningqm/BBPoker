@@ -7,7 +7,7 @@
 
 const CARD = /^[2-9TJQKA][cdhs]$/;
 const PLAY_ACTIONS = new Set(['fold', 'check', 'call', 'raise', 'allin']);
-const PASSIVE_EVENTS = new Set(['ante', 'smallBlind', 'bigBlind', 'refund', 'payout', 'timeout', 'reconnect', 'allInLock', 'runoutCard']);
+const PASSIVE_EVENTS = new Set(['ante', 'smallBlind', 'bigBlind', 'entryBlind', 'deadBlind', 'refund', 'payout', 'timeout', 'reconnect', 'allInLock', 'runoutCard']);
 
 // JSON string escapes are valid TOML basic-string escapes. Normalize lone
 // surrogates and escape DEL, which TOML does not allow literally in a string.
@@ -53,6 +53,16 @@ function handTable(hand, index, viewerId) {
   const smallBlind = integer(hand.settings?.smallBlind, '小盲', 1);
   const bigBlind = integer(hand.settings?.bigBlind, '大盲', smallBlind);
   const ante = integer(hand.ante ?? 0, '前注');
+  const dead = players.map(p => (hand.log ?? []).filter(e => e.playerId === p.id && e.type === 'deadBlind').reduce((sum, e) => sum + integer(e.amount, '补小盲'), 0));
+  const posted = players.map(p => (hand.log ?? []).filter(e => e.playerId === p.id && e.type === 'entryBlind').reduce((sum, e) => sum + integer(e.amount, '入桌大盲'), 0));
+  // Negative PHH blinds are posted bets: they do not move the preflop opener
+  // as a straddle would. Dead blinds are untrimmed antes in the main pot.
+  const blinds = hand.bombPot ? players.map(() => 0) : players.map((p, i) => {
+    const natural = p.seat === hand.smallBlindSeat ? smallBlind : p.seat === hand.bigBlindSeat ? bigBlind : 0;
+    return posted[i] ? -(natural + posted[i]) : natural;
+  });
+  const antes = players.map((p, i) => ante + dead[i]);
+  if (players.length === 2) { blinds.reverse(); antes.reverse(); }
   const starting = players.map(p => integer(p.startingStack, '起始德州积分', 1));
   const finishing = players.map((p, i) => {
     if (!Number.isSafeInteger(p.net)) throw new Error('PHH：德州净输赢无效');
@@ -110,9 +120,9 @@ function handTable(hand, index, viewerId) {
   const lines = [
     `[${index + 1}]`,
     'variant = "NT"',
-    `antes = ${array(players.map(() => ante))}`,
-    'ante_trimming_status = true',
-    `blinds_or_straddles = ${array(hand.bombPot ? players.map(() => 0) : [smallBlind, bigBlind, ...players.slice(2).map(() => 0)])}`,
+    `antes = ${array(antes)}`,
+    `ante_trimming_status = ${dead.some(Boolean) ? 'false' : 'true'}`,
+    `blinds_or_straddles = ${array(blinds)}`,
     `min_bet = ${bigBlind}`,
     `starting_stacks = ${array(starting)}`,
     'actions = [', ...actions.map(a => `  ${quote(a)},`), ']',
@@ -135,6 +145,7 @@ function handTable(hand, index, viewerId) {
     // separate from the standard PHH finishing_stacks used for hold'em replay.
     `_tongzhuo_room_ending_stacks = ${array(players.map(p => integer(p.endingStack, '结束房间积分')))}`,
   ];
+  if (dead.some(Boolean) || posted.some(Boolean)) lines.push(`_bbpoker_entry_live = ${array(posted)}`, `_bbpoker_entry_dead = ${array(dead)}`);
   if (hand.bombPot) { lines.push('_bbpoker_bomb_pot = true', `_bbpoker_synthetic_preflop_checks = ${syntheticChecks.length}`); }
   if (viewerId !== undefined) lines.push(`_tongzhuo_viewer_id = ${quote(viewerId)}`);
   if (typeof hand.commitment === 'string') lines.push(`_tongzhuo_commitment = ${quote(hand.commitment)}`);

@@ -2,7 +2,7 @@ import { recordFilters, squidSettlementMap, squidSettlementKey, handMiniNet } fr
 
 const DAY = 86400000;
 const ACTIONS = new Set(['fold', 'check', 'call', 'raise', 'allin']);
-const PAID = new Set(['smallBlind', 'bigBlind', 'ante', 'call', 'raise', 'allin']);
+const PAID = new Set(['smallBlind', 'bigBlind', 'entryBlind', 'deadBlind', 'ante', 'call', 'raise', 'allin']);
 const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const round = value => Math.round(value * 100) / 100;
@@ -36,7 +36,7 @@ function applyLoggedPayment(players, event) {
   if (PAID.has(event.type)) {
     const amount = finite(event.amount) ? event.amount : 0;
     p.stack -= amount; p.contributed += amount;
-    if (event.type !== 'ante') p.bet = finite(event.to) ? event.to : p.bet + amount;
+    if (event.type !== 'ante' && event.type !== 'deadBlind') p.bet = finite(event.to) ? event.to : p.bet + amount;
   } else if (event.type === 'refund') {
     p.stack += event.amount; p.contributed -= event.amount;
     p.bet -= Math.min(p.bet, event.amount);

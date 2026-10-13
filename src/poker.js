@@ -143,10 +143,14 @@ export function rabbitRunout(hand) {
 function settlementPots(hand) {
   const contenders = hand.players.filter(p => !p.folded);
   const pots = [];
-  const levels = [...new Set(hand.players.map(p => p.contributed).filter(n => n > 0))].sort((a, b) => a - b);
+  // A missed small blind is dead money, not a live tier a player can reclaim
+  // as uncalled. Keep it out of side-pot caps and award it with the main pot.
+  const matched = p => p.contributed - (p.deadContribution ?? 0);
+  const dead = hand.players.reduce((sum, p) => sum + (p.deadContribution ?? 0), 0);
+  const levels = [...new Set(hand.players.map(matched).filter(n => n > 0))].sort((a, b) => a - b);
   let previous = 0;
   for (const level of levels) {
-    const contributors = hand.players.filter(p => p.contributed >= level);
+    const contributors = hand.players.filter(p => matched(p) >= level);
     const amount = (level - previous) * contributors.length;
     previous = level;
     // No unmatched tier is ever reported as a won side pot.
@@ -160,6 +164,10 @@ function settlementPots(hand) {
     if (!eligible.length && contenders.length === 1) eligible = contenders;
     if (!eligible.length) throw new Error('底池没有可领奖玩家');
     pots.push({ amount, eligibleIds: eligible.map(p => p.id) });
+  }
+  if (dead) {
+    if (pots.length) pots[0].amount += dead;
+    else pots.push({ amount: dead, eligibleIds: contenders.map(p => p.id) });
   }
   return pots;
 }
@@ -244,7 +252,7 @@ function advance(hand, afterSeat) {
   }
 }
 
-export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, deck, deferredRunout = false } = {}) {
+export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, entryPosts = [], deck, deferredRunout = false } = {}) {
   if (!Array.isArray(players) || players.length < 2 || players.length > 9) throw new Error('需要 2 至 9 位玩家');
   if (typeof bombPot !== 'boolean' || (bombPot && !integer(ante, 1))) throw new Error('炸弹池前注无效');
   if (typeof deferredRunout !== 'boolean') throw new Error('跑牌设置无效');
@@ -253,6 +261,9 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
       new Set(players.map(p => p.id)).size !== players.length || new Set(players.map(p => p.seat)).size !== players.length ||
       !Number.isSafeInteger(players.reduce((sum, p) => sum + p.stack, 0))) throw new Error('玩家、座位或带入积分无效');
   if (!integer(buttonSeat) || !players.some(p => p.seat === buttonSeat)) throw new Error('庄位必须是本手玩家');
+  if (!Array.isArray(entryPosts) || new Set(entryPosts.map(p => p?.playerId)).size !== entryPosts.length ||
+      entryPosts.some(post => !post || !players.some(p => p.id === post.playerId) || !integer(post.live) || !integer(post.dead) ||
+        ![0, bigBlind].includes(post.live) || post.dead > smallBlind || (!post.live && !post.dead)) || (bombPot && entryPosts.length)) throw new Error('入桌补盲配置无效');
   const shuffled = deck === undefined ? shuffleDeck() : [...deck];
   if (shuffled.length !== 52 || new Set(shuffled).size !== 52 || shuffled.some(c => !CARDS.includes(c))) throw new Error('牌堆必须含 52 张不同扑克牌');
   const hand = {
@@ -261,7 +272,7 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
     deck: Object.freeze(shuffled), deckCursor: 0, burnIndices: [],
     players: players.map(p => ({ id: p.id, name: p.name ?? '', seat: p.seat,
       startingStack: p.stack, stack: p.stack, cards: [], cardIndices: [], folded: false,
-      allIn: false, bet: 0, contributed: 0, _acted: false, lastActedBet: null, reopenAt: null,
+      allIn: false, bet: 0, contributed: 0, deadContribution: 0, _acted: false, lastActedBet: null, reopenAt: null,
     })).sort((a, b) => a.seat - b.seat),
     actingId: null, currentBet: bigBlind, minRaise: bigBlind, log: [], result: null, allInLock: null, runout: null,
   };
@@ -270,10 +281,22 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   const bb = players.length === 2 ? order[0] : order[1];
   hand.smallBlindSeat = bombPot ? null : sb.seat;
   hand.bigBlindSeat = bombPot ? null : bb.seat;
+  // Validate before any deduction. A posted live BB is a total live target,
+  // never an extra blind on top of a naturally assigned BB.
+  for (const post of entryPosts) {
+    const p = hand.players.find(p => p.id === post.playerId);
+    const natural = p === bb ? bigBlind : p === sb ? smallBlind : 0;
+    if (p.stack < ante + Math.max(natural, post.live) + post.dead) throw new Error('补盲积分不足，请补码或等大盲');
+  }
   if (ante) for (const p of order) contribute(hand, p, ante, 'ante', false);
   if (!bombPot) {
     contribute(hand, sb, smallBlind, 'smallBlind');
     contribute(hand, bb, bigBlind, 'bigBlind');
+    for (const post of entryPosts) {
+      const p = hand.players.find(p => p.id === post.playerId);
+      if (post.live > p.bet) contribute(hand, p, post.live - p.bet, 'entryBlind');
+      if (post.dead) p.deadContribution += contribute(hand, p, post.dead, 'deadBlind', false);
+    }
   }
   for (let round = 0; round < 2; round++) for (const p of order) {
     const { card, index } = draw(hand);

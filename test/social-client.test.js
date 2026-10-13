@@ -14,7 +14,7 @@ function harness(){
   const calls=[],toasts=[],draws=[];let client,counter=0;
   const context=vm.createContext({THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
-    render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},
+    render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},tick(){},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
     openModal(title,body,kind){client.state.modal={kind,title};},
     dialog:{open:false,innerHTML:''},clearInterval(){},

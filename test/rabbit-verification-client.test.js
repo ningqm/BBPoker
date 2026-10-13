@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
 import { commitDeck, cardProof } from '../src/fairness.js';
+import { createRequestGuard } from '../public/platform.js';
 
 test('visible rabbit cards participate in browser commitment verification, including tamper detection', async () => {
   const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -11,7 +12,7 @@ test('visible rabbit cards participate in browser commitment verification, inclu
   const original = { id:'rabbit-browser-proof', deck:Array.from({length:52}, (_,i)=>String(i)) };
   original.audit = commitDeck(original);
   let html = '';
-  const state = {}, context = vm.createContext({ state, receipts:{}, crypto:webcrypto, TextEncoder,
+  const state = {}, context = vm.createContext({ state, requests:createRequestGuard(), receipts:{}, crypto:webcrypto, TextEncoder,
     esc:String, card:()=>'', toast(message){ throw new Error(message); }, closeModal(){},
     openModal(title, body, kind){ state.modal={kind}; html=body; },
   });

@@ -1,3 +1,4 @@
+import {THROWABLES,createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import * as records from '../public/records.js';
 import {createTableFeedback} from '../public/table-feedback.js';
@@ -11,7 +12,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function harness(){
   const calls=[],toasts=[],draws=[];let client,counter=0;
-  const context=vm.createContext({statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
+  const context=vm.createContext({THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
     render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
@@ -100,4 +101,27 @@ test('new hand library filters win over an older pagination response',async()=>{
   c.calls[0].resolve({hands:[{id:'old'}],nextCursor:'old-cursor'});await old;
   assert.deepEqual(JSON.parse(JSON.stringify(c.state.library.hands)),[{id:'favorite'}]);assert.equal(c.state.library.nextCursor,null);
   assert.match(c.calls[1].path,/favorites=1/);
+});
+
+test('targeted throw retries keep idempotency only for the same recipient',async()=>{
+  const c=harness();const a=c.sendChat('throw','water','friend-a');
+  assert.equal(c.calls[0].body.targetId,'friend-a');assert.equal(c.calls[0].body.kind,'throw');
+  c.calls[0].reject(new Error('lost response'));await a;
+  const retry=c.sendChat('throw','water','friend-a');assert.equal(c.calls[1].body.messageId,c.calls[0].body.messageId);
+  c.calls[1].reject(new Error('lost again'));await retry;
+  const b=c.sendChat('throw','water','friend-b');assert.notEqual(c.calls[2].body.messageId,c.calls[0].body.messageId);assert.equal(c.calls[2].body.targetId,'friend-b');
+  c.calls[2].resolve({});await b;assert.equal(c.state.busy,false);assert.ok(c.state.throwUntil>Date.now());
+});
+
+test('throw display escapes recipient and never creates an empty speech bubble',()=>{
+  const c=harness();c.state.chatOpen=true;const first=deferredRoom(),next=deferredRoom([{id:'throw-1',playerId:'friend',targetId:'me',targetName:'<img src=x>',emote:'tomato',kind:'throw',at:new Date().toISOString()}]);
+  c.captureRoomChanges(null,first);c.captureRoomChanges(first,next);
+  assert.equal(c.state.reactions.friend,undefined);c.state.chatOpen=true;const html=c.chatPanel(next);assert.doesNotMatch(html,/<img src=x>/);assert.match(html,/&lt;img src=x&gt;/);
+});
+
+test('rabbit reveal animates independently without changing real board feedback',()=>{
+  const c=harness(),first=deferredRoom();first.hand.status='complete';first.hand.rabbit={board:[],originalCount:0,active:true};
+  c.captureRoomChanges(null,first);const next=structuredClone(first);next.hand.rabbit.board=['As'];c.captureRoomChanges(first,next);
+  assert.equal(c.state.boardMotion.from,0);assert.equal(c.state.boardMotion.count,1);assert.equal(c.state.motion,null);
+  c.state.feedbackResync=true;const restored=structuredClone(next);restored.hand.rabbit.board=['As','Kd'];c.captureRoomChanges(next,restored);assert.equal(c.state.boardMotion,null);assert.equal(c.state.funEffects.length,0);
 });

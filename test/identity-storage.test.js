@@ -1,3 +1,4 @@
+import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
@@ -36,7 +37,7 @@ function browserStorage(t) {
 }
 function tab() {
   const calls = [];
-  const context = vm.createContext({statsUI,
+  const context = vm.createContext({statsUI,funTracker:createTableFunTracker(),
     feedback:createTableFeedback(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },

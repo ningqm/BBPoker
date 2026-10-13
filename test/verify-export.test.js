@@ -10,7 +10,7 @@ import { RoomService } from '../src/room.js';
 import { availableActions } from '../src/poker.js';
 import { verifyExport } from '../scripts/verify-export.mjs';
 
-function realExport(count = 3, folds = false) {
+function realExport(count = 3, folds = false, { foldStreet = 'preflop', rabbitCards = 0 } = {}) {
   const users = Array.from({ length: count }, (_, i) => ({ id: `user-${i}`, name: `朋友${i}`, avatar: 0 }));
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store);
@@ -24,8 +24,9 @@ function realExport(count = 3, folds = false) {
   while (room.hand.status === 'playing') {
     const actor = users.find(u => u.id === room.hand.actingId);
     const a = availableActions(room.hand, actor.id);
-    command(actor, folds ? 'fold' : a.canCheck ? 'check' : 'call', { handId: room.hand.id });
+    command(actor, folds && room.hand.street === foldStreet ? 'fold' : a.canCheck ? 'check' : 'call', { handId: room.hand.id });
   }
+  for (let i = 0; i < rabbitCards && room.hand.rabbit?.active; i++) service.tick(room, room.hand.rabbit.nextAt);
   return { app: '同桌', version: 1, exportedAt: new Date().toISOString(), viewerId: users[0].id,
     privacy: 'Only your own cards and publicly revealed cards are included.',
     hands: service.exports(users[0].id, room.code), adjustments: service.exportAdjustments(users[0].id, room.code) };
@@ -40,6 +41,59 @@ test('actual service exports verify for heads-up, multiway and hidden folded car
     assert.ok(result.proofs >= 2);
     if (folds) assert.ok(data.hands[0].players.some(p => p.cards.includes(null)));
   }
+});
+
+test('partial and complete rabbit exports verify only their revealed supplemental cards, with legacy compatibility', () => {
+  for (const count of [2, 3]) for (const foldStreet of ['preflop', 'flop', 'turn']) for (const rabbitCards of [0, 1, 5]) {
+    const data = realExport(count, true, { foldStreet, rabbitCards });
+    const hand = data.hands[0];
+    assert.equal(hand.rabbit.originalCount, hand.board.length);
+    assert.deepEqual(hand.rabbit.board.slice(0, hand.board.length), hand.board);
+    assert.equal(verifyExport(data).proofs, hand.proofs.length + hand.rabbit.proofs.length);
+    const legacy = structuredClone(data);
+    delete legacy.hands[0].rabbit;
+    assert.equal(verifyExport(legacy).proofs, hand.proofs.length);
+  }
+});
+
+test('rabbit prefix, count, cards, proof and proof-channel tampering are rejected', () => {
+  const original = realExport(3, true, { foldStreet: 'flop', rabbitCards: 5 });
+  const cases = [
+    hand => { hand.rabbit.originalCount = 0; },
+    hand => { hand.rabbit.originalCount = '3'; },
+    hand => { [hand.rabbit.board[0], hand.rabbit.board[1]] = [hand.rabbit.board[1], hand.rabbit.board[0]]; },
+    hand => { hand.rabbit.board.length = 2; },
+    hand => { hand.rabbit.board.push('As'); },
+    hand => { hand.rabbit.board[3] = hand.rabbit.board[0]; },
+    hand => { hand.rabbit.proofs[0].salt = '0'.repeat(64); },
+    hand => { delete hand.rabbit.proofs; },
+    hand => { hand.rabbit.proofs.push(structuredClone(hand.rabbit.proofs[0])); },
+    // Moving an otherwise valid own-card proof must not bypass the rabbit-only scope.
+    hand => { hand.rabbit.proofs.push(hand.proofs.shift()); },
+    hand => { hand.proofs.push(hand.rabbit.proofs.pop()); },
+  ];
+  for (const mutate of cases) {
+    const data = structuredClone(original); mutate(data.hands[0]);
+    assert.throws(() => verifyExport(data), /第 1 手/);
+  }
+});
+
+test('partial rabbit exports reject missing proofs and valid future-card proofs', () => {
+  const complete = realExport(2, true, { rabbitCards: 5 });
+  const partial = structuredClone(complete);
+  const hand = partial.hands[0];
+  hand.rabbit.board = hand.rabbit.board.slice(0, 2);
+  hand.rabbit.proofs = hand.rabbit.proofs.slice(0, 2);
+  hand.rabbit.active = true;
+  assert.equal(verifyExport(partial).proofs, hand.proofs.length + 2);
+  const missing = structuredClone(partial); missing.hands[0].rabbit.proofs.pop();
+  assert.throws(() => verifyExport(missing), /部分可见牌缺少证明/);
+  const future = structuredClone(partial);
+  future.hands[0].rabbit.proofs.push(complete.hands[0].rabbit.proofs[2]);
+  assert.throws(() => verifyExport(future), /已公开牌范围/);
+  const duplicate = structuredClone(partial);
+  duplicate.hands[0].rabbit.proofs.push(duplicate.hands[0].proofs[0]);
+  assert.throws(() => verifyExport(duplicate), /位置重复/);
 });
 
 test('root, payload, position, displayed board and proof tampering are rejected', () => {

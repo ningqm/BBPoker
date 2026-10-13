@@ -16,7 +16,9 @@ function fixture(t, settings = {}, count = 3) {
   for (const user of users.slice(1)) service.join(user, room.code, room.invite);
   const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
-  const finish = () => { for (let n = 0; room.hand.status === 'playing'; n++) { assert.ok(n < 20); cmd(users.findIndex(u => u.id === room.hand.actingId), 'fold'); } };
+  // These tests isolate automatic dealing after the optional supplemental-card
+  // animation. Its real deadlines, restart and privacy are covered separately.
+  const finish = () => { for (let n = 0; room.hand.status === 'playing'; n++) { assert.ok(n < 20); cmd(users.findIndex(u => u.id === room.hand.actingId), 'fold'); } service.completeRabbit(room, timestamp); };
   const connect = (i, online, reconnected = false) => { service.connections.set(`${room.code}:${users[i].id}`, online ? 1 : 0); return service.connectionChanged(room, timestamp, { reconnected }); };
   return { users, store, service, room, cmd, finish, connect, advance(ms) { timestamp += ms; }, get time() { return timestamp; } };
 }
@@ -189,6 +191,7 @@ test('real server clock persists before SSE, retries a failed save without dupli
   }
   const firstStream = await stream(); await firstStream.until(s => s.hand === null);
   await command(0, 'start'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'fold');
+  await command(0, 'start'); // Explicit host resume skips rabbit; ordinary auto-deal countdown remains.
   const settled = await firstStream.until(s => s.hand?.status === 'complete'); assert.equal(settled.autoDeal.nextHandAt, timestamp + 5000);
   const saved = structuredClone(app.store.data), originalSave = app.store.save.bind(app.store);
   let observedFailure; const failed = new Promise(resolve => { observedFailure = resolve; });

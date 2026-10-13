@@ -1,3 +1,4 @@
+import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
@@ -53,7 +54,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({statsUI,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
+  const context = vm.createContext({funTracker:createTableFunTracker(),statsUI,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {

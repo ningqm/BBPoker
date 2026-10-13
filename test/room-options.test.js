@@ -108,6 +108,7 @@ test('time card reset uses fixed room windows, replaces rather than accumulates,
   const i = f.users.findIndex(u => u.id === f.room.hand.actingId);
   for (let n = 0; n < 5; n++) f.cmd(i, 'timebank');
   assert.throws(() => f.cmd(i, 'timebank'), /用完/); finish(f);
+  f.service.completeRabbit(f.room, timestamp); // Isolate the half-hour time-bank timer after supplemental cards.
   f.cmd(i, 'stand'); f.cmd(i, 'sit', { seat: i, amountBB: 100 });
   assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 0);
   assert.equal(f.service.needsTick(f.room, timestamp + 1799999), false);

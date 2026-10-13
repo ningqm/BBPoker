@@ -100,3 +100,31 @@ test('table tool strip keeps play-related tools and removes general data and leg
   assert.doesNotMatch(html,/data-action="career"|发牌与隐私|公平与隐私|公开源码|不提供充值/);
   for(const action of ['toggle-chat','interact','history','table-info','room-menu'])assert.match(html,new RegExp('data-action="'+action+'"'));
 });
+
+test('seat status colors follow the visible lifecycle state before stale betting flags',()=>{
+  const context=vm.createContext({lifecycle,state:{},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
+  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const layouts=','function boardCard('),'globalThis.draw=seatView;'].join('\n'),context);
+  const r=room(),p=r.players[1];r.hand={status:'playing',actingId:'me'};p.connected=true;p.inHand=true;p.allIn=true;
+  let html=context.draw(1,r);assert.match(html,/data-tone="allin">ALL IN/);
+  p.connected=false;html=context.draw(1,r);assert.match(html,/data-tone="waiting">离线/);assert.doesNotMatch(html,/data-tone="allin"/);
+  p.connected=true;p.sittingOut=true;assert.match(context.draw(1,r),/data-tone="waiting">暂离/);
+  p.sittingOut=false;p.waitingFor='squid';p.inHand=false;assert.match(context.draw(1,r),/data-tone="waiting">等待下一轮/);
+  p.inHand=true;assert.match(context.draw(1,r),/data-tone="allin">ALL IN/);
+  p.allIn=false;p.waitingFor=null;p.lastAction='call';assert.match(context.draw(1,r),/data-tone="call">跟注/);
+  p.lastAction='timeout';assert.match(context.draw(1,r),/data-tone="neutral">超时/);
+  r.hand={status:'complete',result:{mainWinnerIds:[p.id]}};p.connected=false;assert.match(context.draw(1,r),/data-tone="win">赢得主池/);
+});
+
+test('the last available chips are labeled all-in both for a call and the raise amount controls',()=>{
+  const c=harness(),r=room(),me=r.players[0];r.hand={status:'playing'};r.actions={canAct:true,canFold:true,canCheck:false,callAmount:me.stack,canRaise:false,canAllIn:false};
+  assert.match(c.actionArea(r,me,true),/data-action="call"[^>]*data-allin="true"[^>]*>全下跟注/);
+  r.actions={...r.actions,callAmount:10,canRaise:true,minRaiseTo:20,maxRaiseTo:1000};c.state.raise=1000;
+  assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="true"[^>]*>全下至 1,000/);
+  c.state.raise=20;assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="false"[^>]*>加至 20/);
+  const nodes=new Map(['#raise-button','#raise-range','#raise-input','#raise-bb'].map(id=>[id,{dataset:{},setAttribute(){}}]));
+  c.state.room=r;
+  const context=vm.createContext({state:c.state,$:id=>nodes.get(id),sliderFromRaise,num:value=>String(value)});
+  vm.runInContext(section('function setRaise(value){','document.addEventListener(')+';globalThis.adjust=setRaise;',context);
+  context.adjust(1000);assert.equal(nodes.get('#raise-button').dataset.allin,'true');assert.match(nodes.get('#raise-button').textContent,/全下至/);
+  context.adjust(25);assert.equal(nodes.get('#raise-button').dataset.allin,'false');assert.equal(nodes.get('#raise-input').value,25);assert.match(nodes.get('#raise-button').textContent,/加至 25/);
+});

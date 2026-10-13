@@ -287,9 +287,10 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         }
         if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
         if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id));
-        if (path === '/api/hands' && req.method === 'GET') return send(res, 200, service.handLibrary(user.id, {
-          before: url.searchParams.get('before'), limit: url.searchParams.get('limit') ?? '20', favorites: url.searchParams.get('favorites'), room: url.searchParams.get('room'),
-        }));
+        if (path === '/api/sessions' && req.method === 'GET') return send(res, 200, service.sessions(user.id, Object.fromEntries(url.searchParams)));
+        const sessionMatch = /^\/api\/sessions\/([0-9]{6})$/.exec(path);
+        if (sessionMatch && req.method === 'GET') return send(res, 200, service.sessionFor(user.id, sessionMatch[1]));
+        if (path === '/api/hands' && req.method === 'GET') return send(res, 200, service.handLibrary(user.id, Object.fromEntries(url.searchParams)));
         const favoriteMatch = /^\/api\/hands\/([A-Za-z0-9_-]{1,80})\/favorite$/.exec(path);
         if (favoriteMatch && req.method === 'POST') {
           limited(`favorite:${user.id}`, 120); const b = await body(req);
@@ -322,7 +323,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
             const b = await body(req); const message = mutate(() => service.chat(user, code, b, { ip }));
             broadcast(code); return send(res, 200, { message });
           }
-          if (endpoint === 'history' && req.method === 'GET') return send(res, 200, service.history(user.id, code));
+          if (endpoint === 'history' && req.method === 'GET') return send(res, 200, service.history(user.id, code, Object.fromEntries(url.searchParams)));
           if (endpoint === 'hands' && req.method === 'GET') return send(res, 200, service.handFor(user.id, code, handId));
         }
         fail('接口不存在', 404);

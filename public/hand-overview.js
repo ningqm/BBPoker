@@ -77,7 +77,7 @@ function actionText(event, bb, allInAfter) {
       : to ? `全下至 ${to}（本次投入 ${amount}）` : `全下 · 本次投入 ${amount}`;
     case 'refund': return `退回未跟注 ${amount}`;
     case 'payout': return `获得底池 ${amount}`;
-    case 'timeout': return '行动超时（实际操作见前一条）';
+    case 'timeout': return '超时自动处理';
     case 'reconnect': return '重新连接';
     case 'timebank': return Number.isSafeInteger(event.seconds) ? `使用时间牌 · 延长 ${event.seconds} 秒` : '使用时间牌';
     case 'allInLock': return '下注结束，开始全下跑牌';
@@ -92,12 +92,27 @@ function actionText(event, bb, allInAfter) {
 }
 function actions(hand, bb) {
   const stack = new Map(hand.players.map(p => [p.id, Number.isSafeInteger(p.startingStack) ? p.startingStack : null]));
-  return hand.log.map((event, index) => {
+  const lines = [], recentActions = new Map();
+  hand.log.forEach((event, index) => {
+    // timeout is appended after applyAction, which may already have dealt the
+    // next street or paid the winners. Annotate its actual check/fold rather
+    // than treating the timeout's later street as a second player action.
+    if (event.type === 'timeout') {
+      const actual = recentActions.get(event.playerId);
+      recentActions.delete(event.playerId);
+      if (actual && ['check', 'fold'].includes(actual.event.type)) {
+        actual.label += '（超时）';
+        return;
+      }
+    }
     const before = stack.get(event.playerId);
     if (paid.has(event.type) && Number.isSafeInteger(before)) stack.set(event.playerId, before - event.amount);
     else if (['refund', 'payout'].includes(event.type) && Number.isSafeInteger(before)) stack.set(event.playerId, before + event.amount);
-    return { event, number: index + 1, label: actionText(event, bb, paid.has(event.type) && stack.get(event.playerId) === 0) };
+    const line = { event, number: index + 1, label: actionText(event, bb, paid.has(event.type) && stack.get(event.playerId) === 0) };
+    lines.push(line);
+    if (['check', 'fold', 'call', 'raise', 'allin'].includes(event.type)) recentActions.set(event.playerId, line);
   });
+  return lines;
 }
 function actionChip(action) {
   const kind = ['fold', 'refund', 'allin', 'raise'].includes(action.event.type) ? action.event.type : 'normal';
@@ -156,7 +171,7 @@ export function renderHandOverview(hand, viewerId) {
   return `<section class="hand-overview" aria-label="静态牌谱概览"><div class="ho-summary"><div class="ho-board"><p class="ho-kicker">${heading}${hand.squidRound ? ` · 第 ${points(hand.squidRound)} 轮鱿鱼` : ''}</p>${cardRow(hand.board, 5, '本手未发出')}<p class="ho-board-caption">实际公共牌 · 底池 <strong title="${points(pot)} 积分">${esc(chipText(pot, bb))}</strong></p></div><div class="ho-mine"><small>${mine ? '我的净盈亏' : myMini !== 0 ? '未参与发牌 · 鱿鱼结算' : '本手未参与'}</small><strong class="${tone(myNet)}" title="${points(myNet)} 积分">${mine || myMini !== 0 ? esc(chipText(myNet, bb, true)) : '—'}</strong>${mine || myMini !== 0 ? `<span>德州 ${esc(chipText(myPoker, bb, true))}<br>小游戏 ${esc(chipText(myMini, bb, true))}</span>` : ''}</div></div>${rabbit ? `<aside class="ho-rabbit"><div><strong>🐇 补看余牌</strong><small>手牌已结束，不计输赢</small></div>${cardRow(rabbit, rabbit.length)}</aside>` : ''}<div class="ho-route-title"><h3>全桌操作路线</h3><small>数字表示全桌先后顺序 · 单位 ${Number.isSafeInteger(bb) && bb > 0 ? 'BB' : '积分'}</small></div><div class="ho-route"><div class="ho-route-header" aria-hidden="true"><span>玩家 / 净盈亏</span>${streets.map(street => `<span>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</span>`).join('')}</div>${players.map(player => {
     const poker = Number.isSafeInteger(player.net) ? player.net : 0, mini = miniNet(hand, player.id, player), net = poker + mini;
     return `<article class="ho-player ${player.id === viewerId ? 'ho-player-me' : ''}" aria-label="${esc(player.name || '牌友')}的操作路线"><div class="ho-player-heading"><div class="ho-player-name"><strong>${esc(player.name || '牌友')}</strong>${player.id === viewerId ? '<span class="ho-you">我</span>' : ''}</div>${position(hand, player)}<div class="ho-player-result">${cardRow(player.cards, 2)}<strong class="${tone(net)}" title="${points(net)} 积分">${esc(chipText(net, bb, true))}</strong></div>${mini ? `<small class="ho-mini-breakdown">含小游戏 ${esc(chipText(mini, bb, true))}</small>` : ''}</div><div class="ho-player-streets">${streets.map(street => {
-      const route = lines.filter(line => line.event.playerId === player.id && line.event.street === street && line.event.type !== 'payout');
+      const route = lines.filter(line => line.event.playerId === player.id && line.event.street === street && !['payout', 'timeout'].includes(line.event.type));
       return `<div class="ho-street"><h4>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</h4><div class="ho-actions">${route.length ? route.map(actionChip).join('') : '<span class="ho-no-action">—</span>'}</div></div>`;
     }).join('')}</div></article>`;
   }).join('')}</div>${chronology(hand, lines, bb, names)}<p class="ho-privacy">这里只展示本人底牌与已公开底牌；未公开底牌保留牌背。净盈亏含本手关联的小游戏结算。</p></section>`;

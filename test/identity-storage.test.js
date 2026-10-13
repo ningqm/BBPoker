@@ -1,3 +1,4 @@
+import * as statsUI from '../public/stats.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +36,7 @@ function browserStorage(t) {
 }
 function tab() {
   const calls = [];
-  const context = vm.createContext({
+  const context = vm.createContext({statsUI,
     feedback:createTableFeedback(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },

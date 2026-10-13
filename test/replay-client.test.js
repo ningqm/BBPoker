@@ -1,3 +1,4 @@
+import * as statsUI from '../public/stats.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,7 +24,7 @@ function harness(){
   const dialog={open:true,innerHTML:'initial',scrollTop:23,querySelector:selector=>selectors.get(selector)||null,querySelectorAll:selector=>selector==='.replay-streets button'?steps:logs,close(){this.open=false;}};
   const listeners=new Map(),windowListeners=new Map(),timers=new Map();let next=0;
   const document={visibilityState:'visible',querySelector:selector=>selectors.get(selector)||null,addEventListener(type,fn){const rows=listeners.get(type)||[];rows.push(fn);listeners.set(type,rows);}};
-  const context=vm.createContext({state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
+  const context=vm.createContext({statsUI,state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
     replaySnapshot,replayStreets,REPLAY_SPEEDS,createReplayPlayback,
     num:String,signed:String,profitClass:()=>'',esc:String,fmtDate:()=>'',eventText:event=>event.type,
     cards:cards=>cards.join(','),card:card=>card||'?',btn:()=>'',openModal(){throw new Error('Existing playback must not replace the modal');},

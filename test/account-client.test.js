@@ -1,3 +1,4 @@
+import * as statsUI from '../public/stats.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +29,7 @@ const clientSource = [
 function harness() {
   const calls = [], writes = [], toasts = [], timers = new Map(), modals = [], cleared = [], rendered = [];
   let timerId = 0, client, avatarPatch={};
-  const context = vm.createContext({feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
+  const context = vm.createContext({statsUI,feedback:createTableFeedback(),tableSounds:{play(){},suspend(){}},
     createRequestGuard, AbortController, TextDecoder, Uint8Array, URLSearchParams, avatarMarkup,avatarEditorMarkup,createAvatarCache,
     $:()=>({}),createAvatarEditor:()=>({patch:()=>avatarPatch,setSaving(){},setError(){},destroy(){}}),
     apiUrl: p => `https://poker.test${p}`,

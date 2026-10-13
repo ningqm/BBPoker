@@ -116,11 +116,13 @@ test('expiry overrides a pending deal and closing refunds once, including pause/
   const ledger = structuredClone(f.store.data.ledger); assert.equal(f.service.tick(f.room), false); assert.deepEqual(f.store.data.ledger, ledger);
 });
 
-test('immediately completed blind-only or bomb hands still receive the next-hand decision exactly once', t => {
+test('blind-only or bomb all-ins run out before receiving the next-hand decision exactly once', t => {
   for (const settings of [{}, { bombPot: true, bombEveryHands: 1, bombAnteBB: 100 }]) {
     const f = fixture(t, settings, 2);
     if (!settings.bombPot) { f.room.members[f.users[0].id].stack = 5; f.room.members[f.users[1].id].stack = 3; }
-    f.cmd(0, 'start'); assert.equal(f.room.hand.status, 'complete'); assert.equal(f.store.data.hands.length, 1);
+    f.cmd(0, 'start'); assert.equal(f.room.hand.runout.active, true); assert.equal(f.store.data.hands.length, 0);
+    while (f.room.hand.runout.active) { f.advance(f.room.hand.runout.nextAt - f.time); assert.equal(f.service.tick(f.room), true); }
+    assert.equal(f.room.hand.status, 'complete'); assert.equal(f.store.data.hands.length, 1);
     assert.equal(f.store.data.ledger.filter(row => row.type === 'holdem').length, 2);
     assert.equal(f.room.nextHandAt !== null || f.room.autoWaitReason !== null, true);
     if (f.room.nextHandAt) assert.equal(f.room.nextHandAt, f.time + 5000);

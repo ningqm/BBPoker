@@ -1,4 +1,4 @@
-import { recordFilters } from './records.js';
+import { recordFilters, squidSettlementMap, squidSettlementKey, handMiniNet } from './records.js';
 
 const DAY = 86400000;
 const ACTIONS = new Set(['fold', 'check', 'call', 'raise', 'allin']);
@@ -113,6 +113,8 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     && inRange(hand) && hand.players.some(player => player.id === userId))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || String(b.id).localeCompare(String(a.id)));
   const hands = (filter.maxHands ? matched.slice(0, filter.maxHands) : matched).reverse();
+  const squid = squidSettlementMap(db.ledger), selectedSquid = new Map();
+  for (const hand of hands) if (hand.squidSettlementId) selectedSquid.set(squidSettlementKey(hand.roomCode, hand.squidSettlementId, userId), hand.id);
   const totals = { hands: hands.length, wins: 0, winHands: 0, lossHands: 0, evenHands: 0,
     net: 0, holdemNet: 0, miniNet: 0, bbNet: 0, bbPer100: null, preflopHands: 0, showdowns: 0 };
   const counters = { vpip: 0, pfr: 0, rfi: 0, rfiOpportunity: 0, threeBet: 0, threeBetOpportunity: 0,
@@ -124,7 +126,7 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
   db.ledger.forEach((row, i) => { if (row.playerId === userId && row.type === 'holdem') settlementOrder.set(`${row.roomCode}/${row.note}`, i); });
   for (const hand of hands) {
     const player = hand.players.find(p => p.id === userId), holdemNet = player.stack - player.startingStack;
-    const miniNet = hand.miniChanges?.[userId] ?? 0;
+    const miniNet = handMiniNet(hand, userId, squid);
     totals[holdemNet > 0 ? 'winHands' : holdemNet < 0 ? 'lossHands' : 'evenHands']++;
     if ((hand.result?.payouts?.[userId] ?? 0) > 0) totals.wins++;
     const showdown = Boolean(hand.result?.showdown && !player.folded);
@@ -133,7 +135,7 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     const tendency = handTendencies(hand, userId);
     for (const key of Object.keys(counters)) if (tendency[key]) counters[key]++;
     if (!hand.bombPot) totals.preflopHands++;
-    events.push({ at: hand.at, handId: hand.id, holdemDelta: holdemNet, miniDelta: miniNet,
+    events.push({ at: hand.at, handId: hand.id, roomCode: hand.roomCode, holdemDelta: holdemNet, miniDelta: miniNet,
       order: settlementOrder.get(`${hand.roomCode}/第 ${hand.number} 手德州结算`) ?? -1 });
 
     const lock = hand.allInLock;
@@ -153,9 +155,26 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
   let adjustmentCount = 0;
   if (!filter.maxHands) db.ledger.forEach((row, order) => {
     if (row.playerId === userId && row.type === 'mushroomRefund' && (!filter.room || row.roomCode === filter.room) && inRange(row)) {
-      events.push({ at: row.at, handId: null, holdemDelta: 0, miniDelta: row.amount, order, adjustment: '蘑菇池退款' }); adjustmentCount++;
+      events.push({ at: row.at, handId: null, roomCode: row.roomCode, holdemDelta: 0, miniDelta: row.amount, order, adjustment: '蘑菇池退款' }); adjustmentCount++;
     }
   });
+  let squidSettlementCount = 0, standaloneSquidSettlementCount = 0;
+  // handId on a standalone settlement is only a reference to the last played hand.
+  // A mirrored hand.squidSettlementId, not that reference, defines the N-hand cohort.
+  const mirroredSquid = new Map();
+  for (const hand of db.hands) if (hand.status === 'complete' && hand.squidSettlementId) {
+    mirroredSquid.set(squidSettlementKey(hand.roomCode, hand.squidSettlementId, userId), hand.id);
+  }
+  const ledgerOrder = new Map(db.ledger.map((row, order) => [row, order]));
+  for (const [key, row] of squid) {
+    if (row.playerId !== userId || (filter.room && row.roomCode !== filter.room) || !inRange(row)
+      || (filter.maxHands && !selectedSquid.has(key))) continue;
+    const handId = mirroredSquid.get(key) ?? null;
+    events.push({ at: row.at, handId, roomCode: row.roomCode, holdemDelta: 0, miniDelta: row.amount,
+      order: ledgerOrder.get(row), adjustment: '鱿鱼结算' });
+    squidSettlementCount++;
+    if (!handId) standaloneSquidSettlementCount++;
+  }
   events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.order - b.order);
   const curve = events.map(event => {
     totals.holdemNet += event.holdemDelta; totals.miniNet += event.miniDelta;
@@ -175,9 +194,10 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     && (filter.start === -Infinity && filter.end === Infinity || inRange(row)));
   return { ...totals, metrics, vpip: metrics.vpip.percent ?? 0, pfr: metrics.pfr.percent ?? 0,
     totalBuyIn: ledger.filter(row => row.type === 'buyin').reduce((sum, row) => sum + row.amount, 0),
-    sessions: filter.maxHands || filter.start !== -Infinity || filter.end !== Infinity ? new Set(hands.map(hand => hand.roomCode)).size
+    sessions: filter.maxHands || filter.start !== -Infinity || filter.end !== Infinity ? new Set(events.map(event => event.roomCode)).size
       : Object.values(db.rooms ?? {}).filter(room => (!filter.room || room.code === filter.room) && room.members?.[userId]?.totalBuyIn > 0).length,
-    curve: boundedCurve(curve), matchedHands: matched.length, adjustmentCount, adjustmentsExcluded: Boolean(filter.maxHands),
+    curve: boundedCurve(curve), matchedHands: matched.length, adjustmentCount, squidSettlementCount, standaloneSquidSettlementCount,
+    adjustmentsExcluded: Boolean(filter.maxHands),
     filters: { from: Number.isFinite(filter.start) ? new Date(filter.start).toISOString() : null, to: Number.isFinite(filter.end) ? new Date(filter.end).toISOString() : null,
       maxHands: filter.maxHands, room: filter.room },
     allIn: { count: allInRows.length, eligibleCount, unavailableCount: eligibleCount - allInRows.length,

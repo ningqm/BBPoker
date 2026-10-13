@@ -38,6 +38,25 @@ export function recordTotals(rows, holdem = row => row.holdemNet, mini = row => 
   }
   return totals;
 }
+export const squidSettlementKey = (roomCode, settlementId, playerId) => JSON.stringify([roomCode, settlementId, playerId]);
+/** Ledger is authoritative for new rounds. Keep one settlement per room/round/player. */
+export function squidSettlementMap(ledger = []) {
+  const settlements = new Map();
+  for (const row of ledger) {
+    if (row.type !== 'squidSettlement' || typeof row.roundSettlementId !== 'string' || !row.roundSettlementId
+      || typeof row.playerId !== 'string' || !Number.isFinite(row.amount)) continue;
+    const key = squidSettlementKey(row.roomCode, row.roundSettlementId, row.playerId);
+    if (!settlements.has(key)) settlements.set(key, row);
+  }
+  return settlements;
+}
+/** Only remove a mirrored amount when its matching authoritative ledger row exists. */
+export function handMiniNet(hand, userId, settlements) {
+  const total = hand.miniChanges?.[userId] ?? 0;
+  const row = hand.squidSettlementId && settlements.get(squidSettlementKey(hand.roomCode, hand.squidSettlementId, userId));
+  if (!row || !Object.hasOwn(hand.miniChanges ?? {}, userId)) return total;
+  return total - (hand.squidSettlementChanges?.[userId] ?? row.amount);
+}
 function recordCursor(value) {
   if (optional(value)) return null;
   if (typeof value !== 'string' || value.length > 400 || !/^[A-Za-z0-9_-]+$/.test(value)) fail('分页位置无效');
@@ -56,6 +75,7 @@ export function pageRecords(rows, { before, limit = '20' } = {}) {
 }
 export function sessionRecord(db, room, userId, grouped = {}) {
   const hands = grouped.hands ?? db.hands.filter(h => h.roomCode === room.code && h.status === 'complete');
+  const settlements = grouped.settlements ?? squidSettlementMap(db.ledger.filter(row => row.roomCode === room.code));
   const rows = new Map(), users = grouped.users ?? new Map(Object.values(db.users).map(user => [user.id, user]));
   const player = id => {
     if (!rows.has(id)) rows.set(id, { id, name: users.get(id)?.name ?? '朋友', hands: 0, holdemNet: 0, miniNet: 0, net: 0, totalBuyIn: room.members[id]?.totalBuyIn ?? 0 });
@@ -64,8 +84,9 @@ export function sessionRecord(db, room, userId, grouped = {}) {
   for (const member of Object.values(room.members)) if (member.totalBuyIn > 0) player(member.id);
   for (const hand of hands) for (const p of hand.players) {
     const row = player(p.id); if (!users.has(p.id)) row.name = p.name ?? '朋友';
-    row.hands++; row.holdemNet += p.stack - p.startingStack; row.miniNet += hand.miniChanges?.[p.id] ?? 0;
+    row.hands++; row.holdemNet += p.stack - p.startingStack; row.miniNet += handMiniNet(hand, p.id, settlements);
   }
+  for (const settlement of settlements.values()) player(settlement.playerId).miniNet += settlement.amount;
   const refunds = grouped.refunds ?? db.ledger.filter(l => l.roomCode === room.code && l.type === 'mushroomRefund');
   for (const refund of refunds) player(refund.playerId).miniNet += refund.amount;
   const players = [...rows.values()].map(row => ({ ...row, net: row.holdemNet + row.miniNet })).sort((a, b) => b.net - a.net || a.id.localeCompare(b.id));
@@ -74,15 +95,17 @@ export function sessionRecord(db, room, userId, grouped = {}) {
     at: room.startedAt != null ? new Date(room.startedAt).toISOString() : room.createdAt, closedAt: room.closedAt ?? null,
     smallBlind: room.settings.smallBlind, bigBlind: room.settings.bigBlind, handCount: hands.length, playerCount: players.length,
     meNet: me?.net ?? 0, meHoldemNet: me?.holdemNet ?? 0, meMiniNet: me?.miniNet ?? 0,
-    handInProgress: room.hand?.status === 'playing', adjustments: refunds.length > 0, players };
+    handInProgress: room.hand?.status === 'playing', adjustments: refunds.length > 0,
+    squidSettlementCount: [...settlements.values()].filter(row => row.playerId === userId).length, players };
 }
 export function sessionLibrary(db, userId, input = {}) {
   const filter = recordFilters(input);
   const rooms = Object.values(db.rooms).filter(r => Boolean(r.members[userId]) && (!input.room || r.code === input.room));
   const users = new Map(Object.values(db.users).map(user => [user.id, user]));
-  const grouped = new Map(rooms.map(room => [room.code, { hands: [], refunds: [], users }]));
+  const grouped = new Map(rooms.map(room => [room.code, { hands: [], refunds: [], settlements: new Map(), users }]));
   for (const hand of db.hands) if (hand.status === 'complete' && grouped.has(hand.roomCode)) grouped.get(hand.roomCode).hands.push(hand);
   for (const row of db.ledger) if (row.type === 'mushroomRefund' && grouped.has(row.roomCode)) grouped.get(row.roomCode).refunds.push(row);
+  for (const [key, row] of squidSettlementMap(db.ledger)) if (grouped.has(row.roomCode)) grouped.get(row.roomCode).settlements.set(key, row);
   const sessions = rooms.map(room => sessionRecord(db, room, userId, grouped.get(room.code)))
     .filter(row => (row.handCount > 0 || row.playerCount > 0) && Date.parse(row.at) >= filter.start && Date.parse(row.at) <= filter.end
       && resultMatches(row.meNet, filter.result) && (filter.status === 'all' || row.status === filter.status)

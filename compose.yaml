@@ -7,7 +7,6 @@ services:
       DATA_DIR: /app/data
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       CLIENT_ORIGINS: ${CLIENT_ORIGINS:-}
-      CREATE_ROOM_KEY: ${CREATE_ROOM_KEY:-}
     ports:
       - "127.0.0.1:8787:8787"
     volumes:

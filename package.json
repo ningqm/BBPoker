@@ -1,6 +1,6 @@
 {
   "name": "bbpoker",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Invite-only, points-only, single-table Texas Hold'em for friends",
@@ -11,7 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js"
+    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js"
   },
   "license": "UNLICENSED"
 }

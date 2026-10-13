@@ -106,6 +106,17 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
       catch { client.res.destroy(); }
     }
   }
+  let closing = false;
+  function syncConnection(room, reconnected = false) {
+    if (closing) return true;
+    try {
+      const timestamp = Date.now(), plan = service.autoPlan(room, timestamp);
+      const reset = reconnected && Number.isFinite(room.nextHandAt) && room.nextHandAt <= timestamp;
+      const expired = room.status !== 'closed' && room.hand?.status !== 'playing' && room.endsAt != null && Date.now() >= room.endsAt;
+      if (expired || reset || (plan && (room.nextHandAt !== plan.nextHandAt || room.autoWaitReason !== plan.autoWaitReason))) mutate(() => service.connectionChanged(service.room(room.code), timestamp, { reconnected }));
+      return true;
+    } catch (error) { console.error('牌桌连接恢复失败:', error.message); return false; }
+  }
   function subscribe(req, res, room, user) {
     service.member(room, user.id);
     const connectionKey = `${room.code}:${user.id}`;
@@ -113,13 +124,15 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     const client = { res, userId: user.id, authKey: req.authKey }; if (!streams.has(room.code)) streams.set(room.code, new Set()); streams.get(room.code).add(client);
+    const reconnected = service.autoBlockReason(room) === '等待入座玩家回到牌桌';
     service.connections.set(connectionKey, (service.connections.get(connectionKey) ?? 0) + 1);
-    broadcast(room.code);
     const heartbeat = setInterval(() => { if (!userForKey(client.authKey)) closeInvalidStreams(); else if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n'); }, 15000);
     res.on('close', () => {
       clearInterval(heartbeat); streams.get(room.code)?.delete(client);
-      service.connections.set(connectionKey, Math.max(0, (service.connections.get(connectionKey) ?? 1) - 1)); broadcast(room.code);
+      service.connections.set(connectionKey, Math.max(0, (service.connections.get(connectionKey) ?? 1) - 1)); syncConnection(service.room(room.code)); broadcast(room.code);
     });
+    if (!syncConnection(service.room(room.code), reconnected)) { res.destroy(); return; }
+    broadcast(room.code);
   }
   const server = http.createServer(async (req, res) => {
     const securityHeaders = {
@@ -272,7 +285,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           mutate(() => { auth(req); delete store.data.sessions[req.authKey]; });
           closeInvalidStreams(); return send(res, 200, { ok: true });
         }
-        if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: Boolean(process.env.CREATE_ROOM_KEY), stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
+        if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
         if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id));
         if (path === '/api/hands' && req.method === 'GET') return send(res, 200, service.handLibrary(user.id, {
           before: url.searchParams.get('before'), limit: url.searchParams.get('limit') ?? '20', favorites: url.searchParams.get('favorites'), room: url.searchParams.get('room'),
@@ -284,8 +297,6 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         }
         if (path === '/api/rooms' && req.method === 'POST') {
           limited(`create:${user.id}`, 6); const b = await body(req);
-          // Optional deployment gate. Leave empty on a private LAN; configure before public hosting.
-          if (process.env.CREATE_ROOM_KEY && b.createKey !== process.env.CREATE_ROOM_KEY) fail('需要建房口令，请向部署者索取', 403);
           const room = mutate(() => service.create(user, b)); return send(res, 201, { room: service.state(room, user.id) });
         }
         if (path === '/api/events' && req.method === 'GET') return subscribe(req, res, service.room(url.searchParams.get('room')), user);
@@ -343,7 +354,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
       for (const code of changed) broadcast(code);
     } catch (e) { console.error('牌桌计时处理失败:', e.message); }
   }, actionTickMs); tick.unref();
-  return { server, store, service, broadcast, async close() { clearInterval(tick); for (const set of streams.values()) for (const c of set) c.res.destroy(); await new Promise(resolve => server.close(resolve)); } };
+  return { server, store, service, broadcast, async close() { closing = true; clearInterval(tick); for (const set of streams.values()) for (const c of set) c.res.destroy(); await new Promise(resolve => server.close(resolve)); } };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

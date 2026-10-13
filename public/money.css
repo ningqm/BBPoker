@@ -1,0 +1,29 @@
+.money-unit-toggle{display:inline-flex;flex:0 0 auto;align-items:center;gap:2px;padding:3px;border:1px solid #cdded6;border-radius:12px;background:#eaf1ed;white-space:nowrap}
+.money-unit-toggle button{min-width:40px;min-height:32px;padding:5px 9px;border:0;border-radius:8px;background:transparent;color:#536d61;font-size:12px;font-weight:700;line-height:1.2}
+.money-unit-toggle button.selected{background:#176f5e;color:#fff;box-shadow:0 1px 3px #153f3920}
+.money-unit-toggle button:focus-visible{outline:3px solid #c89d32;outline-offset:2px}
+.modal-head .modal-unit-tools{display:flex;flex:0 0 auto;margin-left:auto}
+.modal-head .modal-unit-tools + .icon-btn{margin-left:5px}
+.modal-head:has(.modal-unit-tools){gap:10px}
+.modal-head:has(.modal-unit-tools) h2{min-width:0;overflow-wrap:anywhere}
+.raise-number{min-width:0}
+.raise-number input{max-width:130px}
+.stack-value,.bet-chip,.pot-amount{font-variant-numeric:tabular-nums}
+@media(max-width:600px){
+  .topnav{gap:4px}
+  .topnav .money-unit-toggle{margin-left:auto}
+  .topnav .money-unit-toggle button{min-width:34px;min-height:32px;padding:4px 6px}
+  .modal-head:has(.modal-unit-tools){gap:5px}
+  .modal-head .money-unit-toggle button{min-width:33px;padding:4px 6px}
+  .raise-number input{max-width:98px}
+}
+@media(max-width:360px){
+  .table-topbar .brand strong{font-size:20px}
+  .table-topbar .brand img{width:32px;height:32px}
+  .table-topbar .profile-btn{margin-left:2px;padding-left:6px}
+}
+/* Preserve every navigation and unit control on the smallest phone widths. */
+@media(max-width:380px){
+  .topbar:not(.table-topbar):has(.topnav) .brand strong{display:none}
+  .topbar:not(.table-topbar):has(.topnav) .brand img{width:29px;height:29px}
+}

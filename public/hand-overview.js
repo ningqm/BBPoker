@@ -1,5 +1,6 @@
 // Read only a completed handFor response. Never evaluate cards or unpack a
 // stored hand: visibility remains the server's decision for this viewer.
+import { formatChips, unitLabel } from './money.js';
 const streets = ['preflop', 'flop', 'turn', 'river'];
 const streetNames = { preflop: '翻前', flop: '翻牌', turn: '转牌', river: '河牌' };
 const suits = { c: ['♣', '梅花'], d: ['♦', '方块'], h: ['♥', '红桃'], s: ['♠', '黑桃'] };
@@ -13,9 +14,7 @@ const validCard = card => typeof card === 'string' && /^[2-9TJQKA][cdhs]$/.test(
 /** Display only; filtering uses server-side exact comparison. */
 export function formatHandBB(amount, bigBlind, { signed = false } = {}) {
   if (!Number.isSafeInteger(amount)) return '—';
-  if (!Number.isSafeInteger(bigBlind) || bigBlind <= 0) return `${signed && amount > 0 ? '+' : ''}${points(amount)} 积分`;
-  const value = amount / bigBlind;
-  return `${signed && value > 0 ? '+' : ''}${value.toLocaleString('zh-CN', { maximumFractionDigits: 4 })} BB`;
+  return formatChips(amount, Number.isSafeInteger(bigBlind) && bigBlind > 0 ? bigBlind : null, { signed, unit: 'bb', digits: 4 });
 }
 
 function validate(hand) {
@@ -46,7 +45,7 @@ function cardMarkup(card, emptyLabel = '未公开底牌') {
 }
 const cardRow = (cards, count, emptyLabel) => `<span class="ho-cards">${Array.from({ length: count }, (_, i) => cardMarkup(cards?.[i], emptyLabel)).join('')}</span>`;
 function chipText(value, bb, signed = false) {
-  return Number.isSafeInteger(bb) && bb > 0 ? formatHandBB(value, bb, { signed }) : `${signed && value > 0 ? '+' : ''}${points(value)} 积分`;
+  return formatChips(Number.isSafeInteger(value) ? value : null, Number.isSafeInteger(bb) && bb > 0 ? bb : null, { signed, digits: 4 });
 }
 function miniNet(hand, playerId, player) {
   if (Number.isSafeInteger(player?.miniNet)) return player.miniNet;
@@ -177,9 +176,9 @@ export function renderHandOverview(hand, viewerId) {
   const rabbit = safeRabbit(hand);
   const players = [...hand.players].sort((a, b) => a.seat - b.seat);
   const heading = hand.bombPot ? '<span class="ho-mode ho-mode-bomb">炸弹池 · 直接从翻牌开始</span>' : '<span>德州扑克</span>';
-  return `<section class="hand-overview" aria-label="静态牌谱概览"><div class="ho-summary"><div class="ho-board"><p class="ho-kicker">${heading}${hand.squidRound ? `<span class="ho-mode ho-mode-squid">第 ${points(hand.squidRound)} 轮鱿鱼</span>` : ''}</p>${cardRow(hand.board, 5, '本手未发出')}<p class="ho-board-caption">实际公共牌 · 底池 <strong title="${points(pot)} 积分">${esc(chipText(pot, bb))}</strong></p></div><div class="ho-mine"><small>${mine ? '我的净盈亏' : myMini !== 0 ? '未参与发牌 · 鱿鱼结算' : '本手未参与'}</small><strong class="${tone(myNet)}" title="${points(myNet)} 积分">${mine || myMini !== 0 ? esc(chipText(myNet, bb, true)) : '—'}</strong>${mine || myMini !== 0 ? `<span>德州 ${esc(chipText(myPoker, bb, true))}<br>小游戏 ${esc(chipText(myMini, bb, true))}</span>` : ''}</div></div>${rabbit ? `<aside class="ho-rabbit"><div><strong>🐇 补看余牌</strong><small>手牌已结束，不计输赢</small></div>${cardRow(rabbit, rabbit.length)}</aside>` : ''}<div class="ho-route-title"><h3>全桌操作路线</h3><small>数字表示全桌先后顺序 · 单位 ${Number.isSafeInteger(bb) && bb > 0 ? 'BB' : '积分'}</small></div><div class="ho-route"><div class="ho-route-header" aria-hidden="true"><span>玩家 / 净盈亏</span>${streets.map(street => `<span>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</span>`).join('')}</div>${players.map(player => {
+  return `<section class="hand-overview" aria-label="静态牌谱概览"><div class="ho-summary"><div class="ho-board"><p class="ho-kicker">${heading}${hand.squidRound ? `<span class="ho-mode ho-mode-squid">第 ${points(hand.squidRound)} 轮鱿鱼</span>` : ''}</p>${cardRow(hand.board, 5, '本手未发出')}<p class="ho-board-caption">实际公共牌 · 底池 <strong title="${esc(chipText(pot, bb))}">${esc(chipText(pot, bb))}</strong></p></div><div class="ho-mine"><small>${mine ? '我的净盈亏' : myMini !== 0 ? '未参与发牌 · 鱿鱼结算' : '本手未参与'}</small><strong class="${tone(myNet)}" title="${esc(chipText(myNet, bb, true))}">${mine || myMini !== 0 ? esc(chipText(myNet, bb, true)) : '—'}</strong>${mine || myMini !== 0 ? `<span>德州 ${esc(chipText(myPoker, bb, true))}<br>小游戏 ${esc(chipText(myMini, bb, true))}</span>` : ''}</div></div>${rabbit ? `<aside class="ho-rabbit"><div><strong>🐇 补看余牌</strong><small>手牌已结束，不计输赢</small></div>${cardRow(rabbit, rabbit.length)}</aside>` : ''}<div class="ho-route-title"><h3>全桌操作路线</h3><small>数字表示全桌先后顺序 · 单位 ${unitLabel()}</small></div><div class="ho-route"><div class="ho-route-header" aria-hidden="true"><span>玩家 / 净盈亏</span>${streets.map(street => `<span>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</span>`).join('')}</div>${players.map(player => {
     const poker = Number.isSafeInteger(player.net) ? player.net : 0, mini = miniNet(hand, player.id, player), net = poker + mini;
-    return `<article class="ho-player ${player.id === viewerId ? 'ho-player-me' : ''}" aria-label="${esc(player.name || '牌友')}的操作路线"><div class="ho-player-heading"><div class="ho-player-name"><strong>${esc(player.name || '牌友')}</strong>${player.id === viewerId ? '<span class="ho-you">我</span>' : ''}</div>${position(hand, player)}<div class="ho-player-result">${cardRow(player.cards, 2)}<strong class="${tone(net)}" title="${points(net)} 积分">${esc(chipText(net, bb, true))}</strong></div>${mini ? `<small class="ho-mini-breakdown">含小游戏 ${esc(chipText(mini, bb, true))}</small>` : ''}</div><div class="ho-player-streets">${streets.map(street => {
+    return `<article class="ho-player ${player.id === viewerId ? 'ho-player-me' : ''}" aria-label="${esc(player.name || '牌友')}的操作路线"><div class="ho-player-heading"><div class="ho-player-name"><strong>${esc(player.name || '牌友')}</strong>${player.id === viewerId ? '<span class="ho-you">我</span>' : ''}</div>${position(hand, player)}<div class="ho-player-result">${cardRow(player.cards, 2)}<strong class="${tone(net)}" title="${esc(chipText(net, bb, true))}">${esc(chipText(net, bb, true))}</strong></div>${mini ? `<small class="ho-mini-breakdown">含小游戏 ${esc(chipText(mini, bb, true))}</small>` : ''}</div><div class="ho-player-streets">${streets.map(street => {
       const route = lines.filter(line => line.event.playerId === player.id && line.event.street === street && !['payout', 'timeout'].includes(line.event.type));
       return `<div class="ho-street"><h4>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</h4><div class="ho-actions">${route.length ? route.map(actionChip).join('') : '<span class="ho-no-action">—</span>'}</div></div>`;
     }).join('')}</div></article>`;

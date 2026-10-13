@@ -2,3 +2,146 @@
 .interaction-targets{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:15px}.interaction-targets button{font-size:13px;padding:8px 12px;border:1px solid var(--border,#dbe4dd);background:#f8faf7}.interaction-targets button.selected{background:#e0f0e8;border-color:#27836d;color:#155b48}.interaction-caption{margin:0 0 14px;color:#687c70;font-size:14px}.interaction-caption strong{color:#204837}.throwable-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}.throwable-option{display:flex;flex-direction:column;align-items:center;gap:10px;border-radius:16px;padding:20px 8px;background:#f4f7f0;min-height:105px;border:1px solid #e2e9df}.throwable-option>span{font-size:36px;line-height:1.1}.throwable-option b{font-size:13px}.throwable-option:not(:disabled):hover{background:#e7f3e9;border-color:#81b79d}.interaction-footer{border-top:1px solid #e4e9e2;padding-top:15px;margin-top:12px;display:flex;align-items:center;gap:12px}.interaction-footer small{color:#7b897f;font-size:11px}.rabbit-note{font-size:11px;line-height:1.3;color:#775a29;background:#fff2cc;border:1px solid #e2ce90;border-radius:6px;padding:3px 6px;margin:4px auto;max-width:max-content}.replay-rabbit{border:1px dashed #c6ad6b;background:#fffaf0;border-radius:12px;padding:12px;margin:14px 0}.replay-rabbit>strong{font-size:12px;color:#765d28}.replay-rabbit .board{justify-content:flex-start;margin:10px 0}.rabbit-card{outline:2px dashed #caaa62;outline-offset:1px}.replay-rabbit .note{font-size:11px}.table-toolbar>button{min-width:0}
 @media(max-width:760px){.rabbit-note{font-size:9px;padding:2px 4px}.table-toolbar>button{padding-left:5px;padding-right:5px}.throwable-grid{gap:7px}.throwable-option{padding:15px 5px;min-height:87px;border-radius:12px}.throwable-option>span{font-size:30px}.throwable-option b{font-size:12px}.interaction-targets button{font-size:12px;padding:7px 10px}}
 @media(max-height:690px) and (max-width:760px){.rabbit-note{font-size:8px;margin:2px auto}.table-toolbar>button{padding-left:4px;padding-right:4px}}
+
+/* Names and stacks have full rows; the avatar shares the compact status row. */
+.table-stage .seat .seat-main{padding:6px 5px 4px;min-height:65px}
+.table-stage .seat.acting .seat-main{padding:5px 4px 3px}
+.table-stage .seat .seat-identity{display:flex;align-items:center;gap:5px;min-width:0;min-height:20px;margin:1px 0 0}
+.table-stage .seat .seat-identity .seat-avatar-button{position:relative;left:auto;top:auto;flex:0 0 20px;width:20px;height:20px;z-index:1}
+.table-stage .seat .seat-identity .seat-avatar-button:after{inset:0}
+.table-stage .seat .seat-identity .seat-avatar-button .avatar{position:relative;inset:auto;width:100%;height:100%;border-width:2px}
+.table-stage .seat .name{min-width:0;max-width:none;margin:0;text-align:center;line-height:1.35;font-size:11px}.table-stage .seat .seat-identity .seat-status{flex:1;min-width:0;margin:0}.table-stage .seat .seat-label{top:-20px}
+.table-stage .seat .stack-value{font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.table-stage .seat .seat-status{margin-top:1px;line-height:14px;height:14px}
+.table-stage .seat .fun-mask{font-size:21px}
+.table-stage .seat .seat-interaction-hit{position:absolute;inset:0;z-index:2;display:block;width:100%;height:100%;padding:0;border:0;border-radius:inherit;background:transparent;box-shadow:none;cursor:pointer;touch-action:manipulation}
+.table-stage .seat .seat-interaction-hit:hover{background:#287a6410;box-shadow:inset 0 0 0 1px #38927670}
+.table-stage .seat .seat-interaction-hit:active{background:#287a6425}
+.table-stage .seat .seat-interaction-hit:focus-visible{outline:3px solid #467bce;outline-offset:2px}
+.table-stage .seat .seat-identity .seat-avatar-button{cursor:inherit;pointer-events:none;display:inline-flex;align-items:center;justify-content:center}
+.interaction-recipient{display:flex;align-items:center;gap:10px;margin:0 0 16px;min-width:0}.interaction-recipient>.avatar{flex:0 0 38px;width:38px;height:38px}.interaction-recipient .interaction-caption{flex:1;min-width:0;margin:0;overflow-wrap:anywhere}.interaction-recipient>button{flex-shrink:0}
+
+/* Table details form a compact block; the board and pot retain their own space. */
+.table-stage .table-center{top:49%;width:276px;min-width:0;transform:translate(-50%,-50%)}
+.table-config{margin:0 auto 7px;width:100%;max-width:276px;min-width:0}
+.table-config-primary{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 12px;padding:4px 6px;width:100%;background:#e7f2e9b3;color:#40664e;border:1px solid #a9c7b64d;border-radius:8px;line-height:1.4;font-size:10px;min-width:0}
+.table-config-primary:hover:not(:disabled){background:#edf7ef}
+.table-blinds{white-space:nowrap;font-size:10px;font-weight:400}.table-blinds b{font-weight:700}
+.table-config .room-countdown{font-size:10px;white-space:normal;line-height:1.4;font-variant-numeric:tabular-nums;margin:0}
+.table-config .room-countdown.ending{color:#975911;font-weight:650}
+.table-config .game-mode-markers{display:flex;justify-content:center;flex-wrap:nowrap;gap:4px;margin-top:4px;min-width:0}
+.table-config .game-mode{display:flex;flex:1 1 0;align-items:center;gap:4px;padding:3px 5px;border-radius:6px;font-size:9px;line-height:1.4;min-width:0;text-align:left}
+.table-config .game-mode .mode-stake{font-size:9px;font-weight:650;white-space:nowrap;flex-shrink:0}
+.table-config .game-mode .mode-state{display:block;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.table-config .squid-mode-note{margin:3px auto 0;padding:0;font-size:9px;line-height:1.4;text-align:center;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.table-hand-center{min-width:0}.table-stage .table-center .pot-label{font-size:10px}.table-stage .table-center .pot-amount{font-size:25px}
+.table-stage .table-center.is-idle .table-config{margin-bottom:18px}
+.table-stage .table-center .board{margin:7px 0 5px}
+.table-stage .table-center .equity-runout{margin-top:1px;margin-bottom:3px}
+@media(max-width:760px){
+ .table-stage .seat[data-side="left"]{--seat-x:4%}.table-stage .seat[data-side="right"]{--seat-x:96%}
+ .table-stage .seat .seat-main{padding:4px 3px 3px;min-height:53px}.table-stage .seat.acting .seat-main{padding:3px 2px 2px}
+ .table-stage .seat .seat-identity{min-height:16px;gap:3px;margin:1px 0 0}.table-stage .seat .seat-identity .seat-avatar-button{flex-basis:16px;width:16px;height:16px}
+ .table-stage .seat .name{font-size:9px}.table-stage .seat .seat-label{top:-17px}.table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:8px;border-width:1px}
+ .table-stage .seat .stack-value{font-size:12px;line-height:1.35}.table-stage .seat .seat-status{font-size:8px;line-height:11px;height:11px;margin-top:1px}.table-stage .seat .fun-mask{font-size:17px}
+ .table-stage .table-center{width:178px;top:49%}.table-config{max-width:178px;margin-bottom:5px}
+ .table-config-primary{padding:3px 4px;gap:1px 6px;line-height:1.35;border-radius:6px}.table-blinds,.table-config .room-countdown{font-size:9px}
+ .table-config .game-mode-markers{flex-direction:column;gap:3px;margin-top:3px}.table-config .game-mode{flex:auto;padding:2px 5px;font-size:9px;line-height:1.25;gap:4px}
+ .table-config .game-mode .mode-stake{font-size:9px}.table-config .squid-mode-note{font-size:8px;line-height:1.3;margin-top:2px}
+ .table-stage .table-center .pot-label{font-size:9px}.table-stage .table-center .pot-amount{font-size:22px;line-height:1.2}.table-stage .table-center .board{margin:5px 0 4px}
+ .table-stage .table-center.is-idle .table-config{margin-bottom:13px}
+}
+@media(max-width:360px){
+ .table-stage .table-center{width:158px}.table-config{max-width:158px}.table-stage .seat .seat-identity{gap:2px}.table-stage .seat .name{font-size:8px}
+ .table-stage .seat .seat-identity .seat-avatar-button{flex-basis:16px;width:16px;height:16px}.table-stage .seat .stack-value{font-size:11px}
+ .table-config .game-mode,.table-config .game-mode .mode-stake,.table-blinds,.table-config .room-countdown{font-size:8px}
+}
+@media(max-width:760px) and (max-height:640px){
+ .table-stage .seat .seat-main{padding:3px 2px 2px;min-height:45px}.table-stage .seat.acting .seat-main{padding:2px 1px 1px}
+ .table-stage .seat .seat-identity{min-height:14px;margin:0;gap:2px}.table-stage .seat .seat-identity .seat-avatar-button{flex-basis:14px;width:14px;height:14px}
+ .table-stage .seat .name{font-size:8px}.table-stage .seat .stack-value{font-size:10px;line-height:1.3}.table-stage .seat .seat-status{font-size:7px;line-height:10px;height:10px;margin-top:0}
+ .table-stage .table-center{top:49%}.table-config{margin-bottom:3px}.table-config-primary{padding:2px 3px}.table-blinds,.table-config .room-countdown{font-size:8px}
+ .table-config .game-mode-markers{gap:2px;margin-top:2px}.table-config .game-mode,.table-config .game-mode .mode-stake{font-size:8px}.table-config .game-mode{padding:1px 4px}
+ .table-stage .table-center .pot-amount{font-size:19px}.table-stage .table-center .pot-label{font-size:8px}.table-stage .table-center .board{margin:4px 0 3px}
+ .table-stage .table-center .equity-runout{font-size:8px;padding:2px 5px;line-height:1.2}.table-config .squid-mode-note{-webkit-line-clamp:1}
+ .table-stage .seat .fun-mask{font-size:17px}
+}
+
+/* Position badges sit beside the identity card, below the hole cards. */
+.table-stage .seat .seat-label{position:absolute;top:8px;right:-20px;left:auto;bottom:auto;display:flex;flex-direction:column;justify-content:center;gap:3px;margin:0;min-height:0;transform:none}
+.table-stage .seat[data-side="left"] .seat-label{left:-20px;right:auto}
+.table-stage .seat .seat-label:empty{display:none}
+.table-stage .seat .seat-label b{width:17px;height:17px;font-size:9px;line-height:17px;box-shadow:none}
+.table-stage .seat .hole-cards{display:flex;gap:3px;align-items:center;justify-content:center;top:auto;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);width:max-content}
+.table-stage .seat .hole-card-wrap{display:inline-flex}
+.table-stage .seat .hole-cards .card{transform:none;margin:0}
+.table-stage .seat.mine .own-cards .card{width:38px;height:53px;font-size:26px;padding:4px 5px;border-radius:6px}
+.table-stage .seat.mine .own-cards .card>span{font-size:22px;right:4px;bottom:3px}
+.table-stage .seat.mine .own-cards.hand-finished{bottom:calc(100% + 20px);gap:5px}
+.table-stage .seat.mine .own-cards.hand-finished .card{width:44px;height:61px;font-size:29px}
+.hole-card-button{position:relative;display:inline-flex;padding:0;border:0;border-radius:7px;background:transparent;line-height:1;touch-action:manipulation;transition:transform .18s,box-shadow .18s}
+.hole-card-button:not(:disabled):hover,.hole-card-button:not(:disabled):focus-visible{transform:translateY(-3px);outline:2px solid #437dcb;outline-offset:2px}
+.hole-card-button:disabled{opacity:1;cursor:default}
+.hole-card-button.is-public{box-shadow:0 0 0 2px #319c79}
+.shown-label{position:absolute;right:-3px;top:-9px;background:#1b8060;color:white;font-size:8px;padding:3px 4px;border-radius:5px;line-height:1}
+.show-card-hint{position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9px;color:#426a59;line-height:12px;font-weight:500}
+.card-reveal-pop{animation:card-reveal-pop .55s ease-out both}
+@keyframes card-reveal-pop{0%{transform:rotateY(75deg) translateY(0);filter:brightness(1.25)}55%{transform:rotateY(0) translateY(-8px)}100%{transform:rotateY(0) translateY(0)}}
+
+/* One decision dock: cards stay on the felt, controls get the full width. */
+.table-bottom{padding:0;min-height:0}
+.table-bottom .action-area{display:block;min-height:0;padding:12px 14px}
+.table-bottom .action-area .decision{width:100%;min-width:0}
+.table-bottom .inactive-actions{min-height:58px;padding:0;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.table-bottom .inactive-actions p{margin:0 0 4px}
+.table-bottom .raise-controls{display:flex;align-items:center;gap:12px}
+.table-bottom #raise-range{flex:1;min-width:0;width:auto;min-height:32px}
+.table-bottom #raise-amount{flex:0 0 auto;min-width:88px;text-align:right;font-size:12px;color:#77613b;white-space:nowrap}
+.table-bottom #raise-amount b{font-size:16px;color:#704710}
+.table-bottom .raise-shortcuts{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:4px}
+.table-bottom .raise-shortcuts button{min-width:0;padding:7px 2px;font-size:11px;line-height:1.2;min-height:32px;white-space:nowrap}
+.table-bottom .raise-shortcuts button.selected{background:#f9e5ba;border-color:#c68a32;color:#80521e}
+.table-bottom .raise-shortcuts button:disabled{opacity:.4}
+.table-bottom .action-buttons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.table-bottom .action-buttons button{min-width:0;min-height:44px;padding:10px 5px;font-size:14px;white-space:nowrap}
+.table-bottom .turn-row{min-width:0;gap:5px;font-size:12px}
+.table-bottom .turn-tools{flex-shrink:0}
+.table-bottom .timebank-button{font-size:11px;padding:5px 7px}
+.table-bottom .timeout-warning{animation:timeout-action-pulse 1s ease-in-out infinite;border-color:#d27623;position:relative}
+@keyframes timeout-action-pulse{0%,100%{box-shadow:0 0 0 0 #e5952430;background-color:#fff8ed}50%{box-shadow:0 0 0 3px #e5952460;background-color:#ffe4b6}}
+.rebuy-notice{margin:0 0 16px;padding:10px 12px;background:#fff2d7;border:1px solid #efcf92;color:#815215;border-radius:9px;font-size:13px;line-height:1.6}
+.detached-final-cards{padding:0 0 23px;display:flex;justify-content:center}.detached-final-cards .hole-cards{position:relative;display:flex;gap:6px}.detached-final-cards .card.mini{width:40px;height:56px;font-size:27px}.detached-final-cards .card.mini>span{font-size:22px}
+.no-motion .timeout-warning,.no-motion .card-reveal-pop{animation:none}
+.no-motion .timeout-warning{background:#ffe4b6;outline:2px solid #d27623}
+@media(max-width:760px){
+ .table-stage .seat .seat-label{top:5px;right:-13px}.table-stage .seat[data-side="left"] .seat-label{left:-13px;right:auto}
+ .table-stage .seat:not(.mine) .card.mini.face-down{width:21px;height:28px}
+ .table-stage .seat .seat-label b{width:14px;height:14px;font-size:8px;line-height:14px}
+ .table-stage .seat.mine .own-cards .card{width:34px;height:48px;font-size:24px;padding:4px}
+ .table-stage .seat.mine .own-cards .card>span{font-size:21px}
+ .table-stage .seat.mine .own-cards.hand-finished .card{width:40px;height:56px;font-size:27px}
+ .table-bottom .action-area{padding:9px 10px}
+ .table-bottom .raise-box{padding:5px 5px 6px;margin:5px 0 7px}
+ .table-bottom .raise-controls{gap:8px}
+ .table-bottom #raise-amount{font-size:10px;min-width:75px}
+ .table-bottom #raise-amount b{font-size:14px}
+ .table-bottom .raise-shortcuts{gap:3px}
+ .table-bottom .raise-shortcuts button{font-size:9px;min-height:32px;padding:6px 1px}
+ .table-bottom .inactive-actions{min-height:50px;font-size:12px}
+ .table-bottom .turn-row{font-size:11px}.table-bottom .timebank-button{font-size:10px;padding:5px}
+ .table-bottom .action-buttons button{font-size:12px;min-height:44px}
+}
+@media(max-width:360px){
+ .table-bottom .action-area{padding:8px}
+ .table-bottom .turn-row{font-size:10px}.table-bottom .timebank-button{font-size:9px}
+ .table-bottom .action-buttons{gap:5px}
+ .table-bottom .action-buttons button{font-size:11px}
+ .table-bottom .raise-shortcuts button{font-size:8px}
+}
+@media(max-width:760px) and (max-height:640px){
+ .table-stage:is([data-seat-count="2"],[data-seat-count="3"],[data-seat-count="4"]) .seat.mine .own-cards{left:-7px;bottom:0;top:auto;transform:translateX(-100%)}
+ .table-stage:is([data-seat-count="2"],[data-seat-count="3"],[data-seat-count="4"]) .seat.mine .own-cards.hand-finished{bottom:5px}
+ .room-shell:has(.table-stage:is([data-seat-count="5"],[data-seat-count="6"],[data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"])){height:auto;min-height:calc(100dvh - 45px)}
+ .table-stage:is([data-seat-count="5"],[data-seat-count="6"],[data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"]){min-height:390px}
+}
+@media(prefers-reduced-motion:reduce){.timeout-warning,.card-reveal-pop{animation:none!important}.timeout-warning{background:#ffe4b6!important;outline:2px solid #d27623}.hole-card-button{transition:none}}

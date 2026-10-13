@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as lifecycle from '../public/lifecycle.js';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
@@ -10,7 +11,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 function harness(overrides={}){
   const modals=[];
-  const context=vm.createContext({avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+  const context=vm.createContext({lifecycle,avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
     state:{user:{name:'小鱼'},rooms:[],timeOffset:0},

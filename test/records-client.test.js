@@ -85,3 +85,9 @@ test('Chinese IME stays attached while modal and page record requests finish, th
     assert.notEqual(c.document.currentForm,form);assert.equal(c.document.currentForm.elements.namedItem('q').value,'中文搜索');assert.equal(c.state.recordComposition,null);assert.equal(c.state.recordRenderDeferred,false);assert.equal(c.state.renderDeferred,false);assert.equal((kind==='hands'?c.state.library:c.state.sessions).filters.q,undefined);assert.equal(c.calls.length,1);
   }
 });
+
+
+test('session detail distinguishes squid settlements from legacy mushroom refunds and keeps hand counts unchanged',()=>{
+  const html=records.sessionDetail({handCount:0,squidSettlementCount:1,adjustments:2,players:[{id:'me',hands:0,net:40,miniNet:40}]},'me');
+  assert.match(html,/0 手/);assert.match(html,/1 笔鱿鱼结算/);assert.match(html,/手外结算不增加手数/);assert.match(html,/旧蘑菇池退回/);
+});

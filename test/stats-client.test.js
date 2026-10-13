@@ -88,3 +88,10 @@ test('live equity badges distinguish approximate main-pot shares from win and ti
   const html=renderEquityBadge({equity:42.8571,winPct:30,tiePct:20},{approximate:true});assert.match(html,/≈42.9%/);assert.match(html,/主池权益/);assert.match(html,/含平分份额/);assert.match(html,/边池详见全下详情/);assert.doesNotMatch(html,/胜率 42/);
   assert.match(renderEquityBadge({equity:0}),/>0%/);assert.match(renderEquityBadge({equity:100}),/>100%/);
 });
+
+
+test('hand-external squid profit remains visible without played hands and hand filters explain excluded settlements',()=>{
+  const data={hands:0,net:40,holdemNet:0,miniNet:40,squidSettlementCount:1,standaloneSquidSettlementCount:1,curve:[{net:40,at:'2026-10-13T10:00:00Z'}]};
+  const html=renderStatsPage(data,{});assert.match(html,/小游戏净积分.*?\+40/);assert.match(html,/1 笔在手牌外结算/);assert.match(html,/不增加手数/);assert.doesNotMatch(html,/换个日期或牌桌试试/);
+  const limited=renderStatsPage({...data,hands:100,squidSettlementCount:2,standaloneSquidSettlementCount:0,adjustmentsExcluded:true},{});assert.match(limited,/最近 N 手/);assert.match(limited,/不包含手外结算/);assert.doesNotMatch(limited,/笔在手牌外/);
+});

@@ -77,6 +77,7 @@ test('valid instant seating replaces only the caller legacy pending request', ()
 
 test('table clock starts on first hand and settings cannot reset it after play', () => {
   const f = fixture({ durationMinutes: 30 });
+  f.service.connections.set(`${f.room.code}:${f.users[0].id}`, 1); f.service.connectionChanged(f.room);
   assert.equal(f.room.startedAt, null); assert.equal(f.service.needsTick(f.room, Date.now() + 1e9), false);
   const start = Date.now(); f.service.start(f.room, start);
   assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);

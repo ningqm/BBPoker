@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as lifecycle from '../public/lifecycle.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -6,11 +7,11 @@ import { raiseFromSlider, sliderFromRaise } from '../public/table-feedback.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(){
-  const context=vm.createContext({sliderFromRaise,raiseFromSlider,Date,
+  const context=vm.createContext({lifecycle,sliderFromRaise,raiseFromSlider,Date,
     state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
-  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function autoDealText(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText};'].join('\n'),context);
+  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function autoDealText(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText};'].join('\n'),context);
   return context.client;
 }
 function room(){return {code:'123456',name:'朋友必赢的局',meId:'me',hostId:'me',status:'waiting',settings:{smallBlind:5,bigBlind:10,maxPlayers:9,timeBankCards:3,timeBankSeconds:30},players:[{id:'me',seat:0,stack:1000,inHand:true,cards:['As','Kd']},{id:'friend',seat:1,stack:1000}],actions:{},autoDeal:{paused:false,nextHandAt:null,waitReason:null}};}

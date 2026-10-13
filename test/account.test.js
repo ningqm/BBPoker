@@ -177,9 +177,12 @@ test('logout revokes existing SSE and authenticated requests paused while readin
     pending.on('error', reject); pending.write('{"type":');
   });
   await received;
-  const before = structuredClone(f.app.store.data.rooms);
   await f.api('/api/account/logout', {}, user.token);
   await revoked(reader);
+  // Logout legitimately starts the empty-room clock after its SSE closes.
+  // The already-authenticated but unfinished request still must not close it.
+  assert.equal(f.app.store.data.rooms[room.code].status, 'waiting');
+  const before = structuredClone(f.app.store.data.rooms);
   pending.end(JSON.stringify('close') + ',"commandId":' + JSON.stringify(randomUUID()) + '}');
   assert.equal(await response, 401);
   assert.deepEqual(f.app.store.data.rooms, before);

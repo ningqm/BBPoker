@@ -364,3 +364,12 @@ test('time bank commands bind to the current hand and action sequence like gamep
   assert.equal(body.commandId,'test-command');
   c.pending[0].resolve(response({room:room('old-user','123456',2)}));assert.equal(await pending,true);
 });
+
+
+test('a server-rejected squid exit quote refreshes the table without repeating a charged command',async()=>{
+  const client=clientHarness();client.state.connected=true;
+  const result=client.command('stand',{expectedSquidRound:1,expectedSquidCost:40});
+  client.pending[0].resolve({ok:false,status:409,json:async()=>({error:'本轮状态已变化，请重新确认退出费用'})});
+  assert.equal(await result,false);assert.equal(client.state.busy,false);assert.equal(client.pending.length,1);
+  assert.deepEqual(client.streams,['123456']);assert.match(client.toasts[0][0],/重新确认/);
+});

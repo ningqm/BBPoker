@@ -65,7 +65,8 @@ test('all players offline waits, a spectator cannot trigger dealing, and reconne
   const f = fixture(t, {}, 2); f.cmd(0, 'start'); f.finish();
   f.connect(0, false); f.connect(1, false); assert.equal(f.room.nextHandAt, null); assert.match(f.room.autoWaitReason, /回到牌桌/);
   f.connect(3, true); f.advance(20000); assert.equal(f.service.tick(f.room), false);
-  f.connect(1, true, true); assert.equal(f.room.nextHandAt, f.time + 5000);
+  f.connect(1, true, true); assert.equal(f.room.nextHandAt, null); assert.match(f.room.autoWaitReason, /至少需要两位/);
+  f.connect(0, true, true); assert.equal(f.room.nextHandAt, f.time + 5000);
   f.advance(4999); assert.equal(f.service.tick(f.room), false);
   f.advance(1); assert.equal(f.service.tick(f.room), true);
 });
@@ -75,12 +76,12 @@ test('saved countdown survives restart without a new deck; overdue first reconne
   const persisted = structuredClone(f.store.data), savedRoom = persisted.rooms[f.room.code], deadline = savedRoom.nextHandAt;
   const recovered = new RoomService({ data: persisted });
   assert.deepEqual(persisted, f.store.data); assert.equal(recovered.connections.size, 0);
-  f.advance(1000); recovered.connections.set(`${savedRoom.code}:${f.users[0].id}`, 1);
+  f.advance(1000); for (const user of f.users.slice(0, 2)) recovered.connections.set(`${savedRoom.code}:${user.id}`, 1);
   assert.equal(recovered.connectionChanged(savedRoom, f.time, { reconnected: true }), false);
   assert.equal(savedRoom.nextHandAt, deadline);
   recovered.connections.clear(); f.advance(10000);
   // Simulate a restart whose first SSE reconnect arrives before the timer tick.
-  recovered.connections.set(`${savedRoom.code}:${f.users[0].id}`, 1);
+  for (const user of f.users.slice(0, 2)) recovered.connections.set(`${savedRoom.code}:${user.id}`, 1);
   assert.equal(recovered.connectionChanged(savedRoom, f.time, { reconnected: true }), true);
   assert.equal(savedRoom.nextHandAt, f.time + 5000); assert.equal(savedRoom.handNumber, 1);
   f.advance(5000); assert.equal(recovered.tick(savedRoom, f.time), true); assert.equal(savedRoom.handNumber, 2);
@@ -142,7 +143,7 @@ test('legacy completed rooms remain unchanged until the host resumes; active leg
   f.finish(); assert.equal(f.room.autoDealPaused, false); assert.equal(f.room.nextHandAt, f.time + 5000);
 });
 
-test('authenticated room creation ignores an obsolete deployed room key but retains invitations and the one-room guard', async t => {
+test('authenticated room creation ignores an obsolete deployed room key while retaining invitations and one room per host', async t => {
   const previousKey = process.env.CREATE_ROOM_KEY; process.env.CREATE_ROOM_KEY = 'obsolete-test-value';
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-create-no-key-'));
   const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
@@ -155,7 +156,8 @@ test('authenticated room creation ignores an obsolete deployed room key but reta
   assert.equal((await api('/api/me', undefined, host.token)).body.createKeyRequired, false);
   const created = await api('/api/rooms', { createKey: 'wrong-ignored' }, host.token); assert.equal(created.status, 201);
   assert.equal((await api(`/api/rooms/${created.body.room.code}`, undefined, outsider.token)).status, 403);
-  assert.equal((await api('/api/rooms', {}, outsider.token)).status, 409);
+  assert.equal((await api('/api/rooms', {}, host.token)).status, 409);
+  assert.equal((await api('/api/rooms', {}, outsider.token)).status, 201);
 });
 
 test('real server clock persists before SSE, retries a failed save without duplicate settlement, and reconnects safely after restart', async t => {
@@ -174,9 +176,9 @@ test('real server clock persists before SSE, retries a failed save without dupli
   const room = () => app.store.data.rooms[code];
   const command = (i, type, extra = {}) => api(`/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra }, users[i].token);
   for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
-  async function stream() {
+  async function stream(i = 0) {
     const controller = new AbortController(); controllers.push(controller);
-    const res = await fetch(`${base()}/api/events?room=${code}`, { headers: { Authorization: `Bearer ${users[0].token}` }, signal: controller.signal });
+    const res = await fetch(`${base()}/api/events?room=${code}`, { headers: { Authorization: `Bearer ${users[i].token}` }, signal: controller.signal });
     assert.equal(res.status, 200); const reader = res.body.getReader(); let buffer = '';
     return { controller, async until(predicate) {
       const deadline = setTimeout(() => controller.abort(), 3000);
@@ -190,13 +192,17 @@ test('real server clock persists before SSE, retries a failed save without dupli
     } };
   }
   const firstStream = await stream(); await firstStream.until(s => s.hand === null);
+  const friendStream = await stream(1); await friendStream.until(s => s.hand === null);
   await command(0, 'start'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'fold');
   await command(0, 'start'); // Explicit host resume skips rabbit; ordinary auto-deal countdown remains.
   const settled = await firstStream.until(s => s.hand?.status === 'complete'); assert.equal(settled.autoDeal.nextHandAt, timestamp + 5000);
   const saved = structuredClone(app.store.data), originalSave = app.store.save.bind(app.store);
   let observedFailure; const failed = new Promise(resolve => { observedFailure = resolve; });
   app.store.save = () => { observedFailure(); throw new Error('simulated automatic-deal disk failure'); };
-  timestamp += 5000; await failed;
+  timestamp += 5000;
+  let failedTimer;
+  try { await Promise.race([failed, new Promise((_, reject) => { failedTimer = setTimeout(() => reject(new Error('automatic-deal save was never attempted')), 3000); })]); }
+  finally { clearTimeout(failedTimer); }
   assert.deepEqual(app.store.data, saved); app.store.save = originalSave;
   const next = await firstStream.until(s => s.hand?.number === 2);
   assert.equal(next.hand.status, 'playing'); assert.equal(app.store.data.hands.length, 1);
@@ -209,7 +215,8 @@ test('real server clock persists before SSE, retries a failed save without dupli
   app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
   assert.deepEqual(app.store.data.rooms, beforeRestart.rooms); assert.deepEqual(app.store.data.hands, beforeRestart.hands);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
-  const resumed = await stream(); const snapshot = await resumed.until(s => s.hand?.number === 2);
+  const resumed = await stream(); const resumedFriend = await stream(1); await resumedFriend.until(s => s.hand?.number === 2);
+  const snapshot = await resumed.until(s => s.hand?.number === 2 && s.autoDeal.nextHandAt !== null);
   assert.equal(snapshot.hand.status, 'complete'); assert.equal(snapshot.autoDeal.nextHandAt, timestamp + 5000);
   assert.equal(app.store.data.hands.length, 2);
 });

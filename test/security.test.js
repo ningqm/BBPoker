@@ -184,7 +184,7 @@ test('settlement: squid reserves plus legacy mushroom pools remain conserved and
   assert.equal(f.users.reduce((n, u) => n + f.service.stats(u.id).net, 0), 0);
 });
 
-test('settlement: repeated command is idempotent and closing an unfinished squid round refunds reserves', () => {
+test('settlement: repeated command is idempotent and closing an unfinished squid preserves earned markers', () => {
   const f = fixture({ squid: true }); seat(f);
   const cmd = { type: 'start', commandId: randomUUID() };
   f.service.command(f.users[0], f.room.code, cmd);
@@ -193,7 +193,9 @@ test('settlement: repeated command is idempotent and closing an unfinished squid
   assert.deepEqual(f.room, snapshot);
   finishWithFolds(f); f.command(0, 'close'); conserved(f.room);
   assert.deepEqual(f.room.mini.squid.reserves, {});
-  assert.equal(f.service.stats(f.users[0].id).miniNet, 0);
+  assert.equal(f.service.stats(f.users[0].id).miniNet, -20);
+  const rows = f.store.data.ledger.filter(row => row.type === 'squidSettlement');
+  assert.equal(rows.length, 3); assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), 0);
 });
 
 test('regression: standing cancels the seated player pending rebuy so approval cannot reseat them', () => {

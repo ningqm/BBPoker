@@ -110,9 +110,17 @@ test('new squid waits for three players/reserves and the final five-minute cutof
   assert.equal(f.room.handNumber, 2); assert.equal(f.room.mini.squid.active, false);
 });
 
-test('expiry overrides a pending deal and closing refunds once, including pause/offline rooms', t => {
+test('expiry grants offline squid one bounded recovery window even when automatic dealing is paused', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.finish();
+  f.cmd(0, 'autoDeal', { paused: true });
+  for (const id of f.room.mini.squid.participants) f.service.connections.set(`${f.room.code}:${id}`, 0);
+  f.service.connectionChanged(f.room, f.time);
   f.room.endsAt = f.time + 5000; f.advance(5000); assert.equal(f.service.tick(f.room), true);
+  assert.equal(f.room.status, 'waiting'); assert.equal(f.room.handNumber, 1); assert.equal(f.room.nextHandAt, null);
+  const deadline = f.service.state(f.room, f.users[0].id).mini.squid.expiryGraceEndsAt;
+  assert.equal(deadline, f.time + 90000);
+  f.advance(89999); f.service.tick(f.room); assert.equal(f.room.status, 'waiting');
+  f.advance(1); f.service.tick(f.room);
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.handNumber, 1); assert.equal(f.room.nextHandAt, null);
   assert.deepEqual(f.room.mini.squid.reserves, {});
   assert.equal(Object.values(f.room.members).reduce((n, p) => n + p.stack + p.cashedOut, 0), 3000);

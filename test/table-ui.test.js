@@ -11,7 +11,7 @@ function harness(){
     state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
-  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function autoDealText(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText};'].join('\n'),context);
+  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel};'].join('\n'),context);
   return context.client;
 }
 function room(){return {code:'123456',name:'朋友必赢的局',meId:'me',hostId:'me',status:'waiting',settings:{smallBlind:5,bigBlind:10,maxPlayers:9,timeBankCards:3,timeBankSeconds:30},players:[{id:'me',seat:0,stack:1000,inHand:true,cards:['As','Kd']},{id:'friend',seat:1,stack:1000}],actions:{},autoDeal:{paused:false,nextHandAt:null,waitReason:null}};}
@@ -33,4 +33,29 @@ test('raise amount remains exact while the nonlinear slider expresses the corres
 test('table layout keeps only the table, action dock and four grouped tools on the main screen',()=>{
   const c=harness();c.state.room=room();const html=c.roomView();assert.match(html,/class="table-bottom"/);assert.match(html,/class="table-toolbar"/);assert.doesNotMatch(html,/side-stack|activity-list|data-action="stand"|data-action="verify"/);
   for(const action of ['toggle-chat','history','table-info','room-menu'])assert.match(html,new RegExp('data-action="'+action+'"'));
+});
+
+
+test('squid suspension shows a compact ordinary-hand status without disabling normal play or confusing host pause',()=>{
+  const c=harness(),r=room();r.status='playing';r.hand={status:'playing',squidRound:null};r.mini={squid:{active:true,paused:true,round:2}};c.state.room=r;
+  assert.match(c.roomView(),/鱿鱼暂停 · 本手普通德州/);assert.match(c.autoDealText(r),/下一手继续普通德州/);
+  r.hand.status='complete';r.autoDeal.nextHandAt=15000;assert.equal(c.autoDealText(r,10000),'5 秒后发普通德州');
+  r.autoDeal.paused=true;assert.equal(c.autoDealText(r,10000),'自动发牌已暂停');
+  r.hand.status='playing';r.autoDeal.paused=false;r.mini.squid.paused=false;assert.match(c.roomView(),/本手普通德州 · 下一手恢复鱿鱼/);
+  r.actions={canAct:true,canFold:true,canCheck:true};assert.match(c.actionArea(r,r.players[0],true),/data-action="check"/);
+});
+
+test('end-of-session recovery suppresses ordinary-table countdown while preserving an explicit host pause',()=>{
+  const c=harness(),r=room();r.status='playing';r.hand={status:'playing',squidRound:null};r.expiryMode='wait-squid';r.mini={squid:{active:true,paused:true,round:2}};
+  assert.equal(c.autoDealText(r),'已到时，本手后等待鱿鱼恢复');
+  r.hand.status='complete';r.autoDeal.nextHandAt=15000;assert.equal(c.autoDealText(r,10000),'已到时，等待原轮鱿鱼恢复');
+  r.expiryMode='finish-squid';r.mini.squid.paused=false;r.autoDeal.paused=true;assert.equal(c.autoDealText(r,10000),'自动发牌已暂停');
+});
+
+test('expired squid details explain automatic closure without repeating ordinary manual settlement guidance',()=>{
+  const c=harness(),r=room();r.settings.squid=true;r.expiryMode='wait-squid';
+  r.mini={squid:{active:true,paused:true,round:2,participants:['me','friend'],won:['me'],blockerSince:1,canSettle:true,unit:20}};
+  const expired=c.miniPanel(r);assert.match(expired,/等待窗口内恢复就继续原轮/);assert.match(expired,/按现有标记结算散桌/);
+  assert.doesNotMatch(expired,/squid-settle-note|data-action="settle-squid"|两手之间/);
+  r.expiryMode=null;const regular=c.miniPanel(r);assert.match(regular,/data-action="settle-squid"/);assert.match(regular,/两手之间/);
 });

@@ -136,14 +136,26 @@ test('last five minutes skip new squid and bomb rounds while an existing squid r
   f.service.start(f.room); assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.mini.squid.round, round);
 });
 
-test('expiry finishes current hand, returns unfinished reserves, closes once, and permits a final voluntary reveal', t => {
+test('expiry finishes the original squid round, closes once, and permits a final voluntary reveal', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ squid: true }); f.cmd(0, 'start');
+  const f = fixture({ squid: true });
+  for (const user of f.users.slice(0, 3)) f.service.connections.set(`${f.room.code}:${user.id}`, 1);
+  f.cmd(0, 'start');
   const initialHands = f.store.data.hands.length;
   timestamp = f.room.endsAt; f.room.deadline = timestamp + 15000;
   assert.equal(f.service.tick(f.room, timestamp), false); assert.equal(f.room.status, 'playing');
   finish(f);
-  assert.equal(f.room.status, 'closed'); assert.equal(f.store.data.hands.length, initialHands + 1);
+  assert.equal(f.room.status, 'waiting'); assert.equal(f.room.mini.squid.active, true);
+  assert.equal(f.service.state(f.room, f.users[0].id).expiryMode, 'finish-squid');
+  const originalRound = f.room.mini.squid.round;
+  f.service.start(f.room, timestamp, { automatic: true });
+  const winner = f.room.mini.squid.participants.find(id => !f.room.mini.squid.won.includes(id));
+  while (f.room.hand.status === 'playing') {
+    const actor = f.room.hand.actingId, a = availableActions(f.room.hand, actor);
+    f.cmd(f.users.findIndex(u => u.id === actor), actor === winner ? a.canCheck ? 'check' : 'call' : 'fold');
+  }
+  assert.equal(f.room.mini.squid.round, originalRound);
+  assert.equal(f.room.status, 'closed'); assert.equal(f.store.data.hands.length, initialHands + 2);
   assert.deepEqual(f.room.mini.squid.reserves, {}); conserved(f.room);
   const cashouts = f.store.data.ledger.filter(l => l.type === 'cashout').length;
   assert.equal(f.service.tick(f.room, timestamp + 1), false);

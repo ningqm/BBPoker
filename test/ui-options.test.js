@@ -19,8 +19,8 @@ function harness(overrides={}){
   });
   vm.runInContext([
     section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),
-    section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
-    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,roomClock,miniCutoff,avatar,seatActions};',
+    section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function tick(){','setInterval(tick,'),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
+    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,roomClock,miniCutoff,tick,avatar,seatActions};',
   ].join('\n'),context);
   return {...context.client,modals};
 }
@@ -126,4 +126,21 @@ test('failed or unauthorized prior-room reads leave the current edited settings 
   f.form.fields.get('smallBlind').value='10';f.form.fields.get('bigBlind').value='20';await c.loadPreviousRoomSettings(f.button);
   assert.equal(f.form.fields.get('bigBlind').value,'20');assert.equal(f.form.fields.get('name').value,'我微调的新局');assert.equal(f.replacement,'');assert.equal(f.submit.disabled,false);assert.match(messages[0],/邀请链接/);
   f.selector.value='999999';await c.loadPreviousRoomSettings({...f.button,closest:()=>f.form});assert.equal(f.replacement,'');
+});
+
+test('expiry clock follows server squid extension and recovery window rather than promising closure after this hand',()=>{
+  const c=harness(),room={status:'playing',endsAt:1000,settings:{durationMinutes:60},mini:{squid:{active:true}},expiryMode:'finish-squid'};
+  assert.equal(c.roomClock(room,2000),'已到时 · 打完本轮鱿鱼');
+  room.expiryMode='wait-squid';room.mini.squid.expiryGraceEndsAt=92000;assert.equal(c.roomClock(room,2000),'已到时 · 等待恢复 90秒');
+  assert.equal(c.roomClock(room,92000),'已到时 · 等待恢复 0秒');
+  room.mini.squid.expiryGraceEndsAt=null;room.hand={status:'playing',squidRound:null};assert.equal(c.roomClock(room,2000),'已到时 · 本手后等待恢复');
+  room.status='closed';assert.equal(c.roomClock(room,2000),'已结束');
+});
+
+test('elapsed clock does not disable start during a server-authorized squid extension',()=>{
+  const start={disabled:false},clock={dataset:{},classList:{toggle(){}}};
+  const document={querySelectorAll:selector=>selector==='[data-action="start"]'?[start]:selector==='[data-room-clock]'?[clock]:[]};
+  const c=harness({document});c.state.room={status:'playing',endsAt:Date.now()-1000,settings:{squid:true},expiryMode:'finish-squid'};
+  c.tick();assert.equal(start.disabled,false);assert.equal(clock.dataset.squidExpiry,'true');assert.match(clock.textContent,/打完本轮鱿鱼/);
+  c.state.room.expiryMode='wait-squid';c.tick();assert.equal(start.disabled,true);assert.match(clock.textContent,/等待鱿鱼恢复/);
 });

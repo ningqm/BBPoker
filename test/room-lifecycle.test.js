@@ -94,9 +94,11 @@ test('ordinary automatic dealing excludes offline players and requires two onlin
   assert.deepEqual(f.room.hand.players.map(p => p.id), [f.users[0].id, f.users[1].id]); conserved(f.room);
 });
 
-test('squid waits for disconnected unmarked players; only observed continuous 90 seconds permits partial settlement', t => {
+test('offline squid permits ordinary dealing; only observed continuous 90 seconds permits partial settlement between hands', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.win(0); f.connect(1, false);
-  const since = f.room.mini.squid.blockerSince; assert.equal(since, f.time); assert.equal(f.room.nextHandAt, null);
+  const since = f.room.mini.squid.blockerSince; assert.equal(since, f.time); assert.ok(Number.isFinite(f.room.nextHandAt));
+  // Isolate the server grace clock from the independent automatic ordinary deals.
+  f.cmd(0, 'autoDeal', { paused: true }); assert.equal(f.room.nextHandAt, null);
   assert.throws(() => f.cmd(0, 'settleSquid', { timestamp: f.time + 90000 }), /90 秒/);
   f.advance(89999); assert.equal(f.service.state(f.room, f.users[0].id).mini.squid.canSettle, false);
   f.connect(1, true); assert.equal(f.room.mini.squid.blockerSince, null); f.connect(1, false);

@@ -78,7 +78,7 @@ test('mid-hand seats and squid waiting have distinct guidance, and pending exit 
   const r=squidRoom();
   assert.match(lifecycle.buyinTiming(r),/下一轮/);delete r.mini;assert.match(lifecycle.buyinTiming(r),/下一手/);
   r.hand.status='complete';assert.match(lifecycle.buyinTiming(r,false),/补充积分/);
-  assert.equal(lifecycle.participation(r,{seat:1,waitingFor:'squid'}).label,'等待下一轮');
+  assert.equal(lifecycle.participation(r,{seat:1,waitingFor:'squid'}).label,'等待下一轮鱿鱼');
   assert.equal(lifecycle.participation(r,{seat:1,pendingDeparture:'stand'}).canCancel,true);
   assert.equal(lifecycle.participation(r,{seat:1,sittingOut:true}).canReturn,true);
 });
@@ -113,4 +113,44 @@ test('leaving the lobby during a public join cannot navigate back or leave its n
   c.requests.invalidate();c.state.page='career';c.pending[0].resolve({});await pending;
   assert.equal(c.paths.length,0);assert.equal(c.state.lobby.joining,'');
   c.state.page='lobby';const retry=c.joinPublicRoom('123456');assert.equal(c.pending.length,2);c.pending[1].resolve({});await retry;assert.deepEqual(c.paths,['/room/123456']);
+});
+
+
+test('ordinary fallback hand remains ordinary after reconnect and only the next hand restores squid',()=>{
+  const room=squidRoom();room.hand.squidRound=null;room.mini.squid.paused=true;
+  let mode=lifecycle.squidMode(room);assert.equal(mode.countsForSquid,false);assert.match(mode.label,/鱿鱼暂停.*本手普通德州/);assert.match(mode.note,/普通手不获得鱿鱼标记/);
+  room.mini.squid.paused=false;mode=lifecycle.squidMode(room);assert.equal(mode.ordinaryHand,true);assert.match(mode.label,/下一手恢复鱿鱼/);
+  room.hand.squidRound=4;assert.equal(lifecycle.squidMode(room).countsForSquid,true);assert.equal(lifecycle.squidMode(room).label,'');
+  room.mini.squid.paused=true;assert.match(lifecycle.squidMode(room).label,/本手仍计鱿鱼/);
+});
+
+test('a paused round retains its exit fee but an ordinary hand does not promise earning a squid mark',()=>{
+  const c=harness(),room=squidRoom();room.mini.squid.paused=true;room.hand.squidRound=null;c.state.room=room;
+  const plan=lifecycle.departurePlan(room,room.players[0],'stand');assert.equal(plan.cost,40);assert.equal(plan.round,4);assert.equal(plan.canEarnMark,false);
+  c.departureModal('stand');assert.match(c.state.modal.body,/40 积分/);assert.match(c.state.modal.body,/不会为你增加鱿鱼标记/);assert.doesNotMatch(c.state.modal.body,/如果本手获得标记/);
+  assert.match(lifecycle.buyinTiming(room),/下一手普通德州/);assert.match(lifecycle.buyinTiming(room),/原轮恢复后/);
+});
+
+test('an unmarked original participant queues exit during a fallback hand even if not dealt into it',()=>{
+  const room=squidRoom();room.hand.squidRound=null;room.mini.squid.paused=true;room.players[0].inHand=false;
+  const plan=lifecycle.departurePlan(room,room.players[0],'stand');assert.equal(plan.queued,true);assert.equal(plan.cost,40);assert.equal(plan.canEarnMark,false);
+  assert.equal(lifecycle.departurePlan(room,{id:'new',seat:3,inHand:false},'stand').queued,false);
+});
+
+test('an expired suspended squid does not advertise another ordinary hand or participation for newcomers',()=>{
+  const room=squidRoom();room.expiryMode='wait-squid';room.mini.squid.paused=true;room.hand.squidRound=null;
+  assert.match(lifecycle.squidMode(room).label,/本手普通德州.*结束后等待原轮恢复/);assert.match(lifecycle.squidMode(room).note,/不再开启普通手/);
+  assert.match(lifecycle.buyinTiming(room),/不会再开启新的普通手/);
+  room.hand.status='complete';assert.match(lifecycle.squidMode(room).label,/期间不开新手/);
+  assert.equal(lifecycle.lobbyTime(1000,2000),'已到时 · 等待收尾');
+});
+
+test('lobby status distinguishes an unstarted room, a hand break and expired recovery',()=>{
+  const c=harness();
+  assert.match(c.lobbyRoomCard(room({status:'waiting',handNumber:0,endsAt:null})),/>等待开局<\/span>/);
+  assert.match(c.lobbyRoomCard(room({status:'waiting',handNumber:2})),/>等待下一手<\/span>/);
+  assert.match(c.lobbyRoomCard(room({status:'waiting',endsAt:Date.now()+60000})),/>等待下一手<\/span>/);
+  const expired=c.lobbyRoomCard(room({status:'waiting',handNumber:2,endsAt:1}));
+  assert.match(expired,/>等待收尾<\/span>/);assert.doesNotMatch(expired,/等待开局/);
+  assert.match(c.lobbyRoomCard(room({status:'playing',handNumber:2,endsAt:1})),/>进行中<\/span>/);
 });

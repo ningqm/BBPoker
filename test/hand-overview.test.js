@@ -168,3 +168,57 @@ test('historical missing position and blind values do not invent tags or hide re
   assert.match(html, /\+5 积分/); assert.match(html, /底池 <strong[^>]*>20 积分/);
   assert.match(html, /座位未记录/); assert.doesNotMatch(html, />BTN<|>SB<|>BB</);
 });
+
+test('a timeout after the engine changes streets annotates its original preflop check only', () => {
+  const hand = engine([100, 100]);
+  applyAction(hand, hand.actingId, 'call');
+  const actor = hand.actingId, number = hand.log.length + 1;
+  applyAction(hand, actor, 'check');
+  assert.equal(hand.street, 'flop');
+  assert.equal(hand.log[number - 1].type, 'check');
+  assert.equal(hand.log.at(-1).type, 'street');
+  const timeoutNumber = hand.log.length + 1;
+  hand.log.push({ seq: timeoutNumber, street: hand.street, playerId: actor, type: 'timeout', amount: 0 });
+  finish(hand);
+  const record = filtered(hand), before = structuredClone(record), html = renderHandOverview(record, 'a');
+  assert.deepEqual(record, before);
+  const player = html.split(`aria-label="${actor === 'a' ? '甲' : '乙'}的操作路线">`)[1].split('</article>')[0];
+  const preflop = player.split('<h4>翻前</h4>')[1].split('<h4>翻牌</h4>')[0];
+  const flop = player.split('<h4>翻牌</h4>')[1].split('<h4>转牌</h4>')[0];
+  assert.match(preflop, new RegExp(`全桌第 ${number} 条记录[^]*过牌（超时）`));
+  assert.doesNotMatch(flop, /超时/);
+  assert.equal((html.match(/过牌（超时）/g) || []).length, 2);
+  assert.doesNotMatch(html, /超时自动处理|实际操作见前一条/);
+  assert.doesNotMatch(html, new RegExp(`<li value="${timeoutNumber}"`));
+  assert.match(html, new RegExp(`<li value="${timeoutNumber + 1}"`));
+});
+
+test('a timeout appended after fold and payout annotates the fold without adding a settlement action', () => {
+  const hand = engine([100, 100]), actor = hand.actingId, number = hand.log.length + 1;
+  applyAction(hand, actor, 'fold');
+  assert.equal(hand.status, 'complete'); assert.equal(hand.log.at(-1).type, 'payout');
+  const timeoutNumber = hand.log.length + 1;
+  hand.log.push({ seq: timeoutNumber, street: hand.street, playerId: actor, type: 'timeout', amount: 0 });
+  const html = renderHandOverview(filtered(hand), 'a'), log = html.split('<details')[1];
+  assert.match(html, new RegExp(`全桌第 ${number} 条记录[^]*弃牌（超时）`));
+  assert.equal((html.match(/弃牌（超时）/g) || []).length, 2);
+  assert.ok(log.indexOf('弃牌（超时）') < log.indexOf('获得底池'));
+  assert.doesNotMatch(log, new RegExp(`<li value="${timeoutNumber}"`));
+  assert.doesNotMatch(html, /超时自动处理|实际操作见前一条/);
+});
+
+test('unmatched or repeated timeout stays informational, never invents a check/fold or enters a player route', () => {
+  const hand = basic(); hand.log = [
+    { playerId: 'a', type: 'timeout', street: 'preflop', amount: 0 },
+    { playerId: 'b', type: 'check', street: 'preflop' },
+    { playerId: 'a', type: 'timeout', street: 'flop', amount: 0 },
+    { playerId: 'b', type: 'timeout', street: 'flop', amount: 0 },
+    { playerId: 'b', type: 'timeout', street: 'flop', amount: 0 },
+  ];
+  const html = renderHandOverview(hand, 'a'), [route, log] = html.split('<details');
+  assert.equal((route.match(/过牌（超时）/g) || []).length, 1);
+  assert.doesNotMatch(route, /超时自动处理/);
+  assert.equal((log.match(/超时自动处理/g) || []).length, 3);
+  assert.deepEqual([...log.matchAll(/<li value="(\d+)"/g)].map(m => Number(m[1])), [1, 2, 3, 5]);
+  assert.doesNotMatch(html, /（超时）（超时）|实际操作见前一条/);
+});

@@ -1,4 +1,4 @@
-const CACHE='bbpoker-static-v18';
+const CACHE='bbpoker-static-v19';
 const FILES=['/','/index.html','/style.css','/app.js','/table-feedback.js','/table-fun.js','/lifecycle.js','/lobby.css','/table-fun.css','/table-interactions.css','/avatar.js','/replay.js','/room-config.js','/records.js','/stats.js','/platform.js','/client-config.js','/icon.svg','/bbpoker-mark-v2.svg','/bbpoker-mark-v3.svg','/bbpoker-favicon-v3.svg','/bbpoker-favicon-v3.ico','/bbpoker-favicon-v3-32.png','/bbpoker-touch-v3.png','/bbpoker-app-v3-192.png','/bbpoker-app-v3-512.png','/manifest.webmanifest',...Array.from({length:6},(_,i)=>`/avatars/ai-${String(i+1).padStart(2,'0')}.png`)];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>(k.startsWith('tongzhuo-static-')||k.startsWith('bbpoker-static-'))&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});

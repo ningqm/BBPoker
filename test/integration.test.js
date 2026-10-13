@@ -99,9 +99,9 @@ test('illegal actions, duplicate commands and unauthorized users cannot mutate p
   await f.cmd(f.users[1], 'close', {}, 403);
   const commandId = randomUUID();
   const before = (await f.state(f.users[0])).players.find(p => p.id === f.users[0].user.id).stack;
-  await f.api(f.users[0], `/api/rooms/${f.room.code}/action`, { type: 'buyin', amount: 100, commandId });
-  await f.api(f.users[0], `/api/rooms/${f.room.code}/action`, { type: 'buyin', amount: 100, commandId });
-  assert.equal((await f.state(f.users[0])).players.find(p => p.id === f.users[0].user.id).stack, before + 100);
+  await f.api(f.users[0], `/api/rooms/${f.room.code}/action`, { type: 'buyin', amount: 1000, commandId });
+  await f.api(f.users[0], `/api/rooms/${f.room.code}/action`, { type: 'buyin', amount: 1000, commandId });
+  assert.equal((await f.state(f.users[0])).players.find(p => p.id === f.users[0].user.id).stack, before + 1000);
   await f.cmd(f.users[0], 'start');
   const snapshot = structuredClone(f.app.store.data);
   const current = await f.state(f.users[0]), actor = f.users.find(u => u.user.id === current.hand.actingId);

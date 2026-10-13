@@ -92,7 +92,8 @@ test('independent deal-position oracle covers 2–9 players and all fold streets
 test('bomb-pot flop fold follows the same original deck continuation without replaying synthetic preflop cards', t => {
   let timestamp = 1800000000000;
   t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture(5, { bombPot: true, bombEveryHands: 1, bombAnteBB: 2 });
+  const f = fixture(5, { bombPot: true, bombIntervalMinutes: 1, bombAnteBB: 2 });
+  foldAt(f, 0); f.service.completeRabbit(f.room, timestamp); timestamp += 60000; f.service.start(f.room, timestamp);
   assert.equal(f.room.hand.bombPot, true);
   const h = foldAt(f, 3), expected = [11, 12, 13, 15, 17].map(index => h.deck[index]);
   const actual = actualOnly(h);

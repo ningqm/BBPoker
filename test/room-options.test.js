@@ -31,35 +31,38 @@ function conserved(r) {
   assert.equal(actual, all.reduce((sum, p) => sum + p.totalBuyIn, 0));
 }
 
-test('BB configuration follows blind changes, requires valid bounded numbers, and disables new mushroom/approval', () => {
+test('BB configuration fixes per-transfer limits and validates timing and cumulative-cap numbers', () => {
   const s = settingsFor({ smallBlind: 10, bigBlind: 20, minBuyInBB: 50, maxBuyInBB: null, squidUnitBB: 3, approvalRequired: true });
-  assert.equal(s.minBuyIn, 1000); assert.equal(s.maxBuyIn, null); assert.equal(s.squidUnit, 60);
+  assert.equal(s.minBuyIn, 2000); assert.equal(s.maxBuyIn, 20000); assert.equal(s.squidUnit, 60);
+  assert.equal(s.maxTotalBuyInBB, null); assert.equal(s.buyInStepBB, 50); assert.equal(s.bombIntervalMinutes, 10);
   assert.equal(s.actionSeconds, 15); assert.equal(s.durationMinutes, 60); assert.equal(s.approvalRequired, false);
   assert.equal(s.timeBankCards, 3); assert.equal(s.timeBankSeconds, 30);
-  for (const input of [{ minBuyInBB: NaN }, { maxBuyInBB: Infinity }, { minBuyInBB: -1 }, { maxBuyInBB: 10 }, { squidUnitBB: .5 },
-    { bombAnteBB: Infinity }, { bombEveryHands: 0 }, { timeBankCards: -1 }, { timeBankSeconds: 0 }, { durationMinutes: NaN }, { mushroom: true }]) assert.throws(() => settingsFor(input));
-  assert.equal(settingsFor({ minBuyIn: 1000, maxBuyIn: 2000, squidUnit: 30 }).minBuyInBB, 100);
+  for (const input of [{ maxTotalBuyInBB: NaN }, { maxTotalBuyInBB: Infinity }, { maxTotalBuyInBB: 50 }, { maxTotalBuyInBB: 125 }, { squidUnitBB: .5 },
+    { bombAnteBB: Infinity }, { bombIntervalMinutes: 0 }, { bombIntervalMinutes: 121 }, { timeBankCards: -1 }, { timeBankSeconds: 0 }, { durationMinutes: NaN }, { mushroom: true }]) assert.throws(() => settingsFor(input));
+  assert.equal(settingsFor({ minBuyIn: 200, maxBuyIn: 2000, squidUnit: 30 }).minBuyInBB, 100);
 });
 
-test('legacy fractional BB equivalents remain playable without changing stored point amounts', () => {
+test('legacy rooms retain historic squid point amounts while all new transfers use the fixed BB rule', () => {
   const f = fixture({}, 2);
   f.room.rulesVersion = 1;
   f.room.settings = { maxPlayers: 9, smallBlind: 5, bigBlind: 10, minBuyIn: 105, maxBuyIn: 1001, actionSeconds: 30,
     approvalRequired: true, squid: false, squidUnit: 5, mushroom: false, mushroomUnit: 1 };
-  f.cmd(1, 'buyin', { amount: 1 }); assert.equal(f.room.pending.length, 0);
+  const before = structuredClone(f.store.data);
+  assert.throws(() => f.cmd(1, 'buyin', { amount: 1 }), /单次带入/); assert.deepEqual(f.store.data, before);
+  f.cmd(1, 'buyin', { amount: 1000 }); assert.equal(f.room.pending.length, 0);
   for (let n = 0; n < 2; n++) { f.service.start(f.room); finish(f); }
   assert.equal(f.room.settings.squidUnit, 5); assert.equal(f.room.settings.squidUnitBB, .5);
-  assert.equal(f.room.settings.minBuyIn, 105); assert.equal(f.room.settings.maxBuyIn, 1001);
+  assert.equal(f.room.settings.minBuyIn, 1000); assert.equal(f.room.settings.maxBuyIn, 10000);
 });
 
-test('instant BB buy-in and unlimited maximum keep integer and lifetime accounting limits', () => {
-  const f = fixture({ maxBuyInBB: null }, 0);
-  f.cmd(1, 'sit', { seat: 1, amountBB: 100000000 });
-  assert.equal(f.room.members[f.users[1].id].stack, 1000000000); assert.equal(f.room.pending.length, 0);
-  assert.throws(() => f.cmd(1, 'buyin', { amountBB: 1 }), /累计带入/);
+test('single-transfer maximum does not cap stacks and per-member cumulative caps survive leaving', () => {
+  const f = fixture({ maxTotalBuyInBB: 1500 }, 0);
+  f.cmd(1, 'sit', { seat: 1, amountBB: 1000 }); f.cmd(1, 'buyin', { amountBB: 500 });
+  assert.equal(f.room.members[f.users[1].id].stack, 15000); assert.equal(f.room.pending.length, 0);
+  assert.throws(() => f.cmd(1, 'buyin', { amountBB: 100 }), /累计带入/);
   f.cmd(1, 'stand');
-  assert.throws(() => f.cmd(1, 'sit', { seat: 1, amountBB: 20 }), /累计带入/);
-  for (const extra of [{ amount: 201 }, { amountBB: 20.5 }, { amountBB: Infinity }, { amountBB: -20 }, { amount: NaN }]) assert.throws(() => f.cmd(2, 'sit', { seat: 2, ...extra }));
+  assert.throws(() => f.cmd(1, 'sit', { seat: 1, amountBB: 100 }), /累计带入/);
+  for (const extra of [{ amount: 201 }, { amountBB: 20.5 }, { amountBB: 125 }, { amountBB: 1050 }, { amountBB: Infinity }, { amountBB: -20 }, { amount: NaN }]) assert.throws(() => f.cmd(2, 'sit', { seat: 2, ...extra }));
   assert.equal(f.room.name, '朋友0必赢的局'); conserved(f.room);
 });
 
@@ -69,8 +72,8 @@ test('valid instant seating replaces only the caller legacy pending request', ()
   assert.throws(() => f.cmd(1, 'sit', { seat: 2, amountBB: 100 }), /占用/);
   assert.throws(() => f.cmd(1, 'sit', { seat: 1, amountBB: -1 }));
   assert.equal(f.room.pending.length, 2);
-  f.cmd(1, 'sit', { seat: 1, amountBB: 50 });
-  assert.equal(f.room.members[f.users[1].id].stack, 500);
+  f.cmd(1, 'sit', { seat: 1, amountBB: 100 });
+  assert.equal(f.room.members[f.users[1].id].stack, 1000);
   assert.deepEqual(f.room.pending, [other]);
   assert.equal(f.store.data.ledger.filter(l => l.type === 'buyin').length, 1);
 });
@@ -123,8 +126,8 @@ test('time card reset uses fixed room windows, replaces rather than accumulates,
 
 test('last five minutes skip new squid and bomb rounds while an existing squid round may continue', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ squid: true, bombPot: true, bombEveryHands: 1 }); f.cmd(0, 'start');
-  const round = f.room.mini.squid.round; assert.equal(f.room.hand.bombPot, true); finish(f);
+  const f = fixture({ squid: true, bombPot: true, bombIntervalMinutes: 1 }); f.cmd(0, 'start');
+  const round = f.room.mini.squid.round; assert.equal(f.room.hand.bombPot, false); finish(f);
   timestamp = f.room.endsAt - 300000; f.service.start(f.room);
   assert.equal(f.room.hand.bombPot, false); assert.equal(f.room.mini.squid.round, round);
   const winner = f.room.mini.squid.participants.find(id => !f.room.mini.squid.won.includes(id));
@@ -173,27 +176,30 @@ test('expiry between hands prevents a start even before the periodic tick', t =>
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.handNumber, number); conserved(f.room);
 });
 
-test('bomb pot starts at flop with only equal antes and every hidden hand stays private', () => {
-  const f = fixture({ bombPot: true, bombEveryHands: 1, bombAnteBB: 2 }); f.cmd(0, 'start');
+test('bomb pot starts at flop with only equal antes and every hidden hand stays private', t => {
+  let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
+  const f = fixture({ bombPot: true, bombIntervalMinutes: 1, bombAnteBB: 2 }); f.cmd(0, 'start'); finish(f);
+  timestamp += 60000; f.service.start(f.room);
   const h = f.room.hand; assert.equal(h.street, 'flop'); assert.equal(h.ante, 20);
   assert.equal(h.smallBlindSeat, null); assert.equal(h.bigBlindSeat, null);
   assert.equal(h.log.filter(a => a.type === 'ante').length, 3);
   assert.ok(!h.log.some(a => ['smallBlind', 'bigBlind'].includes(a.type)));
   assert.ok(h.players.every(p => p.contributed === 20 && p.bet === 0));
-  assert.equal(h.actingId, f.users[1].id);
+  assert.equal(h.actingId, f.users[2].id);
   const observer = f.service.state(f.room, f.users[3].id);
   assert.ok(observer.players.every(p => p.cards.every(c => c === null))); assert.equal(observer.hand.proofs.length, 3);
   assert.ok(observer.hand.proofs.every(p => verifyProof(h.id, h.audit.root, p)));
-  finish(f); const exported = f.service.exports(f.users[0].id, f.room.code)[0];
+  finish(f); const exported = f.service.exports(f.users[0].id, f.room.code).find(item => item.id === h.id);
   assert.equal(exported.bombPot, true); assert.ok(exported.players.filter(p => p.id !== f.users[0].id).every(p => p.cards.every(c => c === null)));
   assert.ok(!Object.hasOwn(exported, 'deck')); conserved(f.room);
 });
 
-test('bomb frequency and preflop statistics count the intended opportunities only', () => {
-  const f = fixture({ bombPot: true, bombEveryHands: 2 }); f.cmd(0, 'start');
+test('bomb timing and preflop statistics count the intended opportunities only', t => {
+  let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
+  const f = fixture({ bombPot: true, bombIntervalMinutes: 1 }); f.cmd(0, 'start');
   assert.equal(f.room.hand.bombPot, false); finish(f, 'call');
   const before = f.service.stats(f.users[0].id); assert.equal(before.vpip, 100); assert.equal(before.preflopHands, 1);
-  f.service.start(f.room); assert.equal(f.room.hand.bombPot, true); finish(f);
+  timestamp += 60000; f.service.start(f.room); assert.equal(f.room.hand.bombPot, true); finish(f);
   const after = f.service.stats(f.users[0].id); assert.equal(after.hands, 2); assert.equal(after.preflopHands, 1); assert.equal(after.vpip, 100);
 });
 

@@ -34,7 +34,7 @@ test('lobby requires login and exposes only a bounded allowlist, never invitatio
   const before = structuredClone(app.store.data);
   const lobby = await api(users[2], '/api/lobby');
   assert.equal(lobby.limit, 10); assert.equal(lobby.rooms.length, 2);
-  const allowed = ['code','name','hostName','status','access','joined','seatedCount','maxPlayers','smallBlind','bigBlind','squid','handNumber','endsAt','canJoin'].sort();
+  const allowed = ['code','name','hostName','status','access','joined','seatedCount','maxPlayers','smallBlind','bigBlind','squid','bombPot','bombIntervalMinutes','handNumber','endsAt','canJoin'].sort();
   for (const row of lobby.rooms) assert.deepEqual(Object.keys(row).sort(), allowed);
   assert.equal(lobby.rooms.find(r => r.code === open.code).canJoin, true);
   assert.equal(lobby.rooms.find(r => r.code === invite.code).canJoin, false);
@@ -69,12 +69,12 @@ test('two tables are independent and one account cannot occupy both', async t =>
   await api(users[0], '/api/rooms', { access: 'public' }, 409);
   await api(users[2], `/api/rooms/${a.code}/join`, {});
   await api(users[2], `/api/rooms/${b.code}/join`, {});
-  await command(users[2], a.code, 'sit', { seat: 0, amountBB: 20 });
+  await command(users[2], a.code, 'sit', { seat: 0, amountBB: 100 });
   const beforeB = structuredClone(app.store.data.rooms[b.code]);
-  await command(users[2], b.code, 'sit', { seat: 0, amountBB: 20 }, 409);
+  await command(users[2], b.code, 'sit', { seat: 0, amountBB: 100 }, 409);
   assert.deepEqual(app.store.data.rooms[b.code], beforeB, 'rejected seating is atomic');
   await command(users[2], a.code, 'stand');
-  await command(users[2], b.code, 'sit', { seat: 0, amountBB: 20 });
+  await command(users[2], b.code, 'sit', { seat: 0, amountBB: 100 });
   const aState = await api(users[2], `/api/rooms/${a.code}`);
   const bState = await api(users[2], `/api/rooms/${b.code}`);
   assert.equal(aState.players.find(p => p.id === users[2].user.id).seat, null);

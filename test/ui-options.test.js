@@ -20,7 +20,7 @@ function harness(overrides={}){
   vm.runInContext([
     section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),
     section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function tick(){','setInterval(tick,'),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
-    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,roomClock,miniCutoff,tick,avatar,seatActions};',
+    'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,updateBuyinSummary,roomClock,miniCutoff,tick,avatar,seatActions};',
   ].join('\n'),context);
   return {...context.client,modals};
 }
@@ -41,23 +41,24 @@ function formFrom(html){
 }
 test('room presets submit BB settings, direct buy-in and defaults without hidden mushroom/approval controls',()=>{
   const c=harness(),html=c.settingFields(c.defaults),form=formFrom(html),s=c.readSettings(form);
-  assert.equal(s.smallBlind,5);assert.equal(s.bigBlind,10);assert.equal(s.minBuyInBB,20);assert.equal(s.maxBuyInBB,200);
+  assert.equal(s.smallBlind,5);assert.equal(s.bigBlind,10);assert.equal(s.minBuyInBB,100);assert.equal(s.maxBuyInBB,1000);
   assert.equal(s.actionSeconds,15);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
-  assert.equal(s.bombPot,false);assert.equal(s.bombAnteBB,2);assert.equal(s.bombEveryHands,10);
+  assert.equal(s.bombPot,false);assert.equal(s.bombAnteBB,2);assert.equal(s.bombIntervalMinutes,10);
   assert.equal(s.squid,false);assert.equal(s.squidUnitBB,2);
   assert.doesNotThrow(()=>settingsFor(s));
   assert.doesNotMatch(html,/蘑菇|name="(?:approvalRequired|minBuyIn|maxBuyIn)"/);
   c.state.createKeyRequired=true;c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);assert.doesNotMatch(c.modals.at(-1).body,/建房口令|name="createKey"/);
 });
-test('turning on unlimited buy-in submits null; switching blind presets keeps BB counts unchanged',()=>{
+test('cumulative caps are optional and blind presets keep fixed transaction BB values',()=>{
   const c=harness(),form=formFrom(c.settingFields(c.defaults));
-  form.fields.get('unlimitedBuyIn').checked=true;c.updateSettingConstraints(form);
-  assert.equal(form.fields.get('maxBuyInBB').disabled,true);assert.equal(c.readSettings(form).maxBuyInBB,null);
+  assert.equal(c.readSettings(form).maxTotalBuyInBB,null);
+  form.fields.get('unlimitedTotalBuyIn').checked=false;c.updateSettingConstraints(form);
+  assert.equal(form.fields.get('maxTotalBuyInBB').disabled,false);assert.equal(c.readSettings(form).maxTotalBuyInBB,1000);
   let hidden=false;form.querySelector=selector=>selector==='[data-blind-custom]'?{set hidden(value){hidden=value;}}:null;
   const button={dataset:{value:'2/5'},closest:()=>form,parentElement:{querySelectorAll:()=>[]}};
   c.applySettingPreset(button,'blind');
-  const s=c.readSettings(form);assert.equal(s.smallBlind,2);assert.equal(s.bigBlind,5);assert.equal(s.minBuyInBB,20);assert.equal(hidden,true);assert.doesNotThrow(()=>settingsFor(s));
-  form.fields.get('unlimitedBuyIn').checked=false;c.updateSettingConstraints(form);assert.equal(c.readSettings(form).maxBuyInBB,200);
+  const s=c.readSettings(form);assert.equal(s.smallBlind,2);assert.equal(s.bigBlind,5);assert.equal(s.minBuyInBB,100);assert.equal(s.maxBuyInBB,1000);assert.equal(hidden,true);assert.doesNotThrow(()=>settingsFor(s));
+  form.fields.get('unlimitedTotalBuyIn').checked=true;c.updateSettingConstraints(form);assert.equal(c.readSettings(form).maxTotalBuyInBB,null);
 });
 test('disabled mini-game amounts retain valid preferences and discard an invalid hidden value',()=>{
   const c=harness(),form=formFrom(c.settingFields({...c.defaults,squidUnitBB:4,bombAnteBB:3}));
@@ -66,10 +67,21 @@ test('disabled mini-game amounts retain valid preferences and discard an invalid
   form.fields.get('bombPot').checked=true;form.fields.get('bombAnteBB').disabled=false;form.fields.get('bombAnteBB').value='7';
   assert.equal(c.readSettings(form).bombPot,true);assert.equal(c.readSettings(form).bombAnteBB,7);
 });
-test('top-ups cap total stack and accept unlimited caps without displaying zero as a limit',()=>{
-  const c=harness();c.state.room={meId:'a',settings:{...c.defaults,minBuyIn:200,maxBuyIn:2000},players:[{id:'a',seat:0,stack:1955}]};
-  c.buyinModal();assert.match(c.modals.at(-1).body,/name="amountBB"[^>]*max="4"/);assert.match(c.modals.at(-1).body,/合计 40 积分/);
-  c.state.room.settings.maxBuyIn=null;c.buyinModal();assert.match(c.modals.at(-1).body,/无上限/);assert.doesNotMatch(c.modals.at(-1).body,/max="/);
+test('buy-ins cap each transaction and cumulative spend, independently of remaining stack',()=>{
+  const c=harness();c.state.room={meId:'a',settings:{...c.defaults,maxTotalBuyInBB:1000},players:[{id:'a',seat:0,stack:55,totalBuyIn:8000}]};
+  c.buyinModal();let html=c.modals.at(-1).body;assert.match(html,/name="amountBB"[^>]*min="100" max="200" step="50"/);assert.match(html,/合计 2,000 积分/);assert.match(html,/剩余 200 BB/);
+  c.state.room.players[0].totalBuyIn=9500;c.buyinModal();html=c.modals.at(-1).body;assert.match(html,/剩余额度不足/);assert.match(html,/type="submit" disabled/);
+  c.state.room.settings.maxTotalBuyInBB=null;c.buyinModal();html=c.modals.at(-1).body;assert.match(html,/本场累计带入不限/);assert.match(html,/name="amountBB"[^>]*max="1000"/);
+  c.state.room.players[0].seat=null;c.state.room.settings.maxTotalBuyInBB=1000;c.state.room.players[0].totalBuyIn=8500;c.buyinModal(2);html=c.modals.at(-1).body;assert.match(html,/name="amountBB"[^>]*max="150"/);assert.match(html,/剩余 150 BB/);
+});
+test('BB sliders, numbers and shortcuts stay synchronized without coercing invalid typed amounts',()=>{
+  const c=harness(),input={value:'200',min:'100',max:'1000',disabled:false},range={value:'200',attrs:{},setAttribute(k,v){this.attrs[k]=v;}},summary={textContent:''},selected=[];
+  const buttons=[100,200,500,1000].map(value=>({dataset:{value:String(value)},classList:{toggle:(k,v)=>{if(v)selected.push(value);}},setAttribute(){}}));
+  const form={id:'buyin-form',dataset:{bigBlind:'10'},elements:{namedItem:()=>input},querySelector:q=>q==='#buyin-range'?range:summary,querySelectorAll:()=>buttons};
+  c.updateBuyinSummary(form,{id:'buyin-range',value:'500'});assert.equal(input.value,'500');assert.equal(range.value,'500');assert.equal(summary.textContent,'合计 5,000 积分');assert.equal(range.attrs['aria-valuetext'],'500 BB');
+  input.value='150';c.updateBuyinSummary(form);assert.equal(range.value,'150');assert.equal(summary.textContent,'合计 1,500 积分');
+  input.value='125';c.updateBuyinSummary(form);assert.equal(input.value,'125');assert.equal(range.value,'150');assert.match(summary.textContent,/50 BB 的整数倍/);
+  input.value='';c.updateBuyinSummary(form);assert.match(summary.textContent,/50 BB 的整数倍/);
 });
 test('room duration and mini cutoff are computed against supplied server time, including an active final hand',()=>{
   const c=harness(),room={status:'playing',settings:{durationMinutes:60},endsAt:3600000,miniGamesCutoffAt:3300000};
@@ -95,9 +107,9 @@ test('creation keeps only name, blinds and duration outside Advanced; expanding 
   const closed=c.settingFields(settings,{roomName:'新桌'}),opened=c.settingFields(settings,{roomName:'新桌',advancedOpen:true});
   assert.match(closed,/<details[^>]*data-advanced-settings\s*>/);assert.match(opened,/<details[^>]*data-advanced-settings open>/);
   const advanced=closed.slice(closed.indexOf('<details'),closed.indexOf('</details>'));
-  for(const key of ['squid','bombPot','minBuyInBB','maxBuyInBB','maxPlayers','actionSeconds','timeBankCards','timeBankSeconds'])assert.match(advanced,new RegExp('name="'+key+'"'));
+  for(const key of ['squid','bombPot','maxTotalBuyInBB','maxPlayers','actionSeconds','timeBankCards','timeBankSeconds'])assert.match(advanced,new RegExp('name="'+key+'"'));
   assert.deepEqual(c.readSettings(formFrom(closed)),c.readSettings(formFrom(opened)));
-  assert.match(closed,/鱿鱼 7 BB/);assert.match(closed,/炸弹池每 10 手 \/ 4 BB/);
+  assert.match(closed,/鱿鱼 7 BB/);assert.match(closed,/炸弹池每 10 分钟 \/ 4 BB/);
 });
 function reuseFixture(c,{open=true}={}){
   c.state.rooms=[{code:'123456',name:'上次的局',status:'closed'}];c.createModal();
@@ -108,10 +120,10 @@ function reuseFixture(c,{open=true}={}){
   const button={disabled:false,closest:()=>form};return {form,selector,status,submit,fields,button,get replacement(){return replacement;}};
 }
 test('loading an authorized prior room preserves the new name and Advanced state, then submits only fresh settings',async()=>{
-  const calls=[],c=harness({api:async path=>{calls.push(path);return{code:'123456',invite:'private',players:[{id:'friend'}],endsAt:123,settings:{...c.defaults,smallBlind:2,bigBlind:5,maxBuyInBB:null,squid:true,squidUnitBB:6,durationMinutes:120}};}}),f=reuseFixture(c);
+  const calls=[],c=harness({api:async path=>{calls.push(path);return{code:'123456',invite:'private',players:[{id:'friend'}],endsAt:123,settings:{...c.defaults,smallBlind:2,bigBlind:5,maxTotalBuyInBB:1500,squid:true,squidUnitBB:6,durationMinutes:120}};}}),f=reuseFixture(c);
   await c.loadPreviousRoomSettings(f.button);assert.deepEqual(calls,['/api/rooms/123456']);
   assert.equal(f.form.fields.get('name').value,'我微调的新局');assert.match(f.replacement,/data-advanced-settings open/);assert.doesNotMatch(f.replacement,/private|friend|name="invite"/);
-  const settings=c.readSettings(f.form);assert.equal(settings.bigBlind,5);assert.equal(settings.maxBuyInBB,null);assert.equal(settings.squidUnitBB,6);assert.equal(settings.durationMinutes,120);assert.doesNotThrow(()=>settingsFor(settings));
+  const settings=c.readSettings(f.form);assert.equal(settings.bigBlind,5);assert.equal(settings.maxTotalBuyInBB,1500);assert.equal(settings.squidUnitBB,6);assert.equal(settings.durationMinutes,120);assert.doesNotThrow(()=>settingsFor(settings));
   assert.equal(f.fields.disabled,false);assert.equal(f.submit.disabled,false);assert.match(f.status.textContent,/已沿用/);
 });
 test('pending config loads block duplicate reads and a closed or superseded form ignores late data',async()=>{
@@ -151,4 +163,13 @@ test('mid-session buy-in defaults to waiting for a big blind and quotes a return
   c.state.room.players[0].entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};c.buyinModal(3);html=c.modals.at(-1).body;
   assert.match(html,/补盲加入 · 15 积分/);assert.match(html,/补小盲 5 不抵跟注/);
   c.state.room.players[0].seat=0;c.buyinModal();assert.doesNotMatch(c.modals.at(-1).body,/name="entryMode"/);
+});
+
+test('bomb presets and custom minutes submit a timer rather than a hand count',()=>{
+  const c=harness(),form=formFrom(c.settingFields({...c.defaults,bombPot:true}));
+  let hidden=false;form.querySelector=selector=>selector==='[data-bomb-custom]'?{set hidden(v){hidden=v;},querySelector:()=>({focus(){}})}:null;
+  c.applySettingPreset({dataset:{value:'15'},closest:()=>form,parentElement:{querySelectorAll:()=>[]}},'bomb');
+  assert.equal(c.readSettings(form).bombIntervalMinutes,15);assert.equal(hidden,true);assert.equal(c.readSettings(form).bombEveryHands,undefined);
+  c.applySettingPreset({dataset:{value:'custom'},closest:()=>form,parentElement:{querySelectorAll:()=>[]}},'bomb');
+  assert.equal(hidden,false);form.fields.get('bombIntervalMinutes').value='23';assert.equal(c.readSettings(form).bombIntervalMinutes,23);
 });

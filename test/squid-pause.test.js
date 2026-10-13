@@ -26,8 +26,8 @@ function fixture(t, settings = {}) {
 }
 
 test('offline original players no longer turn a configured bomb hand into ordinary fallback', t => {
-  const f = fixture(t, { bombPot: true, bombEveryHands: 1 });
-  assert.equal(f.room.hand.bombPot, true); f.win(0); f.connect(3, false); f.start();
+  const f = fixture(t, { bombPot: true, bombIntervalMinutes: 1 });
+  assert.equal(f.room.hand.bombPot, false); f.win(0); f.connect(3, false); f.advance(60000); f.start();
   const h = f.room.hand;
   assert.equal(h.bombPot, true); assert.ok(h.ante > 0); assert.equal(h.street, 'flop');
   assert.equal(h.squidRound, 1); assert.equal(h.settings.squid, true);

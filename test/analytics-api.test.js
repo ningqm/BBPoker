@@ -27,13 +27,13 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   let roomCode = code;
   const room = () => app.store.data.rooms[roomCode];
   const command = (i, type, extra = {}) => ok(`/api/rooms/${roomCode}/action`, users[i].token, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra });
-  for (let i = 0; i < 3; i++) await command(i, 'sit', { seat: i, amountBB: [50, 100, 200][i] });
+  for (let i = 0; i < 3; i++) await command(i, 'sit', { seat: i, amountBB: [100, 200, 400][i] });
 
   await t.test('self-only endpoint rejects anonymous and unrelated-room reads; userId cannot select another player', async () => {
     assert.equal((await request('/api/stats')).status, 401);
     assert.equal((await request(`/api/stats?room=${code}`, users[4].token)).status, 403);
     const own = await ok('/api/stats', users[0].token);
-    assert.equal(own.hands, 0); assert.equal(own.net, 0); assert.equal(own.totalBuyIn, 500);
+    assert.equal(own.hands, 0); assert.equal(own.net, 0); assert.equal(own.totalBuyIn, 1000);
     const outsider = await ok(`/api/stats?userId=${me}&playerId=${me}`, users[4].token);
     assert.equal(outsider.hands, 0); assert.equal(outsider.totalBuyIn, 0);
   });

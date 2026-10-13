@@ -176,8 +176,8 @@ test('continuity oracle: encrypted restart preserves hand and roster; reconnect 
 });
 
 test('pause oracle: expiry completes a playable original squid round without starting another round or bomb pot', t => {
-  const f = fixture(t, { bombPot: true, bombEveryHands: 2 }); f.win(0);
-  const before = roundSnapshot(f); f.room.endsAt = f.time + 1; f.advance(1);
+  const f = fixture(t, { bombPot: true, bombIntervalMinutes: 1 }); f.win(0);
+  const before = roundSnapshot(f); f.room.nextBombAt = f.time; f.room.endsAt = f.time + 1; f.advance(1);
   f.start(); assert.equal(f.room.hand.squidRound, before.round); assert.equal(f.room.hand.bombPot, false);
   f.win(1); assert.equal(f.room.mini.squid.active, true); assert.notEqual(f.room.status, 'closed'); conserved(f);
   f.start(); assert.equal(f.room.hand.squidRound, before.round); assert.equal(f.room.hand.bombPot, false);

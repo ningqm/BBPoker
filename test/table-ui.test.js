@@ -11,7 +11,7 @@ function harness(){
     state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
-  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel};'].join('\n'),context);
+  vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel,bombStatus};'].join('\n'),context);
   return context.client;
 }
 function room(){return {code:'123456',name:'朋友必赢的局',meId:'me',hostId:'me',status:'waiting',settings:{smallBlind:5,bigBlind:10,maxPlayers:9,timeBankCards:3,timeBankSeconds:30},players:[{id:'me',seat:0,stack:1000,inHand:true,cards:['As','Kd']},{id:'friend',seat:1,stack:1000}],actions:{},autoDeal:{paused:false,nextHandAt:null,waitReason:null}};}
@@ -79,4 +79,24 @@ test('spectators with a future entry quote do not render a duplicate participati
 test('sitting-out players retain a return action without a duplicate away notice',()=>{
   const c=harness(),r=room(),me=r.players[0];me.sittingOut=true;me.inHand=false;me.entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};r.hand={status:'complete'};
   const html=c.actionArea(r,me,true);assert.equal((html.match(/你已暂离/g)||[]).length,1);assert.doesNotMatch(html,/lifecycle-queue|data-action="entry-blind"/);assert.match(html,/data-action="sitout"/);
+});
+
+test('game markers distinguish enabled modes from the current bomb hand and active squid round',()=>{
+  const c=harness(),r=room();c.state.room=r;r.settings.squid=true;r.settings.bombPot=true;
+  let html=c.roomView();assert.match(html,/鱿鱼已开启/);assert.match(html,/炸弹池已开启/);assert.doesNotMatch(html,/本手炸弹池|鱿鱼 · 第/);
+  r.mini={squid:{active:true,round:3,participants:['me','friend','third'],won:['friend']}};r.hand={status:'playing',squidRound:3,bombPot:true};
+  html=c.roomView();assert.match(html,/鱿鱼 · 第 3 轮/);assert.match(html,/1\/3 有鱼/);assert.match(html,/本手炸弹池/);assert.match(html,/game-mode bomb active/);
+  r.status='closed';assert.doesNotMatch(c.roomView(),/game-mode-markers/);
+});
+test('bomb countdown waits for a hand boundary and never promises a new bomb past cutoff',()=>{
+  const c=harness(),r=room();r.settings.bombPot=true;r.nextBombAt=61000;
+  assert.equal(c.bombStatus(r,1000).label,'下次炸弹 1:00');assert.equal(c.bombStatus(r,61000).label,'炸弹待触发 · 等合适的下一手');assert.equal(c.bombStatus(r,61000).active,false);
+  r.bombDue=true;r.miniGamesCutoffAt=62000;assert.equal(c.bombStatus(r,62000),null);
+  r.hand={status:'playing',bombPot:true};assert.equal(c.bombStatus(r,63000).label,'本手炸弹池');
+  r.hand.status='complete';assert.equal(c.bombStatus(r,63000),null);
+});
+test('table tool strip keeps play-related tools and removes general data and legal copy',()=>{
+  const c=harness();c.state.room=room();const html=c.roomView();
+  assert.doesNotMatch(html,/data-action="career"|发牌与隐私|公平与隐私|公开源码|不提供充值/);
+  for(const action of ['toggle-chat','interact','history','table-info','room-menu'])assert.match(html,new RegExp('data-action="'+action+'"'));
 });

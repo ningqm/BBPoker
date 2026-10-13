@@ -128,9 +128,11 @@ test('expiry grants offline squid one bounded recovery window even when automati
 });
 
 test('blind-only or bomb all-ins run out before receiving the next-hand decision exactly once', t => {
-  for (const settings of [{}, { bombPot: true, bombEveryHands: 1, bombAnteBB: 100 }]) {
+  for (const settings of [{}, { bombPot: true, bombIntervalMinutes: 1, bombAnteBB: 100 }]) {
     const f = fixture(t, settings, 2);
     if (!settings.bombPot) { f.room.members[f.users[0].id].stack = 5; f.room.members[f.users[1].id].stack = 3; }
+    // This runout test starts at a saved table's due bomb, not its first interval.
+    if (settings.bombPot) { f.room.startedAt = f.time - 60000; f.room.endsAt = f.time + 3540000; f.room.nextBombAt = f.time; }
     f.cmd(0, 'start'); assert.equal(f.room.hand.runout.active, true); assert.equal(f.store.data.hands.length, 0);
     while (f.room.hand.runout.active) { f.advance(f.room.hand.runout.nextAt - f.time); assert.equal(f.service.tick(f.room), true); }
     assert.equal(f.room.hand.status, 'complete'); assert.equal(f.store.data.hands.length, 1);

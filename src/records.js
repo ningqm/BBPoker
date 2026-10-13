@@ -24,9 +24,19 @@ export function recordFilters(input = {}) {
   const holeRanks = startingRanks(input.holeRanks), holeType = choice(input.holeType, ['all', 'pair', 'suited', 'offsuit'], '起手牌类型');
   const type = choice(input.type, ['all', 'holdem', 'bomb'], '牌局类型');
   const status = choice(input.status, ['all', 'active', 'closed'], '对局状态');
+  const position = choice(input.position, ['all', 'BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'LJ', 'HJ', 'CO', 'unknown'], '位置筛选');
+  const potType = choice(input.potType, ['all', 'headsUp', 'multiway', 'noFlop', 'unknown'], '翻牌人数筛选');
+  const tableSize = choice(input.tableSize, ['all', 'headsUp', 'short', 'full'], '发牌人数筛选');
+  if (!optional(input.opponent) && (typeof input.opponent !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.opponent))) fail('对手筛选无效');
+  const opponent = optional(input.opponent) ? '' : input.opponent;
+  let maxHands = null;
+  if (!optional(input.maxHands) && input.maxHands !== 'all') {
+    if (!['string', 'number'].includes(typeof input.maxHands) || !/^[1-9]\d{0,5}$/.test(String(input.maxHands)) || Number(input.maxHands) > 100000) fail('手数需要是 1–100000 的整数');
+    maxHands = Number(input.maxHands);
+  }
   if (!optional(input.q) && (typeof input.q !== 'string' || [...input.q].length > 80)) fail('搜索内容最多 80 字');
   const q = (input.q || '').trim().toLocaleLowerCase('zh-CN');
-  return { start, end, result, minBB, holeRanks, holeType, type, status, q };
+  return { start, end, result, minBB, holeRanks, holeType, type, status, position, potType, tableSize, opponent, maxHands, q };
 }
 function thresholdBB(value, required = false) {
   if (optional(value)) { if (required) fail('请输入盈亏筛选的 BB 阈值'); return null; }
@@ -74,6 +84,40 @@ export function recordTotals(rows, holdem = row => row.holdemNet, mini = row => 
     totals[net > 0 ? 'wins' : net < 0 ? 'losses' : 'even']++;
   }
   return totals;
+}
+/** Co-dealt opponent report, not inferred chip transfers between two people.
+ * Each row repeats the hero's entire poker net on hands shared with that peer;
+ * therefore rows overlap and must never be summed together. The summary counts
+ * each selected own hand once. Squid/other mini adjustments are excluded.
+ * Heads-up here means both players were the only survivors at the initial real
+ * flop, including all-in runouts. A multiway flop never becomes heads-up later.
+ * Missing historical BB contributes chips/hands but not netBB/bbHands. Keep raw
+ * fractions until presentation, including across mixed blind levels.
+ */
+export function opponentRecords(entries, userId, filter, users = new Map()) {
+  const rows = new Map(), summary = { uniqueHands: 0, net: 0, netBB: 0, bbHands: 0 };
+  for (const { hand, player, context } of entries) {
+    if (!player) continue;
+    const net = player.stack - player.startingStack, bb = handBigBlind(hand);
+    summary.uniqueHands++; summary.net += net;
+    if (bb !== null) { summary.netBB += net / bb; summary.bbHands++; }
+    let opponents = context.dealtIds.filter(id => id !== userId);
+    if (['headsUp', 'multiway'].includes(filter.potType)) opponents = opponents.filter(id => context.flopPlayerIds.includes(id));
+    if (filter.opponent) opponents = opponents.filter(id => id === filter.opponent);
+    for (const id of opponents) {
+      if (!rows.has(id)) rows.set(id, { id, name: users.get(id)?.name ?? hand.players.find(p => p.id === id)?.name ?? '朋友',
+        hands: 0, net: 0, netBB: 0, bbHands: 0, wins: 0, losses: 0, even: 0,
+        headsUpHands: 0, headsUpNet: 0, headsUpNetBB: 0, headsUpBBHands: 0, lastAt: hand.at });
+      const row = rows.get(id);
+      row.hands++; row.net += net; row[net > 0 ? 'wins' : net < 0 ? 'losses' : 'even']++;
+      if (bb !== null) { row.netBB += net / bb; row.bbHands++; }
+      if (context.potType === 'headsUp' && context.flopPlayerIds.includes(id)) {
+        row.headsUpHands++; row.headsUpNet += net; if (bb !== null) { row.headsUpNetBB += net / bb; row.headsUpBBHands++; }
+      }
+      if (hand.at > row.lastAt) row.lastAt = hand.at;
+    }
+  }
+  return { rows: [...rows.values()].sort((a, b) => b.hands - a.hands || b.net - a.net || a.id.localeCompare(b.id)), ...summary };
 }
 export const squidSettlementKey = (roomCode, settlementId, playerId) => JSON.stringify([roomCode, settlementId, playerId]);
 /** Ledger is authoritative for new rounds. Keep one settlement per room/round/player. */

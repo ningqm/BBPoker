@@ -5,7 +5,8 @@ import { planEntry, commitEntry, needsEntry, entryState, setEntryMode, markEntry
 import { avatarImageId } from './avatar.js';
 import { calculateEquity } from './equity.js';
 import { aggregateAnalytics } from './analytics.js';
-import { recordFilters, resultMatches, handBigBlind, holeMatches, recordTotals, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
+import { recordFilters, resultMatches, handBigBlind, holeMatches, recordTotals, opponentRecords, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
+import { handContext, handContextMatches } from './hand-context.js';
 
 // At most 30 members can fund a room; keep even their summed ledger safe.
 const MAX_TOTAL_BUYIN = Math.floor(Number.MAX_SAFE_INTEGER / 30);
@@ -797,24 +798,37 @@ export class RoomService {
     if (favorites !== undefined && favorites !== null && !['0', '1'].includes(favorites)) fail('收藏筛选格式错误');
     if (room) this.member(this.room(room), userId);
     const cursor = handCursor(before), favoriteIds = new Set(this.user(userId)?.favoriteHands ?? []), count = Number(limit), filter = recordFilters(options);
-    const filtered = this.db.hands.filter(h => {
+    if (filter.opponent === userId) fail('请选择其他玩家作为对手');
+    const users = new Map(Object.values(this.db.users).map(user => [user.id, user])), opponentNames = new Map(), entries = [];
+    // Scan archived hands once. Context is reconstructed at most once per
+    // eligible hand and carried through totals/report/page projections.
+    for (const h of this.db.hands) {
+      if (h.status !== 'complete') continue;
       const p = h.players.find(p => p.id === userId);
-      return h.status === 'complete' && (p || includeObserved && Boolean(this.db.rooms[h.roomCode]?.members[userId])) && (!room || h.roomCode === room) && (favorites !== '1' || favoriteIds.has(h.id))
+      if (p) for (const peer of h.players) if (peer.id !== userId && !opponentNames.has(peer.id)) opponentNames.set(peer.id, users.get(peer.id)?.name ?? peer.name ?? '朋友');
+      if (!((p || includeObserved && Boolean(this.db.rooms[h.roomCode]?.members[userId])) && (!room || h.roomCode === room) && (favorites !== '1' || favoriteIds.has(h.id))
         && Date.parse(h.at) >= filter.start && Date.parse(h.at) <= filter.end
         && resultMatches((p ? p.stack - p.startingStack : 0) + (h.miniChanges?.[userId] ?? 0), filter.result, filter.minBB, handBigBlind(h))
         && holeMatches(p?.cards, filter)
         && (filter.type === 'all' || Boolean(h.bombPot) === (filter.type === 'bomb'))
-        && (!filter.q || `${h.number} ${h.id} ${h.roomName}`.toLocaleLowerCase('zh-CN').includes(filter.q));
-    });
-    const totals = recordTotals(filtered, h => { const p = h.players.find(p => p.id === userId); return p ? p.stack - p.startingStack : 0; }, h => h.miniChanges?.[userId] ?? 0);
-    const matches = filtered.filter(h => !cursor || compareHands(h, cursor) > 0).sort(compareHands);
+        && (!filter.q || `${h.number} ${h.id} ${h.roomName}`.toLocaleLowerCase('zh-CN').includes(filter.q)))) continue;
+      const context = handContext(h, userId);
+      if (handContextMatches(context, userId, filter)) entries.push({ hand: h, player: p, context });
+    }
+    entries.sort((a, b) => compareHands(a.hand, b.hand));
+    const filtered = filter.maxHands === null ? entries : entries.slice(0, filter.maxHands);
+    const totals = recordTotals(filtered, e => e.player ? e.player.stack - e.player.startingStack : 0, e => e.hand.miniChanges?.[userId] ?? 0);
+    const opponents = opponentRecords(filtered, userId, filter, users);
+    const opponentOptions = [...opponentNames].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || a.id.localeCompare(b.id));
+    const matches = filtered.filter(e => !cursor || compareHands(e.hand, cursor) > 0);
     const page = matches.slice(0, count), last = page.at(-1);
-    return { hands: page.map(h => {
-      const p = h.players.find(p => p.id === userId), net = p ? p.stack - p.startingStack : 0, miniNet = h.miniChanges?.[userId] ?? 0;
+    return { hands: page.map(({ hand: h, player: p, context }) => {
+      const net = p ? p.stack - p.startingStack : 0, miniNet = h.miniChanges?.[userId] ?? 0;
       return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, bigBlind: handBigBlind(h), board: [...h.board], cards: p ? [...p.cards] : [null, null], participated: Boolean(p),
+        position: context.position, flopPlayers: context.flopPlayers, potType: context.potType, tableSize: context.tableSize,
         rabbit: this.rabbitFor(h, { summary: true }),
         net, miniNet, totalNet: net + miniNet, pot: (h.result?.pots ?? []).reduce((sum, pot) => sum + pot.amount, 0), bombPot: Boolean(h.bombPot), favorite: favoriteIds.has(h.id) };
-    }), totals, nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.at, id: last.id })).toString('base64url') : null };
+    }), totals, opponents, opponentOptions, nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.hand.at, id: last.hand.id })).toString('base64url') : null };
   }
   favoriteHand(userId, handId, favorite) {
     if (typeof favorite !== 'boolean') fail('收藏状态格式错误');

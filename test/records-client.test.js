@@ -17,14 +17,14 @@ function harness({dom=false}={}){
     const list=kind==='hands'?client.state.library:client.state.sessions,fields=['q','from','to'].map(name=>({name,value:list.filters?.[name]||'',type:name==='q'?'search':'date',selectionStart:2,selectionEnd:2,focus(){documentRef.activeElement=this;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}}));fields.namedItem=name=>fields.find(field=>field.name===name);
     const form={id:kind==='hands'?'hand-records-filter-form':'session-records-filter-form',dataset:{recordKind:kind,recordKey:records.recordFilterKey(list)},isConnected:true,elements:fields,contains:field=>fields.includes(field)};for(const field of fields)field.form=form;documentRef.currentForm=form;
   }
-  const context=vm.createContext({statsUI,records,formatHandBB,createRequestGuard,URLSearchParams,Date,Set,Map,
+  const context=vm.createContext({statsUI,records,formatHandBB,createRequestGuard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
     api(path){return new Promise((resolve,reject)=>calls.push({path,resolve,reject}));},document:dom?documentRef:undefined,app:{contains:()=>client.state.page!=='room'},render(){if(client.state.page==='hands'||client.state.page==='sessions')rebuild(client.state.page);},
     openModal(title,body,kind){client.state.modal={kind,title};modals.push({title,body,kind});if(kind==='hand-library')rebuild('hands');if(kind==='session-list')rebuild('sessions');},closeModal(){client.state.modal=null;},
     toast(message){toasts.push(message);},navigate(){assert.fail('table overlays must not navigate');},
     num:n=>String(n||0),signed:n=>`${n>0?'+':''}${n||0}`,profitClass:()=>'',fmtDate:String,cards:()=>'',card:()=>'',
     btn:(label,action,cls='',attrs='')=>`<button data-action="${action}" class="${cls}" ${attrs}>${label}</button>`,renderReplay(){},
   });
-  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary};'].join('\n'),context);
+  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary,handLibraryContent,applyRecordFilters,resetRecordFilters,setLibraryView,sortLibraryOpponents,selectLibraryOpponent};'].join('\n'),context);
   client=context.client;client.state.user={id:'me',name:'me'};client.state.page='hands';return {...client,calls,modals,toasts,events,document:documentRef};
 }
 test('custom dates and quick ranges use local day boundaries across timezone and calendar changes',()=>{
@@ -180,4 +180,94 @@ test('session records share BB thresholds while keeping starting-card controls o
   const query=records.recordQuery('sessions',state);assert.equal(query.get('result'),'lossOver');assert.equal(query.get('minBB'),'50.25');assert.equal(query.has('holeRanks'),false);
   const html=records.recordFilters('sessions',state);assert.match(html,/name="minBB"[^>]*value="50.25"/);assert.match(html,/按每桌大盲折算/);assert.doesNotMatch(html,/name="holeRank[12]"|起手牌条件/);
   for(const value of ['', '1.001', '-1'])assert.throws(()=>records.recordQuery('sessions',{filters:{result:'winOver',minBB:value}}),/BB 门槛/);
+});
+
+test('personal hand context filters serialize strictly and never leak into sessions or table history',()=>{
+  const filters={opponent:'friend_123-abc',position:'UTG+1',potType:'headsUp',tableSize:'short',maxHands:'500'},query=records.recordQuery('hands',{scope:'personal',filters});
+  for(const [key,value]of Object.entries(filters))assert.equal(query.get(key),value);
+  assert.equal(records.recordQuery('hands',{filters:{...filters,maxHands:100000}}).get('maxHands'),'100000');
+  for(const [key,values]of Object.entries({opponent:['../me','someone x','<img>',12],position:['button','BTN/SB',5],potType:['flop','',false],tableSize:['9','full-ring'],maxHands:['0','01','1.5','1e3','100001','',null,false]})){
+    for(const value of values)assert.throws(()=>records.recordQuery('hands',{filters:{...filters,[key]:value}}),undefined,`${key}: ${value}`);
+  }
+  const all=records.recordQuery('hands',{filters:records.defaultRecordFilters()});
+  for(const key of Object.keys(filters))assert.equal(all.has(key),false);
+  for(const [kind,scope]of [['hands','table'],['sessions','personal']]){
+    const separate=records.recordQuery(kind,{scope,filters});for(const key of Object.keys(filters))assert.equal(separate.has(key),false);
+    assert.doesNotMatch(records.recordFilters(kind,{scope,filters}),/name="(?:opponent|position|potType|tableSize|maxHands)"/);
+  }
+});
+
+test('personal advanced options start collapsed, escape opponent names and explain first-flop semantics',()=>{
+  const evil='<img src=x onerror=alert(1)>',plain=records.recordFilters('hands',{scope:'personal',filters:{},opponentOptions:[{id:'friend',name:evil}]});
+  assert.match(plain,/<details class="record-personal-options" data-record-disclosure="personal" >/);
+  assert.match(plain,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.doesNotMatch(plain,/<img/);
+  assert.match(plain,/本人未进入翻牌/);assert.match(plain,/3 人池后续变成 2 人/);assert.match(plain,/先匹配全部条件，再取最近手数/);assert.match(plain,/我的整手盈亏/);assert.match(plain,/含本手小游戏/);
+  const active=records.recordFilters('hands',{scope:'personal',filters:{opponent:'friend',position:'BTN',maxHands:'100'},opponentOptions:[{id:'friend',name:'牌友'}]});
+  assert.match(active,/data-record-disclosure="personal" open/);assert.match(active,/value="friend" selected/);assert.match(active,/对手：牌友/);assert.match(active,/最近 100 手/);
+  const draft=records.filterValues(new URLSearchParams({opponent:'friend',position:'CO',potType:'multiway',tableSize:'full',maxHands:'1000'}),{period:'7',holeRanks:'AK'});
+  assert.deepEqual({...draft,period:undefined},{...records.defaultRecordFilters(),period:undefined,holeRanks:'AK',opponent:'friend',position:'CO',potType:'multiway',tableSize:'full',maxHands:'1000'});assert.equal(draft.period,'7');
+});
+
+test('opponent report uses server aggregates, prevents summing rows and never reveals cards',()=>{
+  const rows=[{id:'one',name:'<img src=x>',hands:25,net:150,netBB:75,bbHands:25,wins:15,losses:9,even:1,headsUpHands:10,headsUpNet:80,headsUpNetBB:40,headsUpBBHands:8,lastAt:'2026-10-13T00:00:00Z',cards:['As','Ah']},{id:'two',name:'牌友乙',hands:10,net:-100,netBB:-50,bbHands:10,wins:2,losses:8,headsUpHands:0,headsUpBBHands:0}];
+  const data={rows,uniqueHands:28,net:80,netBB:40,bbHands:28},html=records.opponentRecords(data);
+  assert.match(html,/参与手数 · 已去重/);assert.match(html,/>28</);assert.match(html,/\+40 BB/);assert.match(html,/不等于直接从对方赢得，名单各行不可相加/);
+  assert.match(html,/单挑 BB 可折算 8 \/ 10 手/);assert.match(html,/可能包含其他玩家翻前留下的积分/);assert.match(html,/data-action="library-opponent" data-opponent="one"/);
+  assert.match(html,/&lt;img src=x&gt;/);assert.doesNotMatch(html,/<img|As|Ah|NaN|Infinity/);
+  const loss=records.opponentRecords(data,'loss');assert.ok(loss.indexOf('data-opponent="two"')<loss.indexOf('data-opponent="one"'));
+  const absent=records.opponentRecords({rows:[{id:'old',name:'旧记录',hands:3,bbHands:0,net:15,netBB:0,headsUpHands:2,headsUpBBHands:0,headsUpNet:8,headsUpNetBB:0}],uniqueHands:3,net:15,netBB:0,bbHands:0});
+  assert.match(absent,/— BB/);assert.match(absent,/3 手缺少大盲/);assert.match(absent,/单挑 BB 可折算 0 \/ 2 手/);
+});
+
+test('opponent totals and options ignore stale responses and paginating hands cannot duplicate records or multiply totals',async()=>{
+  const c=harness(),old=c.loadLibrary(true);c.state.library.filters={opponent:'new',position:'BTN',potType:'headsUp',maxHands:'100'};const fresh=c.loadLibrary(true);
+  const opponents={rows:[{id:'new',name:'新对手',hands:25,net:9,netBB:9,bbHands:25}],uniqueHands:25,net:9,netBB:9,bbHands:25};
+  c.calls[1].resolve({hands:[{id:'h1',position:'BTN',potType:'headsUp',flopPlayers:2,tableSize:6}],totals:{count:25},opponents,opponentOptions:[{id:'new',name:'新对手'}],nextCursor:'page2'});await fresh;
+  c.calls[0].resolve({hands:[{id:'old'}],opponents:{rows:[{id:'old',name:'旧对手'}]},opponentOptions:[{id:'old',name:'旧对手'}]});await old;
+  assert.equal(c.state.library.opponents.uniqueHands,25);assert.equal(c.state.library.opponentOptions[0].id,'new');assert.match(c.calls[1].path,/opponent=new/);assert.match(c.calls[1].path,/maxHands=100/);
+  const next=c.loadLibrary();c.calls[2].resolve({hands:[{id:'h1'},{id:'h2'},{id:'h2'}],totals:{count:25},opponents,opponentOptions:[{id:'new',name:'新对手'}]});await next;
+  assert.equal(c.state.library.hands.length,2);assert.equal(c.state.library.opponents.uniqueHands,25);assert.equal(c.state.library.opponents.rows.length,1);
+  c.setLibraryView('opponents');assert.match(c.handLibraryContent(),/我的对手战绩/);assert.doesNotMatch(c.handLibraryContent(),/data-action="library-more"/);
+  assert.match(c.handSummary(c.state.library.hands[0]),/context-position">BTN/);assert.match(c.handSummary(c.state.library.hands[0]),/翻后单挑/);
+});
+
+test('form applies all advanced fields together and clicking an opponent drills down without losing other filters',async()=>{
+  const c=harness();
+  const fields={room:'123456',opponent:'one',position:'BB',potType:'multiway',tableSize:'full',maxHands:'500',q:'hand'};
+  const form={dataset:{recordKind:'hands'},elements:Object.entries(fields).map(([name,value])=>({name,value}))};
+  const pending=c.applyRecordFilters(form);for(const [key,value]of Object.entries(fields))assert.equal(new URL('https://local'+c.calls[0].path).searchParams.get(key),value);
+  c.calls[0].resolve({hands:[],opponents:{rows:[{id:'two',name:'朋友二'}]},opponentOptions:[{id:'one',name:'朋友一'},{id:'two',name:'朋友二'}]});await pending;
+  c.setLibraryView('opponents');assert.equal(c.calls.length,1);c.sortLibraryOpponents('loss');assert.equal(c.state.library.opponentSort,'loss');
+  const selection=c.selectLibraryOpponent('two');assert.match(c.calls[1].path,/opponent=two/);assert.match(c.calls[1].path,/position=BB/);assert.match(c.calls[1].path,/potType=multiway/);assert.match(c.calls[1].path,/maxHands=500/);assert.equal(c.state.library.view,'hands');
+  c.calls[1].resolve({hands:[],opponents:{rows:[]},opponentOptions:[]});await selection;
+  await c.selectLibraryOpponent('unknown');assert.equal(c.calls.length,2);
+  c.state.library.favorites=true;c.setLibraryView('opponents');const reset=c.resetRecordFilters('hands');assert.equal(c.state.library.view,'opponents');assert.equal(c.state.library.room,'');assert.equal(c.state.library.favorites,false);
+  const query=new URL('https://local'+c.calls[2].path).searchParams;for(const key of ['room','opponent','position','potType','tableSize','maxHands','q','favorites'])assert.equal(query.has(key),false);
+  c.calls[2].resolve({hands:[],opponents:{rows:[]}});await reset;
+});
+
+test('context chips distinguish combined heads-up positions and never describe a spectator as a participant',()=>{
+  const chips=records.handContextChips({position:'BTN/SB',potType:'multiway',flopPlayers:3,tableSize:9});assert.match(chips,/BTN\/SB/);assert.match(chips,/翻后 3 人池/);assert.match(chips,/9 人发牌/);
+  assert.equal(records.handContextChips({participated:false,position:'BB',potType:'headsUp'}),'');
+  const unknown=records.handContextChips({position:'unknown',potType:'unknown',flopPlayers:null,tableSize:null});assert.match(unknown,/位置未记录/);assert.match(unknown,/翻后人数未记录/);assert.doesNotMatch(unknown,/null|NaN/);
+  const css=readFileSync(new URL('../public/hand-records.css',import.meta.url),'utf8');assert.match(css,/\.record-personal-fields\{grid-template-columns:minmax\(0,1fr\)/);assert.match(css,/\.opponent-list\{grid-template-columns:minmax\(0,1fr\)/);assert.match(css,/\.opponent-identity strong\{[^}]*overflow-wrap:anywhere/);
+});
+
+test('advanced disclosures and unsubmitted selections survive view redraws without becoming applied filters',()=>{
+  const state={scope:'personal',filters:records.defaultRecordFilters(),view:'hands'};
+  const make=(values,open)=>{const fields=Object.entries(values).map(([name,value])=>({name,value,type:'select-one'}));fields.namedItem=name=>fields.find(f=>f.name===name);const disclosure={dataset:{recordDisclosure:'personal'},open};return{dataset:{recordKey:records.recordFilterKey(state)},elements:fields,querySelectorAll:()=>[disclosure],contains:f=>fields.includes(f),disclosure};};
+  const original=make({opponent:'friend',position:'CO',potType:'multiway',tableSize:'short',maxHands:'1000'},true),draft=records.captureRecordDraft(original,state,null);
+  state.view='opponents';const fresh=make({opponent:'',position:'all',potType:'all',tableSize:'all',maxHands:'all'},false);records.restoreRecordDraft(fresh,state,draft);
+  assert.equal(fresh.elements.namedItem('opponent').value,'friend');assert.equal(fresh.elements.namedItem('maxHands').value,'1000');assert.equal(fresh.disclosure.open,true);assert.equal(state.filters.opponent,'');assert.equal(state.filters.maxHands,'all');
+});
+
+test('late opponent responses after identity invalidation cannot populate private names or statistics',async()=>{
+  const c=harness(),pending=c.loadLibrary(true);c.requests.invalidate();
+  c.calls[0].resolve({hands:[{id:'private-hand'}],totals:{count:100},opponents:{rows:[{id:'private-user',name:'private-name'}]},opponentOptions:[{id:'private-user',name:'private-name'}]});await pending;
+  assert.equal(c.state.library.hands.length,0);assert.equal(c.state.library.opponents,null);assert.equal(c.state.library.opponentOptions.length,0);
+});
+
+test('unconvertible BB rows stay after measured opponents in profit or loss ranking',()=>{
+  const data={rows:[{id:'unknown',name:'未知大盲',hands:100,bbHands:0,netBB:0},{id:'measured',name:'已记录',hands:10,bbHands:10,netBB:-50}]};
+  for(const sort of ['profit','loss']){const html=records.opponentRecords(data,sort);assert.ok(html.indexOf('data-opponent="measured"')<html.indexOf('data-opponent="unknown"'));}
 });

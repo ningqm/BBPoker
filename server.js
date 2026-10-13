@@ -25,6 +25,11 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   for (const [key, session] of Object.entries(store.data.sessions)) if (session.expiresAt <= Date.now()) delete store.data.sessions[key];
   // Preserve the active deck and a previously saved clock, including used time cards.
   for (const r of Object.values(store.data.rooms)) if (r.hand?.status === 'playing') {
+    if (r.hand.runout?.active) {
+      r.deadline = null;
+      if (!Number.isFinite(r.hand.runout.nextAt)) r.hand.runout.nextAt = Date.now() + 1800;
+      continue;
+    }
     if (!Number.isFinite(r.deadline) || r.deadline <= 0) r.deadline = Date.now() + r.settings.actionSeconds * 1000;
   }
   store.save();
@@ -286,7 +291,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           closeInvalidStreams(); return send(res, 200, { ok: true });
         }
         if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
-        if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id));
+        if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id, Object.fromEntries(url.searchParams)));
         if (path === '/api/sessions' && req.method === 'GET') return send(res, 200, service.sessions(user.id, Object.fromEntries(url.searchParams)));
         const sessionMatch = /^\/api\/sessions\/([0-9]{6})$/.exec(path);
         if (sessionMatch && req.method === 'GET') return send(res, 200, service.sessionFor(user.id, sessionMatch[1]));

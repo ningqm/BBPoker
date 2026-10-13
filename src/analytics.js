@@ -1,4 +1,4 @@
-import { recordFilters, squidSettlementMap, squidSettlementKey, handMiniNet } from './records.js';
+import { recordFilters, squidSettlementMap, squidSettlementKey, handMiniNet, handBigBlind, amountInBB, ledgerBlindLookup } from './records.js';
 
 const DAY = 86400000;
 const ACTIONS = new Set(['fold', 'check', 'call', 'raise', 'allin']);
@@ -7,6 +7,7 @@ const fail = message => { throw Object.assign(new Error(message), { status: 400 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const round = value => Math.round(value * 100) / 100;
 const rate = (count, opportunities) => ({ count, opportunities, percent: opportunities ? Math.round(count / opportunities * 1000) / 10 : null });
+const addBB = (a, b) => a === null || b === null ? null : a + b;
 
 /** Date and room filters are applied before the most-recent-hand limit. */
 export function analyticsFilters(input = {}, now = Date.now()) {
@@ -113,10 +114,11 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     && inRange(hand) && hand.players.some(player => player.id === userId))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || String(b.id).localeCompare(String(a.id)));
   const hands = (filter.maxHands ? matched.slice(0, filter.maxHands) : matched).reverse();
-  const squid = squidSettlementMap(db.ledger), selectedSquid = new Map();
+  const squid = squidSettlementMap(db.ledger), selectedSquid = new Map(), ledgerBB = ledgerBlindLookup(db);
   for (const hand of hands) if (hand.squidSettlementId) selectedSquid.set(squidSettlementKey(hand.roomCode, hand.squidSettlementId, userId), hand.id);
   const totals = { hands: hands.length, wins: 0, winHands: 0, lossHands: 0, evenHands: 0,
-    net: 0, holdemNet: 0, miniNet: 0, bbNet: 0, bbPer100: null, preflopHands: 0, showdowns: 0 };
+    net: 0, holdemNet: 0, miniNet: 0, bbNet: 0, bbPer100: null, preflopHands: 0, showdowns: 0,
+    netBB: 0, holdemNetBB: 0, miniNetBB: 0 };
   const counters = { vpip: 0, pfr: 0, rfi: 0, rfiOpportunity: 0, threeBet: 0, threeBetOpportunity: 0,
     fourBet: 0, fourBetOpportunity: 0, fiveBet: 0, fiveBetOpportunity: 0, flopSeen: 0, wonShowdown: 0 };
   const events = [], allInRows = [];
@@ -126,16 +128,17 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
   db.ledger.forEach((row, i) => { if (row.playerId === userId && row.type === 'holdem') settlementOrder.set(`${row.roomCode}/${row.note}`, i); });
   for (const hand of hands) {
     const player = hand.players.find(p => p.id === userId), holdemNet = player.stack - player.startingStack;
-    const miniNet = handMiniNet(hand, userId, squid);
+    const miniNet = handMiniNet(hand, userId, squid), bigBlind = handBigBlind(hand);
     totals[holdemNet > 0 ? 'winHands' : holdemNet < 0 ? 'lossHands' : 'evenHands']++;
     if ((hand.result?.payouts?.[userId] ?? 0) > 0) totals.wins++;
     const showdown = Boolean(hand.result?.showdown && !player.folded);
     if (showdown) { totals.showdowns++; if ((hand.result.payouts?.[userId] ?? 0) > 0) counters.wonShowdown++; }
-    if (finite(hand.bigBlind) && hand.bigBlind > 0) { totals.bbNet += holdemNet / hand.bigBlind; bbHands++; }
+    if (bigBlind !== null) { totals.bbNet += holdemNet / bigBlind; bbHands++; }
     const tendency = handTendencies(hand, userId);
     for (const key of Object.keys(counters)) if (tendency[key]) counters[key]++;
     if (!hand.bombPot) totals.preflopHands++;
     events.push({ at: hand.at, handId: hand.id, roomCode: hand.roomCode, holdemDelta: holdemNet, miniDelta: miniNet,
+      holdemDeltaBB: amountInBB(holdemNet, bigBlind), miniDeltaBB: miniNet === 0 ? 0 : amountInBB(miniNet, bigBlind),
       order: settlementOrder.get(`${hand.roomCode}/第 ${hand.number} 手德州结算`) ?? -1 });
 
     const lock = hand.allInLock;
@@ -147,6 +150,7 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     if (!lock || !finite(expected?.expectedNet)) continue;
     allInRows.push({ id: hand.id, roomCode: hand.roomCode, roomName: db.rooms?.[hand.roomCode]?.name ?? hand.roomName ?? '朋友局',
       number: hand.number, at: hand.at, actualNet: holdemNet, expectedNet: expected.expectedNet,
+      bigBlind, actualNetBB: amountInBB(holdemNet, bigBlind), expectedNetBB: amountInBB(expected.expectedNet, bigBlind), differenceBB: amountInBB(holdemNet - expected.expectedNet, bigBlind),
       difference: holdemNet - expected.expectedNet, method: equity.method, board: [...lock.board], street: lock.street,
       equity: expected.equity, samples: equity.samples, error95Pct: equity.error95Pct });
   }
@@ -155,7 +159,8 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
   let adjustmentCount = 0;
   if (!filter.maxHands) db.ledger.forEach((row, order) => {
     if (row.playerId === userId && row.type === 'mushroomRefund' && (!filter.room || row.roomCode === filter.room) && inRange(row)) {
-      events.push({ at: row.at, handId: null, roomCode: row.roomCode, holdemDelta: 0, miniDelta: row.amount, order, adjustment: '蘑菇池退款' }); adjustmentCount++;
+      events.push({ at: row.at, handId: null, roomCode: row.roomCode, holdemDelta: 0, miniDelta: row.amount,
+        holdemDeltaBB: 0, miniDeltaBB: row.amount === 0 ? 0 : amountInBB(row.amount, ledgerBB(row)), order, adjustment: '蘑菇池退款' }); adjustmentCount++;
     }
   });
   let squidSettlementCount = 0, standaloneSquidSettlementCount = 0;
@@ -171,6 +176,7 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
       || (filter.maxHands && !selectedSquid.has(key))) continue;
     const handId = mirroredSquid.get(key) ?? null;
     events.push({ at: row.at, handId, roomCode: row.roomCode, holdemDelta: 0, miniDelta: row.amount,
+      holdemDeltaBB: 0, miniDeltaBB: row.amount === 0 ? 0 : amountInBB(row.amount, ledgerBB(row)),
       order: ledgerOrder.get(row), adjustment: '鱿鱼结算' });
     squidSettlementCount++;
     if (!handId) standaloneSquidSettlementCount++;
@@ -178,14 +184,21 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
   events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.order - b.order);
   const curve = events.map(event => {
     totals.holdemNet += event.holdemDelta; totals.miniNet += event.miniDelta;
+    totals.holdemNetBB = addBB(totals.holdemNetBB, event.holdemDeltaBB); totals.miniNetBB = addBB(totals.miniNetBB, event.miniDeltaBB);
     return { at: event.at, handId: event.handId, net: totals.holdemNet + totals.miniNet,
+      netBB: addBB(totals.holdemNetBB, totals.miniNetBB), holdemNetBB: totals.holdemNetBB, miniNetBB: totals.miniNetBB,
       holdemNet: totals.holdemNet, miniNet: totals.miniNet, ...(event.adjustment ? { adjustment: event.adjustment } : {}) };
   });
   totals.net = totals.holdemNet + totals.miniNet;
+  totals.netBB = addBB(totals.holdemNetBB, totals.miniNetBB); totals.bbHands = bbHands;
+  totals.bbRecords = events.length; totals.bbKnownRecords = events.filter(e => e.holdemDeltaBB !== null && e.miniDeltaBB !== null).length;
+  totals.bbComplete = totals.bbKnownRecords === totals.bbRecords;
   totals.bbPer100 = bbHands ? round(totals.bbNet / bbHands * 100) : null; totals.bbNet = round(totals.bbNet);
-  let actual = 0, expected = 0;
+  let actual = 0, expected = 0, actualBB = 0, expectedBB = 0;
   const allInCurve = allInRows.map(row => { actual += row.actualNet; expected += row.expectedNet;
-    return { at: row.at, handId: row.id, actual: round(actual), expected: round(expected), difference: round(actual - expected) }; });
+    actualBB = addBB(actualBB, row.actualNetBB); expectedBB = addBB(expectedBB, row.expectedNetBB);
+    return { at: row.at, handId: row.id, actual: round(actual), expected: round(expected), difference: round(actual - expected),
+      actualBB, expectedBB, differenceBB: actualBB === null || expectedBB === null ? null : actualBB - expectedBB }; });
   const metrics = { winRate: rate(totals.winHands, hands.length), vpip: rate(counters.vpip, totals.preflopHands), pfr: rate(counters.pfr, totals.preflopHands),
     rfi: rate(counters.rfi, counters.rfiOpportunity), threeBet: rate(counters.threeBet, counters.threeBetOpportunity),
     fourBet: rate(counters.fourBet, counters.fourBetOpportunity), fiveBet: rate(counters.fiveBet, counters.fiveBetOpportunity),
@@ -194,6 +207,7 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     && (filter.start === -Infinity && filter.end === Infinity || inRange(row)));
   return { ...totals, metrics, vpip: metrics.vpip.percent ?? 0, pfr: metrics.pfr.percent ?? 0,
     totalBuyIn: ledger.filter(row => row.type === 'buyin').reduce((sum, row) => sum + row.amount, 0),
+    totalBuyInBB: ledger.filter(row => row.type === 'buyin').reduce((sum, row) => addBB(sum, amountInBB(row.amount, ledgerBB(row))), 0),
     sessions: filter.maxHands || filter.start !== -Infinity || filter.end !== Infinity ? new Set(events.map(event => event.roomCode)).size
       : Object.values(db.rooms ?? {}).filter(room => (!filter.room || room.code === filter.room) && room.members?.[userId]?.totalBuyIn > 0).length,
     curve: boundedCurve(curve), matchedHands: matched.length, adjustmentCount, squidSettlementCount, standaloneSquidSettlementCount,
@@ -203,6 +217,9 @@ export function aggregateAnalytics(db, userId, input = {}, now = Date.now()) {
     allIn: { count: allInRows.length, eligibleCount, unavailableCount: eligibleCount - allInRows.length,
       estimatedCount: allInRows.filter(row => row.method !== 'exact').length,
       actualNet: allInRows.length ? round(actual) : null, expectedNet: allInRows.length ? round(expected) : null,
+      actualNetBB: allInRows.length ? actualBB : null, expectedNetBB: allInRows.length ? expectedBB : null,
+      differenceBB: allInRows.length && actualBB !== null && expectedBB !== null ? actualBB - expectedBB : null,
+      bbHands: allInRows.filter(row => row.bigBlind !== null).length, bbComplete: allInRows.every(row => row.bigBlind !== null),
       difference: allInRows.length ? round(actual - expected) : null, curve: boundedCurve(allInCurve),
       hands: allInRows.slice(-50).reverse().map(row => ({ ...row, expectedNet: round(row.expectedNet), difference: round(row.difference) })) } };
 }

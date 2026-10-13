@@ -1,4 +1,6 @@
 // Read-only views over settled records. No cards, invites, decks or credentials.
+import { normalizeStartingHandFilter, matchesStartingHand } from '../public/starting-hands.js';
+import { avatarImageId } from './avatar.js';
 const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
 export const compareRecords = (a, b) => a.at === b.at ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : a.at < b.at ? 1 : -1;
 const optional = value => value === undefined || value === null || value === '';
@@ -17,11 +19,25 @@ function boundary(value, end = false) {
   return time + (end && value.length === 10 ? 86400000 - 1 : 0);
 }
 export function recordFilters(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail('牌谱筛选无效');
   const start = boundary(input.from), end = boundary(input.to, true);
   if (start > end) fail('开始日期不能晚于结束日期');
   const result = choice(input.result, ['all', 'win', 'loss', 'even', 'winOver', 'lossOver'], '盈亏筛选');
   const minBB = thresholdBB(input.minBB, result === 'winOver' || result === 'lossOver');
-  const holeRanks = startingRanks(input.holeRanks), holeType = choice(input.holeType, ['all', 'pair', 'suited', 'offsuit'], '起手牌类型');
+  const holeRanks = startingRanks(input.holeRanks);
+  // Old clients sent one unordered rank string. New per-card rank fields take
+  // precedence; never secretly intersect them with an obsolete legacy value.
+  const explicitStartingHand = (!optional(input.holePreset) && input.holePreset !== 'all')
+    || ['holeRank1', 'holeRank2', 'holeSuit1', 'holeSuit2'].some(key => Object.hasOwn(input, key));
+  const startingHand = normalizeStartingHandFilter(explicitStartingHand ? input
+    : { ...input, holeRank1: holeRanks[0] ?? '', holeRank2: holeRanks[1] ?? '' });
+  let handNumber = null;
+  if (!optional(input.handNumber)) {
+    const value = input.handNumber;
+    if (!['string', 'number'].includes(typeof value) || (typeof value === 'string' && !/^\d+$/.test(value))
+      || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) fail('手牌编号需要是正整数');
+    handNumber = Number(value);
+  }
   const type = choice(input.type, ['all', 'holdem', 'bomb'], '牌局类型');
   const status = choice(input.status, ['all', 'active', 'closed'], '对局状态');
   const position = choice(input.position, ['all', 'BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'LJ', 'HJ', 'CO', 'unknown'], '位置筛选');
@@ -36,7 +52,7 @@ export function recordFilters(input = {}) {
   }
   if (!optional(input.q) && (typeof input.q !== 'string' || [...input.q].length > 80)) fail('搜索内容最多 80 字');
   const q = (input.q || '').trim().toLocaleLowerCase('zh-CN');
-  return { start, end, result, minBB, holeRanks, holeType, type, status, position, potType, tableSize, opponent, maxHands, q };
+  return { start, end, result, minBB, holeRanks, ...startingHand, handNumber, type, status, position, potType, tableSize, opponent, maxHands, q };
 }
 function thresholdBB(value, required = false) {
   if (optional(value)) { if (required) fail('请输入盈亏筛选的 BB 阈值'); return null; }
@@ -56,15 +72,49 @@ export function handBigBlind(hand) {
   const bb = hand.settings?.bigBlind ?? hand.bigBlind;
   return Number.isSafeInteger(bb) && bb > 0 ? bb : null;
 }
+export const amountInBB = (amount, bb) => Number.isFinite(amount) && Number.isSafeInteger(bb) && bb > 0 ? amount / bb : null;
+const addBB = (a, b) => a === null || b === null ? null : a + b;
+/** Sum already-normalized historical amounts, never divide a mixed-stake sum.
+ * Null remains null once coverage is incomplete; zero records is a known zero.
+ */
+export function recordBBTotals(rows, values) {
+  const totals = { net: 0, holdemNet: 0, miniNet: 0, records: rows.length, knownRecords: 0, complete: true };
+  for (const row of rows) {
+    const { holdemNet, miniNet } = values(row), known = Number.isFinite(holdemNet) && Number.isFinite(miniNet);
+    totals.holdemNet = addBB(totals.holdemNet, Number.isFinite(holdemNet) ? holdemNet : null);
+    totals.miniNet = addBB(totals.miniNet, Number.isFinite(miniNet) ? miniNet : null);
+    if (known) totals.knownRecords++;
+  }
+  totals.net = addBB(totals.holdemNet, totals.miniNet); totals.complete = totals.knownRecords === totals.records;
+  return totals;
+}
+/** Historical ledger amounts use their own snapshot or same-room archive
+ * evidence. Current room settings are never a substitute for a missing blind.
+ * Build indexes once per request, including records outside its date filter.
+ */
+export function ledgerBlindLookup(db) {
+  const hands = new Map(), squidHands = new Map(), rooms = new Map();
+  for (const hand of db.hands ?? []) if (hand.status === 'complete') {
+    const bb = handBigBlind(hand); hands.set(`${hand.roomCode}/${hand.id}`, bb);
+    if (hand.squidSettlementId) squidHands.set(`${hand.roomCode}/${hand.squidSettlementId}`, bb);
+    if (!rooms.has(hand.roomCode)) rooms.set(hand.roomCode, bb);
+    else if (rooms.get(hand.roomCode) !== bb) rooms.set(hand.roomCode, null);
+  }
+  return row => {
+    if (Object.hasOwn(row, 'bigBlind')) return Number.isSafeInteger(row.bigBlind) && row.bigBlind > 0 ? row.bigBlind : null;
+    // Buy-ins may predate the first hand and a pre-start settings change.
+    if (row.type === 'buyin' || row.type === 'cashout') return null;
+    const byHand = `${row.roomCode}/${row.handId}`, byRound = `${row.roomCode}/${row.roundSettlementId}`;
+    if (row.handId && hands.has(byHand)) return hands.get(byHand);
+    if (row.roundSettlementId && squidHands.has(byRound)) return squidHands.get(byRound);
+    return rooms.get(row.roomCode) ?? null;
+  };
+}
 /** Only the viewer's own dealt cards may be passed here, never public or peer cards. */
 export function holeMatches(cards, filter) {
-  if (!filter.holeRanks && filter.holeType === 'all') return true;
-  if (!Array.isArray(cards) || cards.length !== 2 || !cards.every(card => typeof card === 'string' && /^[23456789TJQKA][cdhs]$/.test(card)) || cards[0] === cards[1]) return false;
-  const pair = cards[0][0] === cards[1][0], suited = cards[0][1] === cards[1][1];
-  if (filter.holeType === 'pair' && !pair || filter.holeType === 'suited' && (pair || !suited) || filter.holeType === 'offsuit' && (pair || suited)) return false;
-  if (!filter.holeRanks) return true;
-  const ranks = cards.map(card => card[0]);
-  return filter.holeRanks.length === 1 ? ranks.includes(filter.holeRanks) : startingRanks(ranks.join('')) === filter.holeRanks;
+  if (filter.holePreset === 'all' && filter.holeType === 'all'
+    && !filter.holeRank1 && !filter.holeRank2 && !filter.holeSuit1 && !filter.holeSuit2) return true;
+  return matchesStartingHand(cards, filter);
 }
 export function resultMatches(net, result, minBB = null, bigBlind = null) {
   if (result === 'winOver' || result === 'lossOver') {
@@ -105,7 +155,11 @@ export function opponentRecords(entries, userId, filter, users = new Map()) {
     if (['headsUp', 'multiway'].includes(filter.potType)) opponents = opponents.filter(id => context.flopPlayerIds.includes(id));
     if (filter.opponent) opponents = opponents.filter(id => id === filter.opponent);
     for (const id of opponents) {
-      if (!rows.has(id)) rows.set(id, { id, name: users.get(id)?.name ?? hand.players.find(p => p.id === id)?.name ?? '朋友',
+      const peer = users.get(id);
+      // Explicit public appearance only; never spread an account into reports.
+      if (!rows.has(id)) rows.set(id, { id, name: peer?.name ?? hand.players.find(p => p.id === id)?.name ?? '朋友',
+        avatar: Number.isInteger(peer?.avatar) && peer.avatar >= 0 && peer.avatar < 12 ? peer.avatar : 0,
+        avatarImage: avatarImageId(peer?.avatarImage),
         hands: 0, net: 0, netBB: 0, bbHands: 0, wins: 0, losses: 0, even: 0,
         headsUpHands: 0, headsUpNet: 0, headsUpNetBB: 0, headsUpBBHands: 0, lastAt: hand.at });
       const row = rows.get(id);
@@ -157,25 +211,39 @@ export function pageRecords(rows, { before, limit = '20' } = {}) {
 export function sessionRecord(db, room, userId, grouped = {}) {
   const hands = grouped.hands ?? db.hands.filter(h => h.roomCode === room.code && h.status === 'complete');
   const settlements = grouped.settlements ?? squidSettlementMap(db.ledger.filter(row => row.roomCode === room.code));
-  const rows = new Map(), users = grouped.users ?? new Map(Object.values(db.users).map(user => [user.id, user]));
+  const rows = new Map(), users = grouped.users ?? new Map(Object.values(db.users).map(user => [user.id, user])), ledgerBB = grouped.ledgerBB ?? ledgerBlindLookup(db);
   const player = id => {
-    if (!rows.has(id)) rows.set(id, { id, name: users.get(id)?.name ?? '朋友', hands: 0, holdemNet: 0, miniNet: 0, net: 0, totalBuyIn: room.members[id]?.totalBuyIn ?? 0 });
+    if (!rows.has(id)) rows.set(id, { id, name: users.get(id)?.name ?? '朋友', hands: 0, holdemNet: 0, miniNet: 0, net: 0, totalBuyIn: room.members[id]?.totalBuyIn ?? 0,
+      holdemNetBB: 0, miniNetBB: 0, bbHands: 0 });
     return rows.get(id);
   };
   for (const member of Object.values(room.members)) if (member.totalBuyIn > 0) player(member.id);
   for (const hand of hands) for (const p of hand.players) {
     const row = player(p.id); if (!users.has(p.id)) row.name = p.name ?? '朋友';
-    row.hands++; row.holdemNet += p.stack - p.startingStack; row.miniNet += handMiniNet(hand, p.id, settlements);
+    const net = p.stack - p.startingStack, mini = handMiniNet(hand, p.id, settlements), bb = handBigBlind(hand);
+    row.hands++; row.holdemNet += net; row.miniNet += mini;
+    row.holdemNetBB = addBB(row.holdemNetBB, amountInBB(net, bb));
+    row.miniNetBB = addBB(row.miniNetBB, mini === 0 ? 0 : amountInBB(mini, bb));
+    if (bb !== null) row.bbHands++;
   }
-  for (const settlement of settlements.values()) player(settlement.playerId).miniNet += settlement.amount;
+  for (const settlement of settlements.values()) { const row = player(settlement.playerId); row.miniNet += settlement.amount;
+    row.miniNetBB = addBB(row.miniNetBB, settlement.amount === 0 ? 0 : amountInBB(settlement.amount, ledgerBB(settlement))); }
   const refunds = grouped.refunds ?? db.ledger.filter(l => l.roomCode === room.code && l.type === 'mushroomRefund');
-  for (const refund of refunds) player(refund.playerId).miniNet += refund.amount;
-  const players = [...rows.values()].map(row => ({ ...row, net: row.holdemNet + row.miniNet })).sort((a, b) => b.net - a.net || a.id.localeCompare(b.id));
+  for (const refund of refunds) { const row = player(refund.playerId); row.miniNet += refund.amount;
+    row.miniNetBB = addBB(row.miniNetBB, refund.amount === 0 ? 0 : amountInBB(refund.amount, ledgerBB(refund))); }
+  const buyins = new Map();
+  for (const entry of grouped.buyins ?? db.ledger.filter(row => row.roomCode === room.code && row.type === 'buyin')) {
+    const row = buyins.get(entry.playerId) ?? { amount: 0, bb: 0 }; row.amount += entry.amount; row.bb = addBB(row.bb, amountInBB(entry.amount, ledgerBB(entry))); buyins.set(entry.playerId, row);
+  }
+  const players = [...rows.values()].map(row => ({ ...row, net: row.holdemNet + row.miniNet,
+    totalBuyInBB: row.totalBuyIn === 0 ? 0 : buyins.get(row.id)?.amount === row.totalBuyIn ? buyins.get(row.id).bb : null,
+    netBB: addBB(row.holdemNetBB, row.miniNetBB), bbComplete: row.holdemNetBB !== null && row.miniNetBB !== null })).sort((a, b) => b.net - a.net || a.id.localeCompare(b.id));
   const me = players.find(p => p.id === userId);
   return { code: room.code, name: room.name, status: room.status === 'closed' ? 'closed' : 'active',
     at: room.startedAt != null ? new Date(room.startedAt).toISOString() : room.createdAt, closedAt: room.closedAt ?? null,
     smallBlind: room.settings.smallBlind, bigBlind: room.settings.bigBlind, handCount: hands.length, playerCount: players.length,
     meNet: me?.net ?? 0, meHoldemNet: me?.holdemNet ?? 0, meMiniNet: me?.miniNet ?? 0,
+    meNetBB: me ? me.netBB : 0, meHoldemNetBB: me ? me.holdemNetBB : 0, meMiniNetBB: me ? me.miniNetBB : 0,
     handInProgress: room.hand?.status === 'playing', adjustments: refunds.length > 0,
     squidSettlementCount: [...settlements.values()].filter(row => row.playerId === userId).length, players };
 }
@@ -183,15 +251,17 @@ export function sessionLibrary(db, userId, input = {}) {
   const filter = recordFilters(input);
   const rooms = Object.values(db.rooms).filter(r => Boolean(r.members[userId]) && (!input.room || r.code === input.room));
   const users = new Map(Object.values(db.users).map(user => [user.id, user]));
-  const grouped = new Map(rooms.map(room => [room.code, { hands: [], refunds: [], settlements: new Map(), users }]));
+  const ledgerBB = ledgerBlindLookup(db), grouped = new Map(rooms.map(room => [room.code, { hands: [], refunds: [], buyins: [], settlements: new Map(), users, ledgerBB }]));
   for (const hand of db.hands) if (hand.status === 'complete' && grouped.has(hand.roomCode)) grouped.get(hand.roomCode).hands.push(hand);
   for (const row of db.ledger) if (row.type === 'mushroomRefund' && grouped.has(row.roomCode)) grouped.get(row.roomCode).refunds.push(row);
+  for (const row of db.ledger) if (row.type === 'buyin' && grouped.has(row.roomCode)) grouped.get(row.roomCode).buyins.push(row);
   for (const [key, row] of squidSettlementMap(db.ledger)) if (grouped.has(row.roomCode)) grouped.get(row.roomCode).settlements.set(key, row);
   const sessions = rooms.map(room => sessionRecord(db, room, userId, grouped.get(room.code)))
     .filter(row => (row.handCount > 0 || row.playerCount > 0) && Date.parse(row.at) >= filter.start && Date.parse(row.at) <= filter.end
       && resultMatches(row.meNet, filter.result, filter.minBB, row.bigBlind) && (filter.status === 'all' || row.status === filter.status)
       && (!filter.q || `${row.name} ${row.code}`.toLocaleLowerCase('zh-CN').includes(filter.q)));
   const totals = recordTotals(sessions, r => r.meHoldemNet, r => r.meMiniNet);
+  totals.bb = recordBBTotals(sessions, r => ({ holdemNet: r.meHoldemNetBB, miniNet: r.meMiniNetBB }));
   const { page, nextCursor } = pageRecords(sessions.map(s => ({ ...s, id: s.code })), input);
   return { sessions: page.map(({ players, id, adjustments, ...summary }) => summary), totals, nextCursor };
 }

@@ -46,8 +46,22 @@ function expectedVisibleCards(hand, viewerId) {
   const start = order.length * 2;
   const boardPositions = [start + 1, start + 2, start + 3, start + 5, start + 7];
   hand.board.forEach((card, i) => expected.set(boardPositions[i], card));
+  const rabbitPositions = new Set();
+  if (hand.rabbit != null) {
+    const rabbit = hand.rabbit;
+    requireValid(record(rabbit) && Number.isSafeInteger(rabbit.originalCount) &&
+      rabbit.originalCount === hand.board.length && [0, 3, 4].includes(rabbit.originalCount), '补看原公共牌数量无效');
+    requireValid(Array.isArray(rabbit.board) && rabbit.board.length >= rabbit.originalCount &&
+      rabbit.board.length <= 5 && rabbit.board.every(c => typeof c === 'string' && CARD.test(c)), '补看公共牌格式无效');
+    requireValid(hand.board.every((card, i) => rabbit.board[i] === card), '补看公共牌与真实公共牌前缀不一致');
+    requireValid(Array.isArray(rabbit.proofs), '补看证明列表缺失');
+    for (let i = rabbit.originalCount; i < rabbit.board.length; i++) {
+      rabbitPositions.add(boardPositions[i]);
+      expected.set(boardPositions[i], rabbit.board[i]);
+    }
+  }
   requireValid(new Set(expected.values()).size === expected.size, '可见牌包含重复牌');
-  return expected;
+  return { expected, rabbitPositions };
 }
 
 /** Verify current export format. No card values, salts or personal IDs are printed. */
@@ -65,12 +79,15 @@ export function verifyExport(data) {
       requireValid(hand.verificationVersion === VERIFICATION_VERSION, '不支持的承诺验证版本');
       requireValid(typeof hand.commitment === 'string' && HEX.test(hand.commitment), '承诺根格式无效');
       requireValid(Array.isArray(hand.proofs), '证明列表缺失');
-      const expected = expectedVisibleCards(hand, data.viewerId);
+      const { expected, rabbitPositions } = expectedVisibleCards(hand, data.viewerId);
       const positions = new Set();
-      for (const proof of hand.proofs) {
+      const proofs = hand.proofs.map(proof => ({ proof, isRabbit: false }));
+      proofs.push(...(hand.rabbit?.proofs || []).map(proof => ({ proof, isRabbit: true })));
+      for (const { proof, isRabbit } of proofs) {
         requireValid(record(proof) && Number.isInteger(proof.position) && proof.position >= 0 && proof.position < 52, '证明的牌位置无效');
         requireValid(!positions.has(proof.position), '证明的牌位置重复');
         positions.add(proof.position);
+        requireValid(isRabbit === rabbitPositions.has(proof.position), '证明不属于对应的已公开牌范围');
         requireValid(typeof proof.card === 'string' && CARD.test(proof.card) && typeof proof.salt === 'string' && HEX.test(proof.salt), '证明的牌面或盐值格式无效');
         requireValid(expected.has(proof.position) && expected.get(proof.position) === proof.card, '证明与牌谱可见牌的位置或内容不一致');
         requireValid(Array.isArray(proof.siblings) && proof.siblings.length === 6, '证明路径必须为 6 层');

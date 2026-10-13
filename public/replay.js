@@ -1,5 +1,5 @@
 // Replay only a server-filtered completed hand. Never evaluate or infer cards.
-const paid = new Set(['ante', 'smallBlind', 'bigBlind', 'call', 'raise', 'allin']);
+const paid = new Set(['ante', 'smallBlind', 'bigBlind', 'entryBlind', 'deadBlind', 'call', 'raise', 'allin']);
 const streets = new Set(['preflop', 'flop', 'turn', 'river']);
 function validHand(hand) {
   if (!hand || 'deck' in hand || 'audit' in hand || !Array.isArray(hand.players) || !Array.isArray(hand.log)) throw new Error('只支持已过滤的历史牌谱');
@@ -71,7 +71,7 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
       const chips = amount(event.amount);
       if (chips > p.stack) throw new Error('牌谱带入与下注不一致');
       p.stack -= chips; p.contributed += chips; pot += chips;
-      if (event.type !== 'ante') p.bet += chips;
+      if (event.type !== 'ante' && event.type !== 'deadBlind') p.bet += chips;
       p.lastAction = event.type; p.allIn = p.stack === 0;
     } else if (event.type === 'refund') {
       if (!p) throw new Error('牌谱退回玩家不存在');

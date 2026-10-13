@@ -21,26 +21,41 @@ export function lobbyTime(endsAt, now = Date.now()) {
   return minutes ? `剩余 ${minutes} 分钟` : '已到时 · 等待收尾';
 }
 
-// A hand keeps its entry-time squid round even if someone reconnects mid-hand.
+// A hand keeps its entry-time squid round, including an older ordinary hand
+// restored during a version upgrade. Display never changes settlement eligibility.
 export function squidMode(room) {
   const squid = room.mini?.squid;
   if (!squid?.active || room.status === 'closed') return null;
-  const paused = Boolean(squid.paused), playing = room.hand?.status === 'playing';
-  const round = Number(squid.round) || 0, hand = room.hand;
-  const countsForSquid = Boolean(hand && (Object.hasOwn(hand, 'squidRound')
-    ? Number(hand.squidRound) > 0 && Number(hand.squidRound) === round
-    : !paused));
+  const playing = room.hand?.status === 'playing', round = Number(squid.round) || 0;
+  const countsForSquid = Boolean(room.hand && (Object.hasOwn(room.hand, 'squidRound')
+    ? Number(room.hand.squidRound) > 0 && Number(room.hand.squidRound) === round : true));
   const ordinaryHand = playing && !countsForSquid;
   const waitingAtExpiry = room.expiryMode === 'wait-squid';
-  const label = waitingAtExpiry ? playing ? countsForSquid ? '本手仍计鱿鱼 · 结束后等待恢复' : '本手普通德州 · 结束后等待原轮恢复'
-    : '原轮鱿鱼待恢复 · 期间不开新手'
-    : paused ? playing && countsForSquid ? '本手仍计鱿鱼 · 下手先打普通桌'
-    : ordinaryHand ? '鱿鱼暂停 · 本手普通德州' : '鱿鱼暂停 · 在线玩家继续'
-    : ordinaryHand ? '本手普通德州 · 下一手恢复鱿鱼' : '';
-  const note = waitingAtExpiry ? '牌桌已到时，当前手打完后不再开启普通手。原轮保留并等待恢复；等待窗口内恢复就继续原轮，否则按现有标记结算散桌。'
-    : paused ? '原轮与标记保留。在线玩家可继续普通德州，普通手不获得鱿鱼标记；必要参与者回来后，从下一手恢复原轮。'
-    : ordinaryHand ? '本手不获得鱿鱼标记，打完后恢复原轮；新加入者仍需等下一轮鱿鱼。' : '';
-  return { paused, playing, round, countsForSquid, ordinaryHand, waitingAtExpiry, label, note };
+  const blocked = Boolean(squid.blockerSince), settlingAbsentees = Boolean(squid.absentSettlementAt);
+  const label = settlingAbsentees ? '本轮即将按现有标记结算' : waitingAtExpiry ? playing ? '已到时 · 本手结束后等待原轮继续' : '原轮鱿鱼等待玩家 · 期间不开新手'
+    : ordinaryHand ? '本手普通德州 · 下一手继续原轮鱿鱼'
+    : blocked ? playing ? '本手仍计鱿鱼 · 结束后等待玩家' : '原轮鱿鱼等待玩家' : '';
+  const note = settlingAbsentees ? '可继续的原轮玩家均已有标记。等待片刻后按现有标记结轮；未获标者及时回来并满足参与条件，仍可继续原轮。' : waitingAtExpiry ? '牌桌已到时，可参与的原轮玩家不足两人。等待窗口内恢复就继续原轮，否则按现有标记结算散桌。'
+    : ordinaryHand ? '本手沿用发牌时的玩法，不获得鱿鱼标记；下一手按原名单继续，新人等下一轮。'
+    : blocked ? '可参与的原轮玩家不足两人，暂不开新手。名单、标记和预留保留，回来后可继续本轮。'
+    : '缺席者不发新牌、不持续扣盲，已有标记与预留保留。其余原轮玩家继续；新人等下一轮。';
+  return { paused: blocked, playing, round, countsForSquid, ordinaryHand, waitingAtExpiry, settlingAbsentees, label, note };
+}
+
+// Amounts are server quotes. They are informative; the server posts them only
+// when the player actually enters an eligible hand, never on a UI toggle.
+export function entryBlindView(room, player) {
+  const entry = player?.entryBlind;
+  if (!entry?.required || room.status === 'closed' || room.hand?.status === 'playing' && player.inHand) return null;
+  const live = Math.max(0, Number(entry.live) || 0), dead = Math.max(0, Number(entry.dead) || 0);
+  const mode = entry.mode === 'post' ? 'post' : 'wait';
+  const waitingFor = entry.waitingFor === 'button' ? 'button' : 'bigBlind';
+  const label = mode === 'wait' ? '等待大盲加入' : waitingFor === 'button' ? '已选补盲 · 等待过庄' : '已选补盲 · 等待发牌';
+  const note = mode === 'wait' ? '轮到大盲后自动参与，等待期间不发牌、不扣盲。'
+    : waitingFor === 'button' ? '此座位需要等庄位经过；到可参与的下一手才补盲，等待时不扣。'
+    : '从符合位置条件的下一手参与，发牌时才补盲。自然轮到大盲不会重复扣。';
+  return { mode, live, dead, total: live + dead, waitingFor, label, note, seatLabel: mode === 'wait' ? '等大盲' : waitingFor === 'button' ? '等过庄' : '待补盲',
+    missed: entry.reason === 'missed', canChoose: player.seat != null && !player.pendingDeparture && !player.sittingOut };
 }
 
 export function participation(room, player) {
@@ -50,20 +65,21 @@ export function participation(room, player) {
     note: '已安排，当前这手仍照常进行。', canCancel: true,
   };
   if (room.hand?.status === 'playing' && player.inHand) return { label: '正在参与本手', note: '' };
-  if (player.waitingFor === 'squid') return { label: '等待下一轮鱿鱼', note: '原轮鱿鱼恢复后仍需等下一轮；鱿鱼暂停时可参与普通德州。' };
-  if (player.waitingFor === 'hand') return { label: '等待下一手', note: room.mini?.squid?.paused
-    ? '已入座，下一手可参加普通德州；原轮鱿鱼恢复后，新加入者仍需等下一轮。'
-    : '已入座，从下一手开始参与。' };
-  if (player.sittingOut) return { label: '你已暂离', note: '座位和积分保留，回来后继续。', canReturn: true };
+  if (player.sittingOut) return { label: '你已暂离', note: '座位、鱿鱼资格与预留保留。回来后可继续未结束的原轮。', canReturn: true };
+  if (player.waitingFor === 'squid') return { label: '等待下一轮鱿鱼', note: '当前轮名单固定；入桌等盲或补盲的选择在本轮结束后生效。' };
+  const entry = entryBlindView(room, player);
+  if (entry) return entry;
+  if (player.waitingFor === 'hand') return { label: '等待下一手', note: '已入座，从符合条件的下一手开始参与。' };
   return { label: '已入座', note: '' };
 }
 
-export function buyinTiming(room, isSit = true) {
-  if (!isSit && room.hand?.status === 'playing') return '补充积分会从下一手生效，不影响当前手的投入。';
-  if (isSit && room.expiryMode) return '牌桌已到时，当前仅收尾原轮鱿鱼；新入座者不参加原轮，也不会再开启新的普通手。';
-  if (isSit && room.mini?.squid?.active && room.mini.squid.paused) return '鱿鱼暂停，入座后可从下一手普通德州参与；原轮恢复后，新加入者仍需等下一轮鱿鱼。';
-  if (isSit && room.mini?.squid?.active) return '本轮鱿鱼正在进行，入座后从下一轮参与。';
-  if (isSit && room.hand?.status === 'playing') return '这手已经开始，入座后从下一手参与。';
+export function buyinTiming(room, isSit = true, player = null) {
+  if (!isSit && room.hand?.status === 'playing') return '本手结束后可补充积分，不影响当前手的投入。';
+  const original = room.mini?.squid?.active && room.mini.squid.participants?.includes(player?.id);
+  if (isSit && room.expiryMode && !original) return '牌桌已到时，仅收尾原轮鱿鱼；新入座者不参加原轮。';
+  if (isSit && original) return '本轮鱿鱼资格、已有标记与预留都保留，重新入座不会再收一份预留。';
+  if (isSit && room.mini?.squid?.active) return '本轮鱿鱼正在进行，入座后等下一轮，再按等盲或补盲方式参与。';
+  if (isSit && room.hand?.status === 'playing') return '这手已经开始，入座后等待后续符合条件的手牌。';
   return isSit ? '确认后立即入座，无需房主审核。' : '确认后立即补充积分，无需房主审核。';
 }
 
@@ -71,13 +87,14 @@ export function departurePlan(room, player, type) {
   const squid = room.mini?.squid, participant = Boolean(squid?.active && squid.participants?.includes(player?.id));
   const won = participant && Boolean(squid.won?.includes(player.id));
   const cost = participant && !won ? Math.max(0, (squid.participants.length - 1) * Number(squid.unit || 0)) : 0;
-  const queued = room.hand?.status === 'playing' && Boolean(player?.inHand || participant && !won);
+  const reserve = participant ? Math.max(0, Number(player?.squidReserve) || cost) : 0;
+  const queued = room.hand?.status === 'playing' && Boolean(player?.inHand);
   return {
-    type, queued, cost, round: participant ? Number(squid.round) || 0 : 0, won,
-    canEarnMark: queued && Boolean(player?.inHand) && Boolean(squidMode(room)?.countsForSquid),
+    type, queued, cost, reserve, participant, round: participant ? Number(squid.round) || 0 : 0, won,
+    canEarnMark: queued && Boolean(squidMode(room)?.countsForSquid),
     title: type === 'stand' ? '离开座位' : '暂离牌桌',
     label: queued ? type === 'stand' ? '本手后离座' : '本手后暂离' : type === 'stand' ? '确认离座' : '确认暂离',
-    description: type === 'stand' ? '离座后收回桌上积分，留在房间观战；以后可以重新带入。' : '保留座位和积分，暂不参加新的手牌；回来后可继续。',
+    description: type === 'stand' ? '离座后收回可用的桌上积分，留在房间观战；本轮鱿鱼预留仍保留至结算。以后可以重新入座。' : '保留座位和积分，暂不参加新的手牌、不持续扣盲；回来后可继续。',
   };
 }
 

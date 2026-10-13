@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createHand, applyAction, availableActions } from './poker.js';
 import { commitDeck, cardProof, VERIFICATION_VERSION, hash } from './fairness.js';
 import { avatarImageId } from './avatar.js';
+import { recordFilters, resultMatches, recordTotals, sessionRecord, sessionLibrary } from './records.js';
 
 const MAX_BUYIN = 1000000000;
 const TIME_BANK_WINDOW = 30 * 60 * 1000;
@@ -463,8 +464,9 @@ export class RoomService {
       mini: copy(r.mini), recentHands: this.db.hands.filter(x => x.roomCode === r.code).slice(-20).reverse().map(x => this.summary(x, viewerId)),
       ledger: this.db.ledger.filter(x => x.roomCode === r.code).slice(-80), messages: [], chat: (r.chat ?? []).slice(-CHAT_LIMIT).map(chatProjection) };
   }
-  history(userId, roomCode) {
+  history(userId, roomCode, options = {}) {
     const r = this.room(roomCode); this.member(r, userId);
+    if (Object.keys(options).length) return this.handLibrary(userId, { ...options, room: roomCode }, true);
     return { hands: this.db.hands.filter(h => h.roomCode === roomCode).slice().reverse().map(h => this.summary(h, userId)) };
   }
   handFor(userId, roomCode, handId) {
@@ -478,19 +480,35 @@ export class RoomService {
       log: copy(h.log), result: this.resultFor(h), mini: { before: copy(h.miniBefore), after: copy(h.miniAfter), changes: copy(h.miniChanges) },
       commitment: h.audit.root, proofs: this.proofsFor(h, userId), verificationVersion: VERIFICATION_VERSION };
   }
-  handLibrary(userId, { before, limit = '20', favorites, room } = {}) {
+  sessions(userId, options = {}) {
+    if (options.room) this.member(this.room(options.room), userId);
+    return sessionLibrary(this.db, userId, options);
+  }
+  sessionFor(userId, roomCode) {
+    const room = this.room(roomCode); this.member(room, userId);
+    return { session: sessionRecord(this.db, room, userId) };
+  }
+  handLibrary(userId, { before, limit = '20', favorites, room, ...options } = {}, includeObserved = false) {
     if (typeof limit !== 'string' || !/^(?:[1-9]|[1-4][0-9]|50)$/.test(limit)) fail('每页牌谱数量需要是 1–50');
     if (favorites !== undefined && favorites !== null && !['0', '1'].includes(favorites)) fail('收藏筛选格式错误');
     if (room) this.member(this.room(room), userId);
-    const cursor = handCursor(before), favoriteIds = new Set(this.user(userId)?.favoriteHands ?? []), count = Number(limit);
-    const matches = this.db.hands.filter(h => h.status === 'complete' && h.players.some(p => p.id === userId) && (!room || h.roomCode === room)
-      && (favorites !== '1' || favoriteIds.has(h.id)) && (!cursor || compareHands(h, cursor) > 0)).sort(compareHands);
+    const cursor = handCursor(before), favoriteIds = new Set(this.user(userId)?.favoriteHands ?? []), count = Number(limit), filter = recordFilters(options);
+    const filtered = this.db.hands.filter(h => {
+      const p = h.players.find(p => p.id === userId);
+      return h.status === 'complete' && (p || includeObserved) && (!room || h.roomCode === room) && (favorites !== '1' || favoriteIds.has(h.id))
+        && Date.parse(h.at) >= filter.start && Date.parse(h.at) <= filter.end
+        && resultMatches((p ? p.stack - p.startingStack : 0) + (h.miniChanges?.[userId] ?? 0), filter.result)
+        && (filter.type === 'all' || Boolean(h.bombPot) === (filter.type === 'bomb'))
+        && (!filter.q || `${h.number} ${h.id} ${h.roomName}`.toLocaleLowerCase('zh-CN').includes(filter.q));
+    });
+    const totals = recordTotals(filtered, h => { const p = h.players.find(p => p.id === userId); return p ? p.stack - p.startingStack : 0; }, h => h.miniChanges?.[userId] ?? 0);
+    const matches = filtered.filter(h => !cursor || compareHands(h, cursor) > 0).sort(compareHands);
     const page = matches.slice(0, count), last = page.at(-1);
     return { hands: page.map(h => {
-      const p = h.players.find(p => p.id === userId);
-      return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, board: [...h.board], cards: [...p.cards],
-        net: p.stack - p.startingStack, miniNet: h.miniChanges?.[userId] ?? 0, favorite: favoriteIds.has(h.id) };
-    }), nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.at, id: last.id })).toString('base64url') : null };
+      const p = h.players.find(p => p.id === userId), net = p ? p.stack - p.startingStack : 0, miniNet = h.miniChanges?.[userId] ?? 0;
+      return { id: h.id, roomCode: h.roomCode, roomName: h.roomName, number: h.number, at: h.at, board: [...h.board], cards: p ? [...p.cards] : [null, null], participated: Boolean(p),
+        net, miniNet, totalNet: net + miniNet, pot: (h.result?.pots ?? []).reduce((sum, pot) => sum + pot.amount, 0), bombPot: Boolean(h.bombPot), favorite: favoriteIds.has(h.id) };
+    }), totals, nextCursor: matches.length > count ? Buffer.from(JSON.stringify({ at: last.at, id: last.id })).toString('base64url') : null };
   }
   favoriteHand(userId, handId, favorite) {
     if (typeof favorite !== 'boolean') fail('收藏状态格式错误');

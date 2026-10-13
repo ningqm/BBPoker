@@ -6,6 +6,7 @@ import { avatarImageId } from './avatar.js';
 const MAX_BUYIN = 1000000000;
 const TIME_BANK_WINDOW = 30 * 60 * 1000;
 const MINI_CUTOFF = 5 * 60 * 1000;
+const AUTO_DEAL_DELAY = 5000;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 200, maxBuyIn: 2000, minBuyInBB: 20, maxBuyInBB: 200,
   actionSeconds: 15, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
@@ -16,6 +17,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const copy = x => structuredClone(x);
 const EMOTES = new Set(['nice', 'gg', 'lol', 'wow', 'thanks', 'unlucky']);
 const CHAT_LIMIT = 100, CHAT_ID_LIMIT = 2000, FAVORITE_LIMIT = 1000;
+const OFFLINE_WAIT = '等待入座玩家回到牌桌';
 const compareHands = (a, b) => a.at === b.at ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : a.at < b.at ? 1 : -1;
 function chatProjection(message) {
   return { id: message.id, playerId: message.playerId, name: message.name, kind: message.kind,
@@ -84,7 +86,7 @@ export class RoomService {
     let code; do { code = randomBytes(4).readUInt32BE() % 900000 + 100000; } while (this.db.rooms[code]);
     code = String(code);
     const r = { code, name: cleanName(body.name, `${user.name}必赢的局`), hostId: user.id, invite: randomBytes(24).toString('base64url'), status: 'waiting', settings,
-      createdAt: now(), updatedAt: now(), revision: 1, rulesVersion: 2, startedAt: null, endsAt: null, members: {}, pending: [], hand: null, handNumber: 0, buttonSeat: -1, deadline: null, commandIds: {},
+      createdAt: now(), updatedAt: now(), revision: 1, rulesVersion: 2, startedAt: null, endsAt: null, autoDealPaused: false, nextHandAt: null, autoWaitReason: null, members: {}, pending: [], hand: null, handNumber: 0, buttonSeat: -1, deadline: null, commandIds: {},
       mini: { squid: { active: false, round: 0, participants: [], won: [], reserves: {}, unit: settings.squidUnit, lastResult: null }, mushroom: { pool: 0, unit: settings.mushroomUnit, contributions: {}, smallBlindId: null, lastResult: null } } };
     this.db.rooms[code] = r; this.joinMember(r, user); return r;
   }
@@ -155,7 +157,11 @@ export class RoomService {
         this.idle(r); if (m.seat === null) fail('请先入座');
         if (r.mini.squid.active && r.mini.squid.participants.includes(m.id)) fail('本轮鱿鱼结束后才能暂离');
         m.sittingOut = Boolean(cmd.value); break;
-      case 'start': this.host(r, user.id); this.start(r); break;
+      case 'start': this.host(r, user.id); this.requestStart(r); break;
+      case 'autoDeal':
+        this.host(r, user.id);
+        if (typeof cmd.paused !== 'boolean') fail('自动发牌开关格式错误');
+        r.autoDealPaused = cmd.paused; break;
       case 'timebank': this.useTimeBank(r, m, cmd); break;
       case 'fold': case 'check': case 'call': case 'raise': case 'allin':
         if (!r.hand || r.hand.status !== 'playing') fail('当前没有进行中的手牌');
@@ -170,6 +176,7 @@ export class RoomService {
         this.host(r, user.id); this.idle(r); this.member(r, cmd.playerId); r.hostId = cmd.playerId; break;
       default: fail('不支持的操作');
     }
+    this.reconcileAutoDeal(r);
     r.commandIds[key] = Date.now();
     const keys = Object.keys(r.commandIds); for (const old of keys.slice(0, Math.max(0, keys.length - 2000))) delete r.commandIds[old];
     this.touch(r); return r;
@@ -226,22 +233,36 @@ export class RoomService {
     if (Object.values(r.members).some(m => m.seat !== null && m.seat >= next.maxPlayers)) fail('减少人数前，请让超出座位范围的玩家离座');
     r.settings = next; r.mini.squid.unit = next.squidUnit; r.mini.mushroom.unit = next.mushroomUnit;
   }
-  start(r, timestamp = Date.now()) {
-    this.idle(r);
-    if (r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return; }
+  prepareStart(r, timestamp = Date.now()) {
     let players = Object.values(r.members).filter(m => m.seat !== null && !m.sittingOut && m.stack > 0).sort((a, b) => a.seat - b.seat);
     const s = settingsFor({}, r.settings), squid = r.mini.squid;
     const mayStartMini = r.endsAt == null || timestamp < r.endsAt - MINI_CUTOFF;
     const newSquid = s.squid && !squid.active && mayStartMini;
     if (squid.active) {
-      players = squid.participants.map(id => r.members[id]).sort((a, b) => a.seat - b.seat);
-      if (players.some(m => !m || m.seat === null || m.stack <= 0)) fail('鱿鱼轮中有玩家积分不足，请补码后继续，或结束本场退还预留积分');
+      players = squid.participants.map(id => r.members[id]);
+      if (players.some(m => !m || m.seat === null || m.sittingOut || m.stack <= 0)) fail('鱿鱼轮中有玩家积分不足，请补码后继续，或结束本场退还预留积分');
+      players.sort((a, b) => a.seat - b.seat);
     }
     if (players.length < 2) fail('至少需要两位已入座且有积分的朋友');
     if (newSquid && players.length < 3) fail('鱿鱼玩法至少需要三人');
     const buttonSeat = players.find(m => m.seat > r.buttonSeat)?.seat ?? players[0].seat;
     const reserve = newSquid ? (players.length - 1) * s.squidUnit : 0;
     for (const m of players) if (m.stack <= reserve) fail(`${this.user(m.id).name} 积分不足，需先补码（鱿鱼预留 ${reserve}）`);
+    return { players, s, squid, mayStartMini, newSquid, buttonSeat, reserve };
+  }
+  requestStart(r, timestamp = Date.now()) {
+    this.idle(r);
+    if (r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return; }
+    if (r.handNumber === 0) { r.autoDealPaused = false; this.start(r, timestamp); return; }
+    if (Number.isFinite(r.nextHandAt) && r.nextHandAt > timestamp && !r.autoDealPaused) fail('下一手正在倒计时，请稍候', 409);
+    // Old clients and pre-upgrade completed rooms resume the same server clock.
+    r.autoDealPaused = false; this.reconcileAutoDeal(r, timestamp);
+  }
+  start(r, timestamp = Date.now()) {
+    this.idle(r);
+    if (r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return; }
+    const { players, s, squid, mayStartMini, newSquid, buttonSeat, reserve } = this.prepareStart(r, timestamp);
+    r.nextHandAt = null; r.autoWaitReason = null;
     if (newSquid) {
       squid.active = true; squid.round++; squid.participants = players.map(m => m.id); squid.won = []; squid.reserves = {}; squid.unit = s.squidUnit;
       for (const m of players) { m.stack -= reserve; squid.reserves[m.id] = reserve; }
@@ -263,7 +284,38 @@ export class RoomService {
     if (h.status === 'complete') {
       r.deadline = null; r.status = 'waiting'; this.finish(r);
       if (r.endsAt != null && timestamp >= r.endsAt) this.close(r, timestamp);
+      else { r.autoDealPaused ??= false; this.reconcileAutoDeal(r, timestamp); }
     } else r.deadline = timestamp + r.settings.actionSeconds * 1000;
+  }
+  autoBlockReason(r, timestamp = Date.now()) {
+    if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return null;
+    if (!own(r, 'autoDealPaused')) return '等待房主继续，之后会自动发牌';
+    if (r.autoDealPaused) return '房主已暂停自动发牌';
+    let players;
+    try { ({ players } = this.prepareStart(r, timestamp)); }
+    catch (error) { if (error.status === 400) return error.message; throw error; }
+    if (!players.some(m => (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0)) return OFFLINE_WAIT;
+    return null;
+  }
+  autoPlan(r, timestamp = Date.now()) {
+    // No persisted-data migration: legacy completed rooms need one host resume.
+    if (!own(r, 'autoDealPaused')) return null;
+    if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return { nextHandAt: null, autoWaitReason: null };
+    const autoWaitReason = this.autoBlockReason(r, timestamp);
+    return { nextHandAt: autoWaitReason ? null : (Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY), autoWaitReason };
+  }
+  reconcileAutoDeal(r, timestamp = Date.now()) {
+    if (r.status !== 'closed' && r.hand?.status !== 'playing' && r.endsAt != null && timestamp >= r.endsAt) { this.close(r, timestamp); return true; }
+    const plan = this.autoPlan(r, timestamp);
+    if (!plan || (r.nextHandAt === plan.nextHandAt && r.autoWaitReason === plan.autoWaitReason)) return false;
+    Object.assign(r, plan); return true;
+  }
+  connectionChanged(r, timestamp = Date.now(), { reconnected = false } = {}) {
+    const reset = reconnected && r.hand?.status !== 'playing' && Number.isFinite(r.nextHandAt) && r.nextHandAt <= timestamp;
+    if (reset) r.nextHandAt = null;
+    const changed = this.reconcileAutoDeal(r, timestamp) || reset;
+    if (changed) this.touch(r);
+    return changed;
   }
   timeBankWindow(r, timestamp) { return r.startedAt == null ? null : Math.max(0, Math.floor((timestamp - r.startedAt) / TIME_BANK_WINDOW)); }
   refreshTimeBanks(r, timestamp) {
@@ -290,6 +342,8 @@ export class RoomService {
     if (r.status === 'closed') return false;
     if (r.hand?.status === 'playing' && r.deadline != null && timestamp >= r.deadline) return true;
     if (r.endsAt != null && timestamp >= r.endsAt) return r.hand?.status !== 'playing';
+    const plan = this.autoPlan(r, timestamp);
+    if (plan && (r.nextHandAt !== plan.nextHandAt || r.autoWaitReason !== plan.autoWaitReason || (plan.nextHandAt !== null && timestamp >= plan.nextHandAt))) return true;
     const window = this.timeBankWindow(r, timestamp);
     return window !== null && Object.values(r.members).some(m => m.timeBank?.window !== window);
   }
@@ -298,8 +352,12 @@ export class RoomService {
     if (r.endsAt != null && timestamp >= r.endsAt && r.hand?.status !== 'playing') { this.close(r, timestamp); this.touch(r); return true; }
     const refreshed = this.refreshTimeBanks(r, timestamp);
     if (this.timeout(r, timestamp)) return true;
-    if (refreshed) this.touch(r);
-    return refreshed;
+    const autoChanged = this.reconcileAutoDeal(r, timestamp);
+    if (r.status !== 'closed' && r.hand?.status !== 'playing' && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
+      this.start(r, timestamp); this.touch(r); return true;
+    }
+    if (refreshed || autoChanged) this.touch(r);
+    return refreshed || autoChanged;
   }
   finish(r) {
     const h = r.hand; if (h.recorded) return;
@@ -351,7 +409,7 @@ export class RoomService {
     for (const m of Object.values(r.members)) if (m.seat !== null) {
       this.log(r, m.id, 'cashout', m.stack, '本场结束，收回剩余积分'); m.cashedOut += m.stack; m.stack = 0; m.seat = null;
     }
-    r.status = 'closed'; r.closedAt = new Date(timestamp).toISOString(); r.pending = []; r.deadline = null;
+    r.status = 'closed'; r.closedAt = new Date(timestamp).toISOString(); r.pending = []; r.deadline = null; r.nextHandAt = null; r.autoWaitReason = null;
   }
   timeout(r, timestamp = Date.now()) {
     if (r.hand?.status !== 'playing' || !r.deadline || timestamp < r.deadline) return false;
@@ -388,6 +446,7 @@ export class RoomService {
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
     return { code: r.code, name: r.name, status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(r.settings), approvalRequired: false }, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
+      autoDeal: { paused: own(r, 'autoDealPaused') ? Boolean(r.autoDealPaused) : r.handNumber > 0, nextHandAt: r.nextHandAt ?? null, waitReason: this.autoBlockReason(r, timestamp), delaySeconds: AUTO_DEAL_DELAY / 1000 },
       miniGamesCutoffAt: r.endsAt == null ? null : r.endsAt - MINI_CUTOFF,
       timeBankResetAt: r.startedAt == null ? null : (r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW < r.endsAt ? r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW : null),
       players: Object.values(r.members).map(m => {

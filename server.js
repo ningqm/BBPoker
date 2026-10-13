@@ -16,7 +16,7 @@ import { lobbyDirectory } from './src/lobby.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.wav': 'audio/wav' };
 export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data'), actionTickMs = 100, publicOrigin = process.env.PUBLIC_ORIGIN || '', clientOrigins = process.env.CLIENT_ORIGINS || '', trustProxy = process.env.TRUST_PROXY || '', allowGuestSessions = false } = {}) {
   const checkOrigin = originPolicy(publicOrigin, clientOrigins);
   const store = new EncryptedStore(dataDir), service = new RoomService(store);
@@ -302,7 +302,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           mutate(() => { auth(req); delete store.data.sessions[req.authKey]; });
           closeInvalidStreams(); return send(res, 200, { ok: true });
         }
-        if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
+        if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status, startedAt: r.startedAt ?? null, createdAt: r.createdAt })) });
         if (path === '/api/lobby' && req.method === 'GET') return send(res, 200, lobbyDirectory(store.data, user.id));
         if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id, Object.fromEntries(url.searchParams)));
         if (path === '/api/sessions' && req.method === 'GET') return send(res, 200, service.sessions(user.id, Object.fromEntries(url.searchParams)));

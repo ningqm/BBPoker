@@ -8,6 +8,20 @@ function amount(value) {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('牌谱积分记录无效');
   return value;
 }
+function rabbitAtResult(hand, complete, board) {
+  const rabbit = hand.rabbit;
+  // This is post-settlement entertainment, never an extra poker street. A
+  // history opened while the preview is running contains only cards that the
+  // server has already revealed; seeking backwards must hide even those.
+  if (!complete || hand.status === 'playing' || hand.result?.showdown !== false || !rabbit ||
+      ![0, 3, 4].includes(board.length) || rabbit.originalCount !== board.length ||
+      !Array.isArray(rabbit.board) || rabbit.board.length < board.length || rabbit.board.length > 5 ||
+      rabbit.board.some((card, i) => !/^[2-9TJQKA][cdhs]$/.test(card) || (i < board.length && card !== board[i])) ||
+      new Set(rabbit.board).size !== rabbit.board.length) return null;
+  return { board: [...rabbit.board], originalCount: rabbit.originalCount,
+    active: Boolean(rabbit.active), nextAt: rabbit.nextAt ?? null, finishedAt: rabbit.finishedAt ?? null,
+    proofs: structuredClone(rabbit.proofs ?? []) };
+}
 export function replayStreets(hand) {
   validHand(hand);
   const result = [{ street: 'preflop', label: hand.bombPot ? '前注' : '开始', index: 0 }];
@@ -81,7 +95,7 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
     // timeout/reconnect are informational; their actual action is a separate row.
   }
   const equity = (hand.equityFrames ?? []).filter(frame => frame.logSeq <= index).at(-1)?.equity ?? null;
-  return { index, total, equity, street: complete ? 'complete' : street, board, pot,
+  return { index, total, equity, rabbit: rabbitAtResult(hand, complete, board), street: complete ? 'complete' : street, board, pot,
     complete, lastEvent: index ? { ...hand.log[index - 1] } : null, players };
 }
 

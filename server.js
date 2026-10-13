@@ -12,6 +12,7 @@ import { clientIp } from './src/client-ip.js';
 import { digest, secret, username, password, hashPassword, verifyPassword, verifySecret, SESSION_MS } from './src/auth.js';
 import { nickname, avatar, profilePatch, AVATAR_COUNT, NICKNAME_LIMIT } from './src/profile.js';
 import { AvatarStore, avatarImageId, normalizeAvatarUpload, AVATAR_PROFILE_BODY_BYTES } from './src/avatar.js';
+import { lobbyDirectory } from './src/lobby.js';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
@@ -122,10 +123,9 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   function syncConnection(room, reconnected = false) {
     if (closing) return true;
     try {
-      const timestamp = Date.now(), plan = service.autoPlan(room, timestamp);
-      const reset = reconnected && Number.isFinite(room.nextHandAt) && room.nextHandAt <= timestamp;
-      const expired = room.status !== 'closed' && room.hand?.status !== 'playing' && room.endsAt != null && Date.now() >= room.endsAt;
-      if (expired || reset || (plan && (room.nextHandAt !== plan.nextHandAt || room.autoWaitReason !== plan.autoWaitReason))) mutate(() => service.connectionChanged(service.room(room.code), timestamp, { reconnected }));
+      // Presence changes also maintain departure/wait clocks before a first
+      // hand exists, so they cannot be gated only on an auto-deal plan change.
+      mutate(() => service.connectionChanged(service.room(room.code), Date.now(), { reconnected }));
       return true;
     } catch (error) { console.error('牌桌连接恢复失败:', error.message); return false; }
   }
@@ -133,6 +133,8 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     service.member(room, user.id);
     const connectionKey = `${room.code}:${user.id}`;
     if ((service.connections.get(connectionKey) ?? 0) >= 5) fail('同一账号打开的牌桌过多，请关闭其他窗口', 429);
+    const accountConnections = [...service.connections].reduce((count, [key, n]) => count + (key.endsWith(`:${user.id}`) ? n : 0), 0);
+    if (accountConnections >= 10) fail('打开的牌桌窗口过多，请先关闭一些窗口', 429);
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     const client = { res, userId: user.id, authKey: req.authKey }; if (!streams.has(room.code)) streams.set(room.code, new Set()); streams.get(room.code).add(client);
@@ -141,7 +143,10 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     const heartbeat = setInterval(() => { if (!userForKey(client.authKey)) closeInvalidStreams(); else if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n'); }, 15000);
     res.on('close', () => {
       clearInterval(heartbeat); streams.get(room.code)?.delete(client);
-      service.connections.set(connectionKey, Math.max(0, (service.connections.get(connectionKey) ?? 1) - 1)); syncConnection(service.room(room.code)); broadcast(room.code);
+      if (!streams.get(room.code)?.size) streams.delete(room.code);
+      const remaining = Math.max(0, (service.connections.get(connectionKey) ?? 1) - 1);
+      if (remaining) service.connections.set(connectionKey, remaining); else service.connections.delete(connectionKey);
+      syncConnection(service.room(room.code)); broadcast(room.code);
     });
     if (!syncConnection(service.room(room.code), reconnected)) { res.destroy(); return; }
     broadcast(room.code);
@@ -298,6 +303,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           closeInvalidStreams(); return send(res, 200, { ok: true });
         }
         if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status })) });
+        if (path === '/api/lobby' && req.method === 'GET') return send(res, 200, lobbyDirectory(store.data, user.id));
         if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id, Object.fromEntries(url.searchParams)));
         if (path === '/api/sessions' && req.method === 'GET') return send(res, 200, service.sessions(user.id, Object.fromEntries(url.searchParams)));
         const sessionMatch = /^\/api\/sessions\/([0-9]{6})$/.exec(path);
@@ -325,7 +331,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         const match = /^\/api\/rooms\/([0-9]{6})(?:\/(join|action|history|hands|chat)(?:\/([a-zA-Z0-9-]+))?)?$/.exec(path);
         if (match) {
           const [, code, endpoint, handId] = match;
-          if (endpoint === 'join' && req.method === 'POST') { const b = await body(req); const r = mutate(() => service.join(user, code, b.invite)); broadcast(code); return send(res, 200, { room: service.state(r, user.id) }); }
+          if (endpoint === 'join' && req.method === 'POST') { limited(`join:${user.id}`, 60); const b = await body(req); const r = mutate(() => service.join(user, code, b.invite)); broadcast(code); return send(res, 200, { room: service.state(r, user.id) }); }
           const room = service.room(code); service.member(room, user.id);
           if (!endpoint && req.method === 'GET') return send(res, 200, service.state(room, user.id));
           if (endpoint === 'action' && req.method === 'POST') {
@@ -359,13 +365,14 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   server.requestTimeout = 15000;
   const tick = setInterval(() => {
     const timestamp = Date.now();
-    const codes = Object.values(store.data.rooms).filter(room => service.needsTick(room, timestamp)).map(room => room.code);
-    if (!codes.length) return;
-    try {
-      // Deadline actions, time-card refresh and table expiry commit together before observers see them.
-      const changed = mutate(() => codes.filter(code => service.tick(store.data.rooms[code], timestamp)));
-      for (const code of changed) broadcast(code);
-    } catch (e) { console.error('牌桌计时处理失败:', e.message); }
+    // Each table commits before broadcasting. A malformed or failed table
+    // must not roll back another table's already due action or stop its clock.
+    for (const code of Object.keys(store.data.rooms)) {
+      try {
+        if (!service.needsTick(store.data.rooms[code], timestamp)) continue;
+        if (mutate(() => service.tick(store.data.rooms[code], timestamp))) broadcast(code);
+      } catch (e) { console.error('牌桌计时处理失败:', code, e.message); }
+    }
   }, actionTickMs); tick.unref();
   return { server, store, service, broadcast, async close() { closing = true; clearInterval(tick); for (const set of streams.values()) for (const c of set) c.res.destroy(); await new Promise(resolve => server.close(resolve)); } };
 }

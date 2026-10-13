@@ -16,7 +16,7 @@ import { AvatarStore, avatarImageId, normalizeAvatarUpload, AVATAR_PROFILE_BODY_
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
-export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data'), actionTickMs = 1000, publicOrigin = process.env.PUBLIC_ORIGIN || '', clientOrigins = process.env.CLIENT_ORIGINS || '', trustProxy = process.env.TRUST_PROXY || '', allowGuestSessions = false } = {}) {
+export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data'), actionTickMs = 100, publicOrigin = process.env.PUBLIC_ORIGIN || '', clientOrigins = process.env.CLIENT_ORIGINS || '', trustProxy = process.env.TRUST_PROXY || '', allowGuestSessions = false } = {}) {
   const checkOrigin = originPolicy(publicOrigin, clientOrigins);
   const store = new EncryptedStore(dataDir), service = new RoomService(store);
   const avatars = new AvatarStore(store);
@@ -24,7 +24,13 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
   store.data.sessions ??= {};
   for (const [key, session] of Object.entries(store.data.sessions)) if (session.expiresAt <= Date.now()) delete store.data.sessions[key];
   // Preserve the active deck and a previously saved clock, including used time cards.
-  for (const r of Object.values(store.data.rooms)) if (r.hand?.status === 'playing') {
+  for (const r of Object.values(store.data.rooms)) {
+    if (r.hand?.rabbit?.active && !Number.isFinite(r.hand.rabbit.nextAt)) {
+      r.hand.rabbit.nextAt = Date.now() + 650;
+      const archived = store.data.hands.find(hand => hand.id === r.hand.id);
+      if (archived) archived.rabbit = structuredClone(r.hand.rabbit);
+    }
+    if (r.hand?.status !== 'playing') continue;
     if (r.hand.runout?.active) {
       r.deadline = null;
       if (!Number.isFinite(r.hand.runout.nextAt)) r.hand.runout.nextAt = Date.now() + 1800;
@@ -74,10 +80,11 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
     try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); if (!value || typeof value !== 'object' || Array.isArray(value)) fail('请求格式错误'); if (req.authKey) auth(req); return value; }
     catch (e) { if (e.status) throw e; fail('请求格式错误'); }
   }
-  function mutate(fn) {
+  function mutate(fn, { chatRates = false } = {}) {
     const previous = structuredClone(store.data);
+    const previousRates = chatRates ? new Map(service.chatRates) : null;
     try { const result = fn(); store.save(); return result; }
-    catch (e) { store.data = previous; service.db = previous; throw e; }
+    catch (e) { store.data = previous; service.db = previous; if (previousRates) service.chatRates = previousRates; throw e; }
   }
   function issueSession(user) {
     const sessions = store.data.sessions ??= {};
@@ -325,7 +332,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
             limited(`action:${user.id}`, 180); const b = await body(req); const r = mutate(() => service.command(user, code, b)); broadcast(code); return send(res, 200, { room: service.state(r, user.id) });
           }
           if (endpoint === 'chat' && !handId && req.method === 'POST') {
-            const b = await body(req); const message = mutate(() => service.chat(user, code, b, { ip }));
+            const b = await body(req); const message = mutate(() => service.chat(user, code, b, { ip }), { chatRates: true });
             broadcast(code); return send(res, 200, { message });
           }
           if (endpoint === 'history' && req.method === 'GET') return send(res, 200, service.history(user.id, code, Object.fromEntries(url.searchParams)));

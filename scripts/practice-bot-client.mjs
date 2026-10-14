@@ -85,7 +85,7 @@ export class PracticeBotClient {
   actionKey(state = this.state) { return state?.hand ? `${state.hand.id}:${state.hand.actionSeq}` : null; }
   canAct(key) {
     const s = this.state;
-    return s?.status !== 'closed' && s?.hand?.status === 'playing' && s.hand.actingId === this.meId && s.actions?.canAct && this.actionKey(s) === key && Number.isFinite(s.deadline) && this.serverNow() + 250 < s.deadline;
+    return s?.status !== 'closed' && s?.hand?.status === 'playing' && !s.hand.transition && !s.hand.runout?.active && s.hand.actingId === this.meId && s.actions?.canAct && (!Number.isFinite(s.hand.actionReadyAt) || this.serverNow() >= s.hand.actionReadyAt) && this.actionKey(s) === key && Number.isFinite(s.deadline) && this.serverNow() + 250 < s.deadline;
   }
 
   handleError(error, phase) {

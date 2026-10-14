@@ -55,7 +55,7 @@
 .at-table .table-stage .seat-hand-info .equity-badge{position:static!important;transform:none!important;margin:0!important}
 .hand-category{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;white-space:nowrap;font-size:11px;line-height:1.45;font-weight:750;padding:2px 6px;border-radius:6px;color:var(--hand-ink,#52616d);background:var(--hand-fill,#f0f3f5);border:1px solid var(--hand-edge,#c9d1d7);box-shadow:var(--hand-shadow,none)}
 /* A visible break at straight: soft everyday badges become saturated strong
-   hands, then metallic gold and black-gold. Preserve badge dimensions. */
+   hands, then metallic gold. Preserve badge dimensions. */
 .hand-category[data-hand-category=high-card]{--hand-ink:#52616d;--hand-fill:#eef1f4;--hand-edge:#bac4cd}
 .hand-category[data-hand-category=pair]{--hand-ink:#104d32;--hand-fill:#9be3bb;--hand-edge:#32865a}
 .hand-category[data-hand-category=two-pair]{--hand-ink:#123e76;--hand-fill:#83c8ff;--hand-edge:#397cc7}
@@ -65,13 +65,11 @@
 .hand-category[data-hand-category=full-house]{--hand-ink:#fff;--hand-fill:linear-gradient(135deg,#702caf,#48167e);--hand-edge:#b984ee;--hand-shadow:inset 0 1px 0 #f2dfff66,0 2px 5px #52208340}
 .hand-category[data-hand-category=quads]{--hand-ink:#431900;--hand-fill:linear-gradient(135deg,#ff9d35,#f27817);--hand-edge:#bd4d06;--hand-shadow:inset 0 1px 0 #ffdf9b,0 0 0 1px #ffb54145,0 2px 5px #b35a1e45}
 .hand-category[data-hand-category=straight-flush]{--hand-ink:#4b2905;--hand-fill:linear-gradient(120deg,#ffe58a 0%,#ffc638 46%,#ffe99b 65%,#e5a51c 100%);--hand-edge:#a56c09;--hand-shadow:inset 0 1px 0 #fff7d4,0 0 0 1px #ffe18a99,0 2px 6px #d2952759}
-.hand-category[data-hand-category=royal-flush]{--hand-ink:#4b2905;--hand-fill:linear-gradient(120deg,#fff3bd 0%,#ffd45d 38%,#fff4cb 59%,#eebb39 100%);--hand-edge:#a56c09;--hand-shadow:inset 0 0 0 1px #fff6d0cc,inset 0 1px 0 #fffdf0,0 0 0 1px #eec666bb,0 2px 7px #b5812259}
-.hand-category:is([data-hand-category=straight],[data-hand-category=flush],[data-hand-category=full-house],[data-hand-category=quads],[data-hand-category=straight-flush],[data-hand-category=royal-flush]){font-weight:800;text-shadow:0 1px 1px #00000024}
+.hand-category:is([data-hand-category=straight],[data-hand-category=flush],[data-hand-category=full-house],[data-hand-category=quads],[data-hand-category=straight-flush]){font-weight:800;text-shadow:0 1px 1px #00000024}
 .hand-category[data-hand-category=straight]{text-shadow:0 1px 0 #c8fff766}
 .hand-category[data-hand-category=flush]{text-shadow:0 1px 0 #ffd9ef88}
 .hand-category[data-hand-category=quads]{text-shadow:0 1px 0 #ffc982}
 .hand-category[data-hand-category=straight-flush]{text-shadow:0 1px 0 #fff0b4}
-.hand-category[data-hand-category=royal-flush]{text-shadow:0 1px 0 #fff6d4}
 .at-table .table-stage .seat[data-edge=top] .seat-hand-info{top:-22px}
 .at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 21px)}
 .at-table .table-stage .table-center{top:50%;width:310px;min-width:0;transform:translate(-50%,-50%);z-index:1}

@@ -1,0 +1,60 @@
+/* Stable play controls: betting turns never change the table's available height. */
+.room-shell .table-bottom{flex:0 0 146px;height:146px;min-height:146px;padding:0;margin:0;position:relative;z-index:12;border:0;background:transparent;box-shadow:none;border-radius:0;overflow:visible}
+.room-shell .table-bottom .action-dock{display:block;position:relative;height:146px;min-height:146px;padding:8px 10px;border:0;border-radius:20px;background:linear-gradient(180deg,#edf5ef12,#ffffffa6 60%);box-sizing:border-box;overflow:visible}
+.room-shell .table-bottom .action-dock .decision{display:grid;grid-template-rows:28px 44px 50px;gap:4px;width:100%;min-width:0}
+.room-shell .table-bottom .action-dock .turn-row{display:flex;align-items:center;justify-content:space-between;min-height:28px;height:28px;gap:8px;margin:0;font-size:12px}
+.action-dock .dock-status-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#637c70;font-weight:500}
+.room-shell .action-dock.is-my-turn .dock-status-text{color:#315b4c;font-weight:600}
+.action-dock .turn-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-shrink:0}
+.room-shell .action-dock .auto-deal-status{display:block;margin:0;line-height:1.2;font-size:12px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.room-shell .action-dock .dock-context-action{min-height:28px;padding:5px 9px;font-size:11px;line-height:1.15;white-space:nowrap;border:1px solid #aac9ba;background:#ffffffd9;color:#1f6954}
+.room-shell .action-dock .dock-context-action.primary{background:#216b56;color:#fff;border-color:#216b56}
+.room-shell .action-dock .timebank-button{margin:0;min-height:30px;padding:5px 8px;font-size:11px;white-space:nowrap}
+.room-shell .action-dock .raise-toggle>span:last-child{font-size:20px;line-height:16px;font-weight:400}
+.room-shell .action-dock .raise-shortcuts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:0;min-height:44px}
+.room-shell .action-dock .raise-shortcuts button{height:44px;min-height:44px;min-width:0;padding:4px 2px;border-radius:10px;background:#ffffffc7;border:1px solid #d4dfd8;font-size:12px;color:#496252;white-space:nowrap}
+.room-shell .action-dock .raise-shortcuts button.selected{background:#f5dfb9;border-color:#bb7a27;color:#77420e;font-weight:750;box-shadow:inset 0 0 0 1px #bb7a27}
+.room-shell .action-dock .raise-shortcuts .raise-toggle{display:flex;align-items:center;gap:7px;justify-content:center;padding:4px;background:#fff8e8eb;border-color:#d4b17b;color:#825015;font-weight:650;box-shadow:none}
+.room-shell .action-dock .raise-shortcuts .raise-toggle[aria-expanded=true]{background:#f9e6c0;border-color:#9d621b;box-shadow:0 0 0 2px #c78a3020}
+.room-shell .action-dock .action-buttons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0;height:50px}
+.room-shell .action-dock .action-buttons button{height:50px;min-height:50px;min-width:0;padding:8px 3px;border-radius:14px;font-size:15px;font-weight:700;line-height:1.2;white-space:normal;overflow-wrap:anywhere;box-shadow:0 2px 3px #17402b08}
+.room-shell .action-dock .action-buttons .fold-button{background:#f1f3f5e6;border:1px solid #cfd6dc;color:#65717e}
+.room-shell .action-dock .action-buttons [data-action=check]{background:#e0f1e9ed;border-color:#a7d3bf;color:#28705c}
+.room-shell .action-dock .action-buttons [data-action=call]{background:#e5effeec;border-color:#b0c8eb;color:#2d619e}
+.room-shell .action-dock .action-buttons [data-action=raise]{background:#a2641b;border-color:#945b17;color:#fff}
+.room-shell .action-dock .action-buttons [data-allin=true],.room-shell .action-dock .action-buttons [data-action=allin]{background:#b33d60;border-color:#9b2b4c;color:white}
+.room-shell .action-dock :is(.action-buttons,.raise-shortcuts) button:disabled,.room-shell .action-dock .raise-toggle:disabled{opacity:1;cursor:default;color:#98a89e;background:#e6ece7b3;border-color:#d8e1d9;box-shadow:none}
+.room-shell .action-dock .timebank-button:disabled{opacity:.45}
+.room-shell .action-dock .raise-popover{position:absolute;z-index:80;right:10px;bottom:calc(100% - 5px);width:184px;box-sizing:border-box;padding:12px;border:1px solid #c4d6ca;border-radius:20px;background:#fbfdf8f5;box-shadow:0 12px 44px #163d303d;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.action-dock .raise-popover[hidden]{display:none!important}
+.action-dock .raise-popover header{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.room-shell .action-dock .raise-popover #raise-amount{min-width:0;text-align:left;font-size:11px;color:#89663b;white-space:normal;line-height:1.4}
+.room-shell .action-dock .raise-popover #raise-amount b{display:block;font-size:18px;color:#7a4d18;font-variant-numeric:tabular-nums}
+.room-shell .action-dock .raise-popover .raise-close{flex:0 0 30px;min-height:32px;padding:1px;width:30px;font-size:22px;line-height:1;background:transparent;border:0;color:#698372}
+.action-dock .raise-vertical-track{display:flex;flex-direction:column;align-items:center;gap:6px;margin:8px 0}
+.room-shell .action-dock #raise-range{display:block;writing-mode:vertical-lr;direction:rtl;appearance:auto;-webkit-appearance:auto;width:44px;min-width:44px;height:180px;min-height:180px;margin:0;padding:0;flex:none;accent-color:#ad731f;cursor:ns-resize;touch-action:none}
+.action-dock .raise-endpoint{font-size:11px;color:#788771;font-variant-numeric:tabular-nums}
+.action-dock .raise-popover p{font-size:10px;line-height:1.4;text-align:center;color:#71856f;margin:0}
+.action-dock .detached-showdown,.action-dock .detached-final-cards{position:absolute;bottom:calc(100% + 8px);left:0;max-width:calc(100% - 198px);z-index:20;padding:5px 8px;background:#fffffff0;border-radius:10px}
+@media(max-width:760px){
+ .room-shell .table-bottom .action-dock{padding:8px 2px;border-radius:16px}
+ .room-shell .action-dock .raise-shortcuts{gap:4px}
+ .room-shell .action-dock .raise-shortcuts button{font-size:10px}
+ .room-shell .action-dock .action-buttons{gap:6px}
+ .room-shell .action-dock .action-buttons button{font-size:13px;border-radius:12px}
+ .room-shell .action-dock .raise-shortcuts .raise-toggle{font-size:11px;gap:4px}
+ .room-shell .action-dock .timebank-button{font-size:10px;padding:5px 6px}
+ .room-shell .action-dock .dock-context-action{font-size:10px;padding:5px 7px}
+ .room-shell .action-dock .turn-tools{gap:4px}
+ .room-shell .table-bottom .action-dock .turn-row{gap:5px;font-size:11px}
+ .room-shell .action-dock .auto-deal-status{font-size:11px}
+ .room-shell .action-dock .raise-popover{right:2px;width:136px}
+}
+@media(max-width:360px){
+ .room-shell .action-dock .action-buttons button{font-size:11px}
+ .room-shell .action-dock .raise-shortcuts button{font-size:9px}
+ .room-shell .action-dock .raise-shortcuts .raise-toggle{font-size:10px;gap:2px}
+ .room-shell .action-dock .timebank-button{font-size:9px;padding:5px}
+ .room-shell .action-dock .turn-tools{gap:3px}
+}
+@media(prefers-reduced-motion:reduce){.action-dock .raise-popover{scroll-behavior:auto}}

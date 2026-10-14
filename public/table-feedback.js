@@ -33,14 +33,21 @@ const emptyFeedback = () => ({ animations: [], sound: null });
 
 // Only retain public event identifiers and counts. In particular, no hole cards,
 // avatar images, chat text or profile data are copied into this presentation state.
-function snapshot(room) {
+function snapshot(room, now) {
   if (!room || typeof room.code !== 'string') return null;
   const hand = room.hand;
   const log = Array.isArray(hand?.log) ? hand.log : [];
+  const serverTime = typeof room.serverTime === 'number' ? room.serverTime : Date.parse(room.serverTime);
+  const clock = Number.isFinite(serverTime) ? serverTime : now;
+  const actionReadyAt = Number(hand?.actionReadyAt) || 0;
+  const turnReady = Boolean(hand?.status === 'playing' && hand.actingId && !hand.transition &&
+    clock >= actionReadyAt && (hand.actingId !== room.meId || room.actions?.canAct !== false));
   return {
     code: room.code, meId: room.meId, revision: room.revision,
+    serverTime,
     hand: hand ? {
       id: hand.id, number: hand.number, status: hand.status, actingId: hand.actingId,
+      actionReadyAt, turnReady,
       boardLength: Array.isArray(hand.board) ? hand.board.length : 0,
       seq: hand.actionSeq, allInIds: (room.players ?? []).filter(player => player.allIn).map(player => player.id), log: log.map(event => ({
         seq: event.seq, type: event.type, playerId: event.playerId,
@@ -92,30 +99,47 @@ function transitions(previous, current) {
         (before && before.status !== 'complete') || after.log.some(event => playerActions.has(event.type))) return feedback;
     feedback.animations.push({ type: 'deal' });
     if (after.boardLength) feedback.animations.push({ type: 'board', from: 0 });
-    if (after.actingId) feedback.animations.push({ type: 'turn', playerId: after.actingId });
+    if (after.turnReady) feedback.animations.push({ type: 'turn', playerId: after.actingId });
     feedback.sound = 'deal';
+    feedback.eventId = `${current.code}:${current.meId}:${after.id}:${after.seq}`;
     return feedback;
   }
-  if (!validLog(before) || after.seq <= before.seq ||
+  if (!validLog(before) || after.seq < before.seq ||
       !before.log.every((event, index) => sameEvent(event, after.log[index]))) return feedback;
   const fresh = after.log.slice(before.seq);
-  for (const event of fresh) if (playerActions.has(event.type)) {
+  const freshActions = fresh.filter(event => playerActions.has(event.type));
+  for (const event of freshActions) {
     feedback.animations.push({ type: 'action', playerId: event.playerId, action: event.type, seq: event.seq });
-    feedback.sound = ['raise', 'call', 'allin'].includes(event.type) ? 'chip' : event.type;
-    feedback.speech = spokenAction(after, event);
-    feedback.chips = feedback.chips || ['raise', 'call', 'allin'].includes(event.type);
+  }
+  // A batched response may include a raise followed by somebody's fold/check.
+  // Announce only the most recent action and attach chips to that same action;
+  // OR-ing every earlier bet makes an unrelated check or fold sound like a bet.
+  const latestAction = freshActions.at(-1);
+  if (latestAction) {
+    const chips = ['raise', 'call', 'allin'].includes(latestAction.type) &&
+      (latestAction.amount === undefined || finite(latestAction.amount) > 0);
+    feedback.sound = chips ? 'chip' : ['fold', 'check'].includes(latestAction.type) ? latestAction.type : null;
+    feedback.speech = spokenAction(after, latestAction);
+    feedback.chips = chips;
   }
   if (after.boardLength > before.boardLength) {
     feedback.animations.push({ type: 'board', from: before.boardLength });
     feedback.sound = 'board';
   }
-  if (after.status === 'playing' && after.actingId && after.actingId !== before.actingId) {
+  // Readiness is published without adding another poker action to the log.
+  // Do not call a player while cards are still flipping; announce that same
+  // action sequence only when its authoritative ready snapshot arrives.
+  if (after.turnReady && (after.actingId !== before.actingId || !before.turnReady || after.actionReadyAt !== before.actionReadyAt)) {
     feedback.animations.push({ type: 'turn', playerId: after.actingId });
-    if (after.actingId === current.meId) feedback.sound = 'yourturn';
+    if (after.actingId === current.meId && after.boardLength === before.boardLength) feedback.sound = 'yourturn';
   }
   if (before.status !== 'complete' && after.status === 'complete') {
     feedback.animations.push({ type: 'win', playerIds: after.winnerIds });
     feedback.sound = 'win';
+  }
+  if (feedback.sound || feedback.speech) {
+    const turn = feedback.sound === 'yourturn' ? `:turn:${after.actingId}:${after.actionReadyAt}` : '';
+    feedback.eventId = `${current.code}:${current.meId}:${after.id}:${after.seq}${turn}`;
   }
   return feedback;
 }
@@ -125,18 +149,21 @@ export function createTableFeedback() {
   let previous = null, mutedBaseline = false;
   return {
     reset() { previous = null; mutedBaseline = false; },
-    update(room, { live = true, visible = true, reconnected = false } = {}) {
-      const current = snapshot(room);
+    update(room, { live = true, visible = true, connected = true, reconnected = false, now = Date.now() } = {}) {
+      const current = snapshot(room, now);
       if (!current) { previous = null; mutedBaseline = false; return emptyFeedback(); }
       if (olderThan(current, previous)) return emptyFeedback();
       const sameRoom = previous?.code === current.code && previous?.meId === current.meId;
-      const suppressed = !live || !visible || reconnected;
+      // Transport delay is measured against the caller's server-adjusted clock.
+      // A missing serverTime keeps old clients/tests compatible. No catch-up queue.
+      const delayed = Number.isFinite(current.serverTime) && Number.isFinite(now) && now - current.serverTime > 5000;
+      const suppressed = !live || !visible || !connected || reconnected || delayed;
       const result = previous && sameRoom && !suppressed && !mutedBaseline
         ? transitions(previous, current) : emptyFeedback();
       previous = current;
       // The first visible state after returning from another app is a baseline,
       // even when the stream delivered one last hidden state before suspension.
-      mutedBaseline = !visible;
+      mutedBaseline = !live || !visible || !connected;
       return result;
     },
   };
@@ -152,7 +179,10 @@ export function createTurnCountdown() {
       const hand = room?.hand;
       const deadline = typeof room?.deadline === 'number' ? room.deadline : Date.parse(room?.deadline);
       const mine = Boolean(hand?.status === 'playing' && hand.actingId && hand.actingId === room?.meId);
-      if (!mine || !Number.isFinite(deadline) || !Number.isFinite(now)) { previous = null; return quiet(null); }
+      if (!mine || hand.transition || !Number.isFinite(deadline) || !Number.isFinite(now) ||
+          now < (Number(hand.actionReadyAt) || 0) || room.actions?.canAct === false) {
+        previous = null; return quiet(null);
+      }
       const remaining = Math.max(0, Math.ceil((deadline - now) / 1000));
       const key = `${room.code}:${room.meId}:${hand.id}:${hand.actionSeq}:${deadline}`;
       const allowed = live && visible && connected && !reconnected;
@@ -171,7 +201,7 @@ export function createTurnCountdown() {
 const tones = {
   deal: [[660, 360, 0, 0.055, 0.025], [760, 440, 0.065, 0.055, 0.02]],
   board: [[520, 820, 0, 0.075, 0.022]],
-  chip: [], // A short, dry material collision below; no pitched electronic sweep.
+  chip: [], // Same-origin multi-chip foley; no synthetic click fallback.
   fold: [[260, 130, 0, 0.06, 0.015]],
   check: [[480, 340, 0, 0.035, 0.022]],
   yourturn: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.09, 0.075, 0.025]],
@@ -181,42 +211,19 @@ const tones = {
 };
 
 export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'check', 'fold', 'allin']);
-
-/** Original procedural foley: irregular chip contacts against each other and felt.
- * The seeded noise is presentation only and has no connection to shuffled cards.
- */
-export function chipContactSamples(sampleRate = 44100) {
-  const rate = clamp(Math.round(finite(sampleRate, 44100)), 8000, 192000);
-  const samples = new Float32Array(Math.ceil(rate * 0.32));
-  const contacts = [[0.012, 1], [0.047, 0.7], [0.098, 0.58], [0.139, 0.38], [0.21, 0.22]];
-  let seed = 739;
-  for (const [at, strength] of contacts) {
-    const offset = Math.round(at * rate); let smoothed = 0;
-    for (let i = 0; i < Math.ceil(rate * 0.075); i++) {
-      const t = i / rate;
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      const noise = seed / 2147483648 - 1;
-      smoothed += (noise - smoothed) * (1 - Math.exp(-2 * Math.PI * 3600 / rate));
-      const attack = Math.min(1, t / 0.0008);
-      const body = Math.sin(2 * Math.PI * 790 * t) * Math.exp(-t / 0.007) * 0.24 +
-        Math.sin(2 * Math.PI * 1543 * t) * Math.exp(-t / 0.0048) * 0.18 +
-        Math.sin(2 * Math.PI * 2690 * t) * Math.exp(-t / 0.0032) * 0.08;
-      const contact = smoothed * Math.exp(-t / 0.0035) * 0.7;
-      const felt = smoothed * Math.exp(-t / 0.018) * 0.065;
-      if (offset + i < samples.length) samples[offset + i] += strength * attack * (body + contact + felt);
-    }
-  }
-  // The entire cue stays well below full scale, even if a notification overlaps it.
-  return samples;
-}
+export const TABLE_VOICE_LABELS = Object.freeze({ bet: '下注', raise: '加注', reraise: '再加注', call: '跟注', check: '过牌', fold: '弃牌', allin: 'All-in' });
+// Versioned separately from the app release so replaced media never uses an old cache.
+const AUDIO_ASSET_VERSION = '20261015-allin-aoyin-v7';
+export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, voice: 0.8, voiceLead: 0.025 });
 
 /** Same-origin recorded cues and synthesized effects; never a delayed action queue. */
 export function createTableSounds({ enabled = false, voiceEnabled = true,
   AudioContext: AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext,
   document: doc = globalThis.document, now = () => Date.now(), fetch: fetcher = globalThis.fetch } = {}) {
   let context = null, unlocked = false, disposed = false, lastPlayed = -Infinity, generation = 0;
-  let voiceSource = null, loadingVoices = null, loadController = null, chipBuffer = null;
-  const voices = new Map(), active = new Set();
+  let voiceSource = null;
+  const buffers = new Map(), loading = new Map(), active = new Set();
+  const heardEvents = new Set();
   const visible = () => doc?.visibilityState !== 'hidden';
   const ready = () => !disposed && enabled && unlocked && visible() && context?.state === 'running';
   const ignoreRejection = promise => { if (promise?.catch) promise.catch(() => {}); };
@@ -226,12 +233,16 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     try { voiceSource.node.disconnect(); voiceSource.gain.disconnect(); } catch {}
     voiceSource = null;
   }
-  function stop() {
+  function stop(kind = null) {
     for (const entry of active) {
+      if (kind && entry.kind !== kind) continue;
       try { entry.node.stop(); } catch {}
       try { entry.node.disconnect(); entry.gain.disconnect(); } catch {}
+      active.delete(entry);
     }
-    active.clear();
+  }
+  function stopPlayback() {
+    stop(); stopVoice();
   }
   function suspend() {
     generation++; unlocked = false; stop(); stopVoice();
@@ -239,38 +250,50 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
   }
   function visibilityChanged() { if (!visible()) suspend(); }
   doc?.addEventListener?.('visibilitychange', visibilityChanged);
-  function preloadVoices() {
-    if (disposed || !voiceEnabled || !context?.decodeAudioData || typeof fetcher !== 'function') return Promise.resolve(false);
-    if (loadingVoices) return loadingVoices;
+  function preloadAudio() {
+    if (disposed || !context?.decodeAudioData || typeof fetcher !== 'function') return Promise.resolve(false);
     const audio = context;
-    const controller = new AbortController(); loadController = controller;
-    const timer = setTimeout(() => controller.abort(), 5000);
-    loadingVoices = Promise.all(TABLE_VOICE_CUES.map(async type => {
-      if (voices.has(type)) return true;
-      try {
-        const response = await fetcher(new URL(`./audio/${type}.wav`, import.meta.url), { credentials: 'omit', signal: controller.signal });
-        if (!response.ok) return false;
-        const bytes = await response.arrayBuffer();
-        if (disposed || context !== audio) return false;
-        const buffer = await audio.decodeAudioData(bytes);
-        if (disposed || context !== audio || !buffer?.duration || buffer.duration > 2) return false;
-        voices.set(type, buffer); return true;
-      } catch { return false; }
-    })).then(results => results.every(Boolean)).finally(() => {
-      clearTimeout(timer); if (loadController === controller) loadController = null;
-      loadingVoices = null;
-    });
-    return loadingVoices;
+    const types = ['chips', ...(voiceEnabled ? TABLE_VOICE_CUES : [])];
+    return Promise.all(types.map(type => {
+      if (buffers.has(type)) return Promise.resolve(true);
+      if (loading.has(type)) return loading.get(type).promise;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const entry = { controller, promise: null };
+      entry.promise = (async () => {
+        try {
+          const response = await fetcher(new URL(`./audio/${type}.wav?v=${AUDIO_ASSET_VERSION}`, import.meta.url), { credentials: 'omit', signal: controller.signal });
+          if (!response.ok) return false;
+          const bytes = await response.arrayBuffer();
+          if (disposed || context !== audio) return false;
+          const buffer = await audio.decodeAudioData(bytes);
+          if (disposed || context !== audio || !buffer?.duration || buffer.duration > 2) return false;
+          buffers.set(type, buffer); return true;
+        } catch { return false; }
+        finally {
+          clearTimeout(timer);
+          if (loading.get(type) === entry) loading.delete(type);
+        }
+      })();
+      loading.set(type, entry);
+      return entry.promise;
+    })).then(results => results.every(Boolean));
   }
-  function register(node, gain) {
-    const entry = { node, gain }; active.add(entry);
+  function clearAudio() {
+    for (const { controller } of loading.values()) controller.abort();
+    loading.clear(); buffers.clear();
+  }
+  function register(node, gain, kind = 'tone') {
+    const entry = { node, gain, kind }; active.add(entry);
     node.connect(gain); gain.connect(context.destination);
     node.onended = () => {
       active.delete(entry);
       try { node.disconnect(); gain.disconnect(); } catch {}
     };
+    return entry;
   }
-  function cue(type, offset = 0) {
+  function cue(type, offset = 0, speech = false) {
+    let played = false;
     const start = context.currentTime + offset;
     for (const [from, to, delay, duration, volume] of tones[type]) {
       const oscillator = context.createOscillator(), gain = context.createGain();
@@ -280,72 +303,87 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       gain.gain.setValueAtTime(0.0001, start + delay);
       gain.gain.exponentialRampToValueAtTime(volume, start + delay + 0.004);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + delay + duration);
-      oscillator.start(start + delay); oscillator.stop(start + delay + duration + 0.01);
+      oscillator.start(start + delay); oscillator.stop(start + delay + duration + 0.01); played = true;
     }
-    if (type === 'chip' && context.createBuffer && context.createBufferSource) {
-      if (!chipBuffer) {
-        const rate = context.sampleRate || 44100;
-        const samples = chipContactSamples(rate);
-        chipBuffer = context.createBuffer(1, samples.length, rate);
-        chipBuffer.getChannelData(0).set(samples);
-      }
-      const source = context.createBufferSource(), gain = context.createGain(); source.buffer = chipBuffer;
-      register(source, gain); gain.gain.setValueAtTime(0.42, start);
-      source.start(start); source.stop(start + chipBuffer.duration + 0.01);
+    if (type === 'chip' && buffers.has('chips') && context.createBufferSource) {
+      // Ordinary prompts may accompany the natural tail. Another chip event
+      // replaces this channel so rapid bets never pile up recorded impacts.
+      stop('chip');
+      const source = context.createBufferSource(), gain = context.createGain(); source.buffer = buffers.get('chips');
+      const entry = register(source, gain, 'chip');
+      entry.volume = speech ? TABLE_AUDIO_MIX.chipsUnderVoice : TABLE_AUDIO_MIX.chips;
+      gain.gain.setValueAtTime(entry.volume, start);
+      source.start(start); source.stop(start + source.buffer.duration + 0.01); played = true;
     }
+    return played;
   }
-  function play(type, { chips = false } = {}) {
+  function play(type, { chips = false, speech = false } = {}) {
     if (!ready() || !Object.hasOwn(tones, type)) return false;
     const timestamp = now(); if (timestamp - lastPlayed < 90) return false;
-    stop();
+    stop('tone');
     try {
-      if (chips && type !== 'chip') cue('chip');
-      cue(type, chips && type !== 'chip' ? 0.08 : 0);
-      lastPlayed = timestamp; return true;
+      const chipsPlayed = chips && type !== 'chip' ? cue('chip', 0, speech) : false;
+      const effectPlayed = cue(type, chips && type !== 'chip' ? 0.08 : 0, speech);
+      if (chipsPlayed || effectPlayed) lastPlayed = timestamp;
+      return chipsPlayed || effectPlayed;
     } catch { stop(); return false; }
   }
   function speak(type) {
     // Cancel first even when this clip is unavailable, so a previous player's
     // action cannot continue to masquerade as the new player's action.
     stopVoice();
-    if (!ready() || !voiceEnabled || !voices.has(type) || !context.createBufferSource) return false;
+    if (!ready() || !voiceEnabled || !buffers.has(type) || !context.createBufferSource) return false;
     try {
+      // A check/fold voice can arrive while an earlier chip-only cue finishes.
+      // Apply the same existing duck level before this new voice starts.
+      for (const entry of active) if (entry.kind === 'chip' && entry.volume !== TABLE_AUDIO_MIX.chipsUnderVoice) {
+        entry.volume = TABLE_AUDIO_MIX.chipsUnderVoice;
+        entry.gain.gain.setValueAtTime(entry.volume, context.currentTime);
+      }
       const node = context.createBufferSource(), gain = context.createGain();
-      node.buffer = voices.get(type); gain.gain.setValueAtTime(0.56, context.currentTime);
+      node.buffer = buffers.get(type); gain.gain.setValueAtTime(TABLE_AUDIO_MIX.voice, context.currentTime);
       node.connect(gain); gain.connect(context.destination); const entry = { node, gain }; voiceSource = entry;
       node.onended = () => { if (voiceSource === entry) voiceSource = null; try { node.disconnect(); gain.disconnect(); } catch {} };
-      node.start(context.currentTime + 0.025); return true;
+      node.start(context.currentTime + TABLE_AUDIO_MIX.voiceLead); return true;
     } catch { stopVoice(); return false; }
   }
   return {
     setEnabled(value) { enabled = Boolean(value); if (!enabled) suspend(); },
     setVoiceEnabled(value) {
       voiceEnabled = Boolean(value);
-      if (!voiceEnabled) stopVoice(); else if (ready()) ignoreRejection(preloadVoices());
+      if (!voiceEnabled) stopVoice(); else if (ready()) ignoreRejection(preloadAudio());
     },
     async unlock() {
       if (disposed || !enabled || !visible() || !AudioContextClass) return false;
       const attempt = generation;
       try {
-        if (!context || context.state === 'closed') { context = new AudioContextClass(); voices.clear(); chipBuffer = null; }
+        if (!context || context.state === 'closed') { clearAudio(); context = new AudioContextClass(); }
         if (context.state !== 'running') await context.resume();
         unlocked = !disposed && enabled && visible() && attempt === generation && context.state === 'running';
-        if (unlocked) ignoreRejection(preloadVoices());
+        if (unlocked) ignoreRejection(preloadAudio());
         return unlocked;
       } catch { unlocked = false; return false; }
     },
-    play, speak, preloadVoices,
+    play, speak, stopPlayback, preloadAudio, preloadVoices: preloadAudio,
     playFeedback(feedback) {
-      const effect = feedback?.sound ? play(feedback.sound, { chips: feedback.chips === true }) : false;
+      // A command response and SSE can reach independent presentation hooks.
+      // Consume the event even while muted/loading so enabling audio cannot play
+      // an old action. Keep a bounded set, not a playback queue.
+      if (feedback?.eventId) {
+        if (heardEvents.has(feedback.eventId)) return false;
+        heardEvents.add(feedback.eventId);
+        if (heardEvents.size > 256) heardEvents.delete(heardEvents.values().next().value);
+      }
+      const effect = feedback?.sound ? play(feedback.sound, { chips: feedback.chips === true, speech: voiceEnabled && buffers.has(feedback.speech) }) : false;
       const spoken = feedback?.speech ? speak(feedback.speech) : false;
       return effect || spoken;
     },
     suspend,
     dispose() {
-      disposed = true; generation++; unlocked = false; stop(); stopVoice(); loadController?.abort();
+      disposed = true; generation++; unlocked = false; stop(); stopVoice(); clearAudio();
       doc?.removeEventListener?.('visibilitychange', visibilityChanged);
       try { if (context && context.state !== 'closed') ignoreRejection(context.close()); } catch {}
-      context = null; voices.clear(); chipBuffer = null;
+      context = null; heardEvents.clear();
     },
   };
 }

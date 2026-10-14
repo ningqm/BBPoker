@@ -94,7 +94,7 @@ export function createTableFunTracker() {
       while (seenChat.size > 500) seenChat.delete(seenChat.values().next().value);
       const before = previous?.hand, after = current.hand;
       if (emit && before?.id === after?.id && before?.runout && (after.runout || after.status === 'complete') &&
-          after.board.length === before.board.length + 1 && after.board.length <= 5 &&
+          (after.board.length === before.board.length + 1 || before.board.length === 0 && after.board.length === 3) && after.board.length <= 5 &&
           before.board.every((card, index) => card === after.board[index]) && after.seq > before.seq &&
           strongLeader && before.equity && after.equity?.leader && before.equity.eligibleKey === after.equity.eligibleKey &&
           strongLeader !== after.equity.leader && !patted.has(strongLeader)) {

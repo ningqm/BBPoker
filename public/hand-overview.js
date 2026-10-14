@@ -98,7 +98,7 @@ function actionText(event, bb, allInAfter) {
     case 'timebank': return Number.isSafeInteger(event.seconds) ? `使用时间牌 · 延长 ${event.seconds} 秒` : '使用时间牌';
     case 'allInLock': return '下注结束，开始全下跑牌';
     case 'street': return `发出${streetNames[event.street] || '公共牌'}`;
-    case 'runoutCard': return '跑牌 · 发出一张公共牌';
+    case 'runoutCard': return `跑牌 · 发出${streetNames[event.street] || '公共牌'}${event.street === 'flop' && event.board?.length === 3 ? '（三张）' : ''}`;
     case 'show': return '主动亮牌';
     case 'showdown': return '摊牌';
     case 'complete': return '本手结算';

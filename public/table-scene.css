@@ -1,0 +1,225 @@
+/* A fixed table footprint: seats and board never resize with action availability. */
+.at-table .room-shell{height:auto;min-height:calc(100dvh - 52px);max-width:1120px;padding:8px 28px 8px;display:block}
+.at-table .room-head{min-height:42px;margin:0 0 3px}.at-table .room-head h2{font-size:16px}
+.at-table .game-grid{display:block;min-height:0}.at-table .table-column{display:block;min-height:0}
+.at-table .table-stage{height:clamp(430px,calc(100dvh - 260px),660px);min-height:430px;max-height:none;flex:none;margin:20px 58px 12px}
+.at-table .felt{inset:3% -1% 2%;border-radius:45%;border-width:7px;background:radial-gradient(ellipse at 50% 38%,#def1e6,#c6e2d5 75%);box-shadow:0 0 0 1px #bbd3c7,0 7px 0 #dce9df,inset 0 0 0 2px #b4d0c0}
+.at-table .table-stage .seat{width:104px;isolation:auto;z-index:3}
+.at-table .table-stage .seat .seat-main,.at-table .table-stage .seat.acting .seat-main{height:62px;min-height:62px;padding:6px 7px;display:grid;grid-template-columns:27px minmax(0,1fr);grid-template-rows:20px 24px;column-gap:5px;border:1px solid #c5dacf;border-radius:13px;background:#fffffff2;box-shadow:0 3px 9px #1d594b0a}
+/* The identity card is one generous pointer target; the avatar remains its keyboard entry. */
+.at-table .table-stage .seat-main[data-action="player-stats"]{cursor:pointer;touch-action:manipulation}
+.at-table .table-stage .seat-main>.hole-cards{cursor:default}
+.at-table .table-stage .seat-main:has(.seat-avatar-button:focus-visible){outline:2px solid #267bd2;outline-offset:3px}
+.at-table .table-stage .seat .seat-avatar-button:focus-visible{outline:none}
+.at-table .table-stage .seat .seat-identity{display:contents}
+.at-table .table-stage .seat .seat-identity .seat-avatar-button{grid-column:1;grid-row:1/3;width:27px;height:27px;align-self:center;margin:0;left:auto;top:auto}
+.at-table .table-stage .seat .seat-identity .seat-avatar-button .avatar{width:100%;height:100%;font-size:18px}
+.at-table .table-stage .seat .name{grid-column:2;grid-row:1;font-size:11px;text-align:left;line-height:20px;min-width:0}
+.at-table .table-stage .seat .stack-value{grid-column:2;grid-row:2;font-size:17px;justify-content:flex-start;line-height:22px}
+.at-table .table-stage .seat .stack-unit{font-size:9px}
+.at-table .table-stage .seat .seat-status{position:absolute;left:50%;top:100%;transform:translateX(-50%);width:max-content;max-width:150px;font-size:10px;line-height:16px;height:auto;min-height:0;padding:0 5px;border-radius:5px;background:#edf5ef;white-space:nowrap;margin:3px 0 0;z-index:4}
+.at-table .table-stage .seat .seat-status:empty{display:none}
+.at-table .table-stage .seat .seat-status[data-tone=win]{color:#946409;background:#fff3c9;font-weight:800;border:1px solid #e8ce7d}
+.at-table .table-stage .seat .hole-cards{bottom:calc(100% + 5px);top:auto;left:50%;transform:translateX(-50%);gap:3px}
+.at-table .table-stage .seat .hole-cards .card{width:30px;height:42px;font-size:21px;padding:3px 4px}
+.at-table .table-stage .seat .hole-cards .card>span{font-size:20px;right:3px;bottom:2px}
+.at-table .table-stage .seat .hole-cards .card.face-down{width:25px;height:35px}
+.at-table .table-stage .seat[data-edge=top] .hole-cards{top:calc(100% + 6px);bottom:auto}
+.at-table .table-stage .seat.mine .own-cards .card{width:38px;height:53px;font-size:27px}
+.at-table .table-stage .seat.mine .own-cards .card>span{font-size:25px}
+.at-table .table-stage .seat.mine .own-cards.hand-finished{bottom:calc(100% + 9px);top:auto;left:50%;transform:translateX(-50%);gap:4px}
+.at-table .table-stage .seat.mine .own-cards.hand-finished .card{width:41px;height:57px;font-size:28px}
+.at-table .table-stage .seat.folded .hole-cards{filter:grayscale(1);opacity:.38}
+.at-table .table-stage .seat.folded .seat-main{background:#e9eeeb;color:#8b9791;border-color:#ced9d3;box-shadow:none}
+.at-table .table-stage .seat.folded .stack-value,.at-table .table-stage .seat.folded .stack-unit{color:#7f9187}
+.at-table .table-stage .seat.folded .seat-avatar-button .avatar{filter:grayscale(1);opacity:.6}
+.at-table .table-stage .seat.folded .hole-card-button.is-public{opacity:1}
+.at-table .table-stage .seat .seat-label{left:auto;right:-29px;top:3px;bottom:auto;width:25px;gap:4px;z-index:4}
+.at-table .table-stage .seat[data-side=left] .seat-label,.at-table .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-29px;right:auto}
+.at-table .table-stage .seat .seat-label b{flex:none}
+.at-table .table-stage .seat.acting .seat-main{border:2px solid #267bd2;padding:5px 6px;background:#fafdff;box-shadow:0 0 0 4px #3b8bea25}
+.seat-turn{position:absolute;left:-7px;top:-15px;display:flex;gap:4px;align-items:center;min-width:48px;height:24px;border-radius:14px;padding:2px 7px;background:#246cc4;color:white;border:2px solid #eef7ff;box-shadow:0 2px 5px #1b548b22;z-index:5;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.seat-turn:after{content:'';position:absolute;left:3px;right:3px;bottom:-5px;height:3px;background:#5aa5ef;border-radius:2px;transform:scaleX(var(--turn-progress,1));transform-origin:left}
+.turn-dot{width:5px;height:5px;border-radius:100%;background:#fff}.seat-turn.urgent{background:#d45c24}.seat-turn.urgent:after{background:#ee7138}.seat-turn.urgent .turn-dot{animation:actor-pulse .85s ease-in-out infinite}
+@keyframes actor-pulse{50%{opacity:.25}}
+.at-table .table-stage .seat.acting{z-index:5}
+.poker-chip{display:inline-block;flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:#bd9851;border:3px dashed #fff4d9;outline:1px solid #b99450;box-shadow:0 1px 2px #684b3326}
+.at-table .table-stage .bet-chip{position:absolute;left:50%;top:calc(100% + 28px);bottom:auto;transform:translateX(-50%);gap:5px;margin:0;padding:3px 7px;border:1px solid #bed0bb;background:#fffffff2;color:#365b46;font-size:12px;line-height:18px;font-weight:700;white-space:nowrap;z-index:2}
+.at-table .table-stage .bet-chip:before{display:none}
+.at-table .table-stage .seat[data-side=left] .bet-chip{left:calc(100% + 15px);top:18px;transform:none}
+.at-table .table-stage .seat[data-side=right] .bet-chip{left:auto;right:calc(100% + 15px);top:18px;transform:none}
+.at-table .table-stage .seat[data-edge=bottom] .bet-chip{top:auto;bottom:calc(100% + 72px)}
+.at-table .table-stage .seat[data-edge=top] .bet-chip{top:calc(100% + 58px)}
+.at-table .table-stage .seat-hand-info{position:absolute;top:calc(100% + 21px);left:50%;transform:translateX(-50%);display:flex;gap:4px;align-items:center;justify-content:center;white-space:nowrap;width:max-content;max-width:155px;z-index:2}
+.at-table .table-stage .seat-hand-info:empty{display:none}
+.at-table .table-stage .seat-hand-info .equity-badge{position:static!important;transform:none!important;margin:0!important}
+.hand-category{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;white-space:nowrap;font-size:11px;line-height:1.45;font-weight:750;padding:2px 6px;border-radius:6px;color:var(--hand-ink,#52616d);background:var(--hand-fill,#f0f3f5);border:1px solid var(--hand-edge,#c9d1d7);box-shadow:var(--hand-shadow,none)}
+/* A visible break at straight: soft everyday badges become saturated strong
+   hands, then metallic gold and black-gold. Preserve badge dimensions. */
+.hand-category[data-hand-category=high-card]{--hand-ink:#52616d;--hand-fill:#eef1f4;--hand-edge:#bac4cd}
+.hand-category[data-hand-category=pair]{--hand-ink:#104d32;--hand-fill:#9be3bb;--hand-edge:#32865a}
+.hand-category[data-hand-category=two-pair]{--hand-ink:#123e76;--hand-fill:#83c8ff;--hand-edge:#397cc7}
+.hand-category[data-hand-category=trips]{--hand-ink:#48236c;--hand-fill:#d5b8f5;--hand-edge:#9b6cc4}
+.hand-category[data-hand-category=straight]{--hand-ink:#083e49;--hand-fill:linear-gradient(90deg,#79e8e1,#42d0d9);--hand-edge:#15949e;--hand-shadow:inset 0 1px 0 #dcfffa,inset 0 -1px 0 #139aa52e,0 2px 4px #159ca426}
+.hand-category[data-hand-category=flush]{--hand-ink:#560c3c;--hand-fill:linear-gradient(120deg,#ff92d6,#f45ab9 58%,#f978cb);--hand-edge:#c42b87;--hand-shadow:inset 0 1px 0 #ffe4f7,0 2px 5px #d72b9535}
+.hand-category[data-hand-category=full-house]{--hand-ink:#fff;--hand-fill:linear-gradient(135deg,#702caf,#48167e);--hand-edge:#b984ee;--hand-shadow:inset 0 1px 0 #f2dfff66,0 2px 5px #52208340}
+.hand-category[data-hand-category=quads]{--hand-ink:#431900;--hand-fill:linear-gradient(135deg,#ff9d35,#f27817);--hand-edge:#bd4d06;--hand-shadow:inset 0 1px 0 #ffdf9b,0 0 0 1px #ffb54145,0 2px 5px #b35a1e45}
+.hand-category[data-hand-category=straight-flush]{--hand-ink:#4b2905;--hand-fill:linear-gradient(120deg,#ffe58a 0%,#ffc638 46%,#ffe99b 65%,#e5a51c 100%);--hand-edge:#a56c09;--hand-shadow:inset 0 1px 0 #fff7d4,0 0 0 1px #ffe18a99,0 2px 6px #d2952759}
+.hand-category[data-hand-category=royal-flush]{--hand-ink:#4b2905;--hand-fill:linear-gradient(120deg,#fff3bd 0%,#ffd45d 38%,#fff4cb 59%,#eebb39 100%);--hand-edge:#a56c09;--hand-shadow:inset 0 0 0 1px #fff6d0cc,inset 0 1px 0 #fffdf0,0 0 0 1px #eec666bb,0 2px 7px #b5812259}
+.hand-category:is([data-hand-category=straight],[data-hand-category=flush],[data-hand-category=full-house],[data-hand-category=quads],[data-hand-category=straight-flush],[data-hand-category=royal-flush]){font-weight:800;text-shadow:0 1px 1px #00000024}
+.hand-category[data-hand-category=straight]{text-shadow:0 1px 0 #c8fff766}
+.hand-category[data-hand-category=flush]{text-shadow:0 1px 0 #ffd9ef88}
+.hand-category[data-hand-category=quads]{text-shadow:0 1px 0 #ffc982}
+.hand-category[data-hand-category=straight-flush]{text-shadow:0 1px 0 #fff0b4}
+.hand-category[data-hand-category=royal-flush]{text-shadow:0 1px 0 #fff6d4}
+.at-table .table-stage .seat[data-edge=top] .seat-hand-info{top:-22px}
+.at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 21px)}
+.at-table .table-stage .table-center{top:50%;width:310px;min-width:0;transform:translate(-50%,-50%);z-index:1}
+.at-table .table-stage .table-config{max-width:310px;margin:0 auto 9px}.at-table .table-config-primary{background:#eef7f1c4;border-color:#b9d4c57a}
+.pot-cluster{display:flex;flex-direction:column;align-items:center;gap:5px;margin:6px auto 10px;font-variant-numeric:tabular-nums}
+.pot-total{display:flex;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;padding:5px 13px;border:1px solid #aecbb7;border-radius:22px;background:#f4faf4d9;box-shadow:0 3px 9px #244d3310}
+.pot-total>span{font-size:11px;color:#59705f}.pot-total>strong{font-size:25px;color:#285b40;letter-spacing:-.04em}
+.pot-breakdown{display:flex;justify-content:center;flex-wrap:wrap;gap:4px;max-width:100%}
+.pot-token{display:flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid #d5c295;border-radius:10px;background:#fff8e4;font-size:10px;color:#775423;white-space:nowrap}.pot-token b{font-weight:750}.pot-token .poker-chip{width:11px;height:11px;border-width:2px}
+.pot-token.side-pot{background:#edf1ff;border-color:#b9c7e2;color:#49618e}.side-pot .poker-chip{background:#5d7eb5;outline-color:#6787b9;border-color:#f0f4ff}
+.uncalled-pot{font-size:9px;color:#778679;line-height:20px;padding:0 4px}
+.at-table .table-center .board{margin:8px 0;gap:5px}.at-table .table-center .result-title{font-size:12px;color:#8a601c;line-height:1.4;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-countdown{font-size:11px;color:#47735c;font-weight:650;display:block;margin-top:5px}
+.at-table .seat-reaction{position:absolute;left:0;top:0;bottom:auto;transform:none;max-width:145px;width:max-content;max-height:66px;border-radius:12px;padding:6px 9px;display:flex;flex-direction:column;gap:3px;z-index:20;background:#fffdf8;box-shadow:0 3px 10px #20544020;pointer-events:none;border:1px solid #d4c8a9;color:#314c3c;font-size:12px;line-height:1.45;overflow:hidden}
+.at-table .seat-reaction small{font-size:9px;color:#7f8e83;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;max-width:110px}.at-table .seat-reaction>span:not(.chat-emote){display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.at-table .seat-reaction.is-emote{padding:4px 8px;min-width:42px;text-align:center}.at-table .seat-reaction .chat-emote{font-size:29px;line-height:1.1}
+.pot-flight-layer{position:absolute;inset:0;z-index:15;pointer-events:none;overflow:visible}.pot-flight{position:absolute;width:24px;height:24px;animation:award-chips 1050ms cubic-bezier(.3,.8,.3,1) both;pointer-events:none}.pot-flight i{position:absolute;width:21px;height:21px;border-radius:50%;background:#c49a45;border:3px dashed #fff5d8;box-shadow:0 2px 0 #8b6933}.pot-flight i:nth-child(2){top:-5px;left:3px}.pot-flight i:nth-child(3){top:-10px;left:6px}
+@keyframes award-chips{0%,15%{opacity:1;transform:translate(-50%,-50%) scale(.9)}85%{opacity:1;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.75)}100%{opacity:0;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.5)}}
+.at-table .table-toolbar{margin-top:5px;min-height:38px}.at-table .table-drawer{bottom:190px;top:92px;z-index:20}
+@media(max-width:760px){
+ .at-table .room-shell,.at-table .room-shell:has(.table-stage){height:auto;min-height:calc(100dvh - 45px);padding:4px 10px 6px}.at-table .room-head{min-height:42px}.at-table .room-head h2{font-size:13px}
+ .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){height:clamp(460px,calc(100dvh - 340px),640px);min-height:460px;margin:18px 29px 20px;max-height:none}
+ .at-table .table-stage .seat{width:70px}.at-table .table-stage .seat[data-side=left]{--seat-x:5%}.at-table .table-stage .seat[data-side=right]{--seat-x:95%}
+ .at-table .table-stage .seat .seat-main,.at-table .table-stage .seat.acting .seat-main{height:49px;min-height:49px;grid-template-columns:18px minmax(0,1fr);grid-template-rows:16px 20px;column-gap:3px;padding:5px 3px;border-radius:10px}
+ .at-table .table-stage .seat.acting .seat-main{padding:4px 2px}
+ .at-table .table-stage .seat .seat-identity .seat-avatar-button{width:18px;height:23px}.at-table .table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:12px}
+ .at-table .table-stage .seat .name{font-size:9px;line-height:16px}.at-table .table-stage .seat .stack-value{font-size:13px;line-height:19px;gap:1px}.at-table .table-stage .seat .stack-unit{font-size:7px}
+ .at-table .table-stage .seat .hole-cards .card{width:26px;height:36px;font-size:18px;padding:2px 3px}.at-table .table-stage .seat .hole-cards .card>span{font-size:17px}
+ .at-table .table-stage .seat:not(.mine) .hole-cards .card.face-down{width:22px;height:29px}
+ .at-table .table-stage .seat.mine .own-cards .card{width:33px;height:46px;font-size:24px}.at-table .table-stage .seat.mine .own-cards .card>span{font-size:22px}
+ .at-table .table-stage .seat.mine .own-cards.hand-finished .card{width:35px;height:49px;font-size:25px}
+ .at-table .table-stage .seat .seat-label{right:-23px;width:21px;top:3px;gap:3px}.at-table .table-stage .seat[data-side=left] .seat-label,.at-table .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-23px;right:auto}
+ .at-table .table-stage .seat .seat-status{font-size:8px;line-height:13px;margin-top:2px;max-width:120px}
+ .seat-turn{left:-6px;top:-13px;height:20px;min-width:40px;font-size:10px;padding:1px 5px;gap:3px}
+ .at-table .table-stage .bet-chip{font-size:10px;padding:2px 5px;line-height:15px;gap:3px}.bet-chip .poker-chip{width:12px;height:12px;border-width:2px}
+ .at-table .table-stage .seat[data-side=left] .bet-chip{left:calc(100% + 7px);top:21px}.at-table .table-stage .seat[data-side=right] .bet-chip{right:calc(100% + 7px);top:21px}
+ .at-table .table-stage .seat[data-edge=top] .bet-chip{top:calc(100% + 50px)}.at-table .table-stage .seat[data-edge=bottom] .bet-chip{bottom:calc(100% + 65px)}
+ .at-table .table-stage .seat-hand-info{max-width:108px;gap:2px;top:calc(100% + 17px)}.at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 18px)}.hand-category{font-size:10px;padding:1px 4px}
+ /* The two top seats share a narrow arc on a nine-seat table. Reserve this
+    space throughout the hand so long categories never shift the table mid-turn. */
+ .at-table .table-stage[data-seat-count="9"]{margin-top:38px}
+ .at-table .table-stage[data-seat-count="9"] .seat[data-edge=top] .seat-hand-info{flex-direction:column;top:auto;bottom:calc(100% + 4px);max-width:84px}
+ .at-table .table-stage .seat[data-edge=left] .seat-hand-info{top:calc(100% + 3px)}
+ .at-table .table-stage .seat[data-edge=right] .seat-hand-info{top:calc(100% + 3px)}
+ .at-table .table-stage .seat-hand-info .equity-badge{font-size:9px;padding:1px 2px}
+ .at-table .table-stage .table-center{width:180px;top:51%}.at-table .table-stage .table-config{max-width:180px;margin-bottom:7px}.at-table .table-center .board{gap:3px;margin:6px 0}
+ .at-table .table-center .card{width:33px;height:47px;font-size:23px;padding:3px}.at-table .table-center .card span{font-size:22px}
+ .pot-cluster{gap:4px;margin:5px auto 7px}.pot-total{gap:5px;padding:4px 8px}.pot-total>span{font-size:9px}.pot-total>strong{font-size:21px}.pot-total>.poker-chip{width:14px;height:14px}
+ .pot-token{font-size:8px;gap:3px;padding:2px 5px}.pot-breakdown{gap:3px}.uncalled-pot{font-size:8px;line-height:16px}.result-countdown{font-size:9px}.at-table .table-center .result-title{font-size:10px}
+ .at-table .seat-reaction{max-width:105px;font-size:10px;line-height:1.35;padding:5px 7px;max-height:57px}.at-table .seat-reaction small{font-size:8px}.at-table .seat-reaction .chat-emote{font-size:25px}
+ .at-table .table-drawer{top:78px;bottom:183px;left:10px;right:10px;max-height:none;min-height:140px;padding:12px}
+}
+@media(max-width:360px){
+ .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){margin-left:26px;margin-right:26px;min-height:480px;height:max(480px,calc(100dvh - 340px))}
+ .at-table .table-stage .seat{width:62px}.at-table .table-stage .seat .seat-main,.at-table .table-stage .seat.acting .seat-main{grid-template-columns:15px minmax(0,1fr);column-gap:2px}.at-table .table-stage .seat .seat-identity .seat-avatar-button{width:15px;height:20px}.at-table .table-stage .seat .stack-value{font-size:12px}.at-table .table-stage .seat .name{font-size:8px}
+ .at-table .table-stage .table-center{width:156px}.at-table .table-stage .table-config{max-width:156px}.at-table .table-center .card{width:28px;height:43px;font-size:21px}.at-table .table-center .card span{font-size:20px}.pot-total{padding:4px 6px;gap:4px}.pot-total>strong{font-size:18px}.pot-total>span{font-size:8px}.pot-token{font-size:8px}.pot-token .poker-chip{display:none}
+ .at-table .table-stage .seat .seat-label{right:-18px;width:16px}.at-table .table-stage .seat[data-side=left] .seat-label,.at-table .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-18px;right:auto}
+}
+.no-motion .pot-flight-layer{display:none}.no-motion .seat-turn .turn-dot{animation:none}
+@media(prefers-reduced-motion:reduce){.pot-flight-layer{display:none}.seat-turn .turn-dot{animation:none}}
+
+/* Timers hug the avatar side, clear of card ranks and suits. */
+.at-table .seat-turn{left:-53px;right:auto;top:16px}
+.at-table .seat[data-side=left] .seat-turn{left:calc(100% + 10px);right:auto;top:-10px}
+.at-table .seat[data-side=right] .seat-turn{right:calc(100% + 10px);left:auto;top:-10px}
+@media(max-width:760px){.at-table .seat-turn{left:-43px;top:13px}.at-table .seat[data-side=left] .seat-turn{left:calc(100% + 7px);top:-6px}.at-table .seat[data-side=right] .seat-turn{right:calc(100% + 7px);top:-6px}}
+@media(max-width:760px){
+ .at-table .table-stage .table-center.has-hand .table-config{margin-bottom:72px}
+ .at-table .table-stage .seat[data-side=right] .seat-label{right:-18px}
+ .at-table .table-stage .seat[data-side=left] .seat-label{left:-18px}
+}
+
+@media(max-width:360px){.at-table .table-stage .seat[data-side=right] .seat-label{right:-16px}}
+
+@media(max-width:760px){.at-table .table-stage .table-center.is-complete .table-config{margin-bottom:18px}}
+.at-table .table-center .hand-result .result-title{margin:3px 0;line-height:14px}
+
+/* Top-up stays visible above the felt, without changing height when queued. */
+.at-table .room-head{height:58px;min-height:58px;align-items:center;gap:10px}
+.at-table .room-heading{min-width:0;flex:1}.at-table .room-heading h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.at-table .room-head-tools{display:flex;flex-direction:row;align-items:flex-start;gap:8px;flex:none;min-width:0}
+.table-topup{display:flex;flex-direction:column;align-items:center;min-width:96px;gap:3px;height:50px}
+.at-table .table-topup .table-topup-button{min-height:31px;padding:5px 16px;border:1px solid #be8a30;border-radius:11px;background:#fff1cb;color:#805014;font-size:13px;font-weight:750;white-space:nowrap}
+.table-topup-status{font-size:10px;line-height:14px;font-variant-numeric:tabular-nums;white-space:nowrap;color:#5d7666}
+.table-topup.is-pending .table-topup-status{color:#8a5208;font-weight:700}.table-topup.is-pending .table-topup-button{background:#ffe0a1}
+.table-topup-button:disabled{opacity:.5;cursor:default}
+.topup-timing{font-size:13px;line-height:1.7;background:#eef6f0;border:1px solid #d3e6d8;padding:10px 12px;border-radius:10px;margin:0 0 12px;color:#315944}
+.topup-pending{color:#8b570d;background:#fff1ce;padding:8px 10px;border-radius:8px;font-size:13px;margin:0 0 12px}.topup-pending[hidden]{display:none}
+@media(max-width:760px){
+ .at-table .room-head{height:58px;min-height:58px;gap:5px}.at-table .room-head h2{font-size:13px}.at-table .room-head-tools{gap:5px}
+ .at-table .table-stage{height:clamp(460px,calc(100dvh - 356px),640px)}
+ .table-topup{min-width:78px}.at-table .table-topup .table-topup-button{font-size:12px;padding:5px 11px}.table-topup-status{font-size:9px}
+ .at-table .room-head-tools>button{min-height:31px;padding:5px 8px;font-size:11px}
+}
+@media(max-width:360px){.at-table .table-stage{min-height:480px}.table-topup{min-width:74px}.table-topup-status{font-size:8px}.at-table .room-head h2{font-size:12px}}
+
+/* All-in belongs to the chips on the felt, never the cards or identity panel. */
+.at-table .table-stage .bet-chip.is-allin{border-color:#d5819b;background:#fff2f6;color:#963754;gap:5px}
+.bet-chip.is-allin .poker-chip{background:#b6456c;outline-color:#a53f61;border-color:#ffe4ed}
+.bet-chip .bet-allin-label{font-size:10px;line-height:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap}
+.bet-chip .bet-value{font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Your remaining time and time cards share one target group beside your avatar. */
+.at-table .table-stage .seat.mine .seat-time-tools{position:absolute;right:calc(100% + 10px);top:2px;display:flex;flex-direction:column;align-items:center;gap:4px;width:104px;z-index:6}
+.at-table .table-stage .seat-time-tools .seat-turn{position:relative;inset:auto;transform:none;margin:0;justify-content:center;min-width:52px}
+.at-table .table-stage .seat-time-tools .timebank-button{display:flex;align-items:center;justify-content:center;width:104px;min-height:36px;padding:6px 7px;margin:0;font-size:11px;line-height:1.2;font-weight:650;white-space:nowrap;border:1px solid #c2a7e3;border-radius:12px;background:#f0e7fc;color:#7045a7;box-shadow:0 2px 6px #5a358b12;touch-action:manipulation}
+.at-table .table-stage .seat-time-tools .timebank-button:disabled{background:#eff0f2;border-color:#d5d9de;color:#87929c;box-shadow:none;cursor:default;opacity:.85}
+.at-table .table-stage .seat-time-tools .timebank-button:not(:disabled):hover{background:#e4d4fa;border-color:#9670c9}
+.at-table .table-stage .seat-time-tools .timebank-button:focus-visible{outline:2px solid #7146b7;outline-offset:3px}
+@media(max-width:760px){
+ .at-table .table-stage .bet-chip.is-allin:has(.bet-value){display:grid;grid-template-columns:12px auto;column-gap:4px;row-gap:0;padding:3px 5px}
+ .bet-chip.is-allin:has(.bet-value) .poker-chip{grid-column:1;grid-row:1/3;align-self:center}
+ .bet-chip.is-allin .bet-value{grid-column:2;grid-row:1;line-height:13px}
+ .bet-chip.is-allin .bet-allin-label{grid-column:2;grid-row:2;font-size:9px;line-height:12px}
+ .at-table .table-stage .seat.mine .seat-time-tools{right:calc(100% + 9px);width:92px;top:0;gap:4px}
+ .at-table .table-stage .seat-time-tools .seat-turn{min-width:46px;height:23px;font-size:11px}
+ .at-table .table-stage .seat-time-tools .timebank-button{width:92px;min-height:36px;padding:6px 4px;font-size:10px}
+}
+@media(max-width:360px){
+ .at-table .table-stage .seat.mine .seat-time-tools{right:calc(100% + 7px);width:82px}
+ .at-table .table-stage .seat-time-tools .timebank-button{width:82px;font-size:9px}
+}
+/* Nine-way All-in needs a separate inner lane for the middle seats and settings. */
+@media(max-width:760px){
+ .at-table .table-stage[data-seat-count="9"] .seat:is([data-relative-seat="2"],[data-relative-seat="7"]) .bet-chip.is-allin,
+ .at-table .table-stage[data-seat-count="8"] .seat:is([data-relative-seat="2"],[data-relative-seat="6"]) .bet-chip.is-allin,
+ .at-table .table-stage[data-seat-count="4"] .seat:is([data-relative-seat="1"],[data-relative-seat="3"]) .bet-chip.is-allin{top:-54px}
+ .at-table .table-stage[data-seat-count="9"]:has(.bet-chip.is-allin) .table-config{transform:translateY(28px)}
+}
+@media(max-width:360px){
+ .at-table .table-stage .bet-chip.is-allin:has(.bet-value){grid-template-columns:10px auto;column-gap:3px;padding:3px}
+ .bet-chip.is-allin .poker-chip{width:10px;height:10px}
+ .bet-chip.is-allin .bet-value{font-size:9px;line-height:12px}
+ .bet-chip.is-allin .bet-allin-label{font-size:8px;line-height:11px}
+}
+
+/* Upgrades reveal after the 520 ms card flip reaches its visible midpoint. */
+.hand-category-upgrade{display:inline-grid;flex:0 0 auto;isolation:isolate}
+.hand-category-upgrade>.hand-category{grid-area:1/1;align-self:center;justify-self:center;animation-duration:1s;animation-timing-function:ease-out;animation-fill-mode:both;animation-delay:calc(0ms - var(--category-age,0ms));transform-origin:center}
+.hand-category-upgrade>.category-before{animation-name:hand-category-before}
+.hand-category-upgrade>.category-after{animation-name:hand-category-after}
+@keyframes hand-category-before{0%,26%{opacity:1}28%,100%{opacity:0}}
+@keyframes hand-category-after{0%,26%{opacity:0;transform:translateY(3px) scale(.94)}28%{opacity:1;transform:translateY(3px) scale(.94)}48%{opacity:1;transform:translateY(-1px) scale(1.1)}75%,100%{opacity:1;transform:translateY(0) scale(1)}}
+.no-motion .hand-category-upgrade>.category-before{display:none}
+.no-motion .hand-category-upgrade>.category-after{animation:none}
+@media(prefers-reduced-motion:reduce){.hand-category-upgrade>.category-before{display:none}.hand-category-upgrade>.category-after{animation:none}}
+
+
+/* Side-seat result/status shares one line with the category, leaving room for
+   the next player's hole cards; its full description remains on the tooltip. */
+.at-table .table-stage .seat-hand-info .seat-status-inline{position:static;transform:none;margin:0;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:760px){.at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.seat-status-inline){max-width:94px}}

@@ -57,15 +57,16 @@ export function squidMode(room) {
   const countsForSquid = Boolean(room.hand && (Object.hasOwn(room.hand, 'squidRound')
     ? Number(room.hand.squidRound) > 0 && Number(room.hand.squidRound) === round : true));
   const ordinaryHand = playing && !countsForSquid;
-  const waitingAtExpiry = room.expiryMode === 'wait-squid';
+  const waitingAtExpiry = room.expiryMode === 'wait-squid', admissionClosed = squidAdmissionClosed(room, null);
   const blocked = Boolean(squid.blockerSince), settlingAbsentees = Boolean(squid.absentSettlementAt);
   const label = settlingAbsentees ? '本轮即将按现有标记结算' : waitingAtExpiry ? playing ? '已到时 · 本手结束后等待原轮继续' : '原轮鱿鱼等待玩家 · 期间不开新手'
     : ordinaryHand ? '本手普通德州 · 下一手继续原轮鱿鱼'
     : blocked ? playing ? '本手仍计鱿鱼 · 结束后等待玩家' : '原轮鱿鱼等待玩家' : '';
   const note = settlingAbsentees ? '可继续的原轮玩家均已有标记。等待片刻后按现有标记结轮；未获标者及时回来并满足参与条件，仍可继续原轮。' : waitingAtExpiry ? '牌桌已到时，可参与的原轮玩家不足两人。等待窗口内恢复就继续原轮，否则按现有标记结算散桌。'
-    : ordinaryHand ? '本手沿用发牌时的玩法，不获得鱿鱼标记；下一手按原名单继续，新人等下一轮。'
-    : blocked ? '可参与的原轮玩家不足两人，暂不开新手。名单、标记和预留保留，回来后可继续本轮。'
-    : '缺席者不发新牌、不持续扣盲，已有标记与预留保留。其余原轮玩家继续；新人等下一轮。';
+    : admissionClosed ? '牌桌已到时，仅已加入本轮的玩家继续或返回；不再增加参与者或本轮鱼数。'
+    : ordinaryHand ? '本手沿用发牌时的玩法，不获得鱿鱼标记；下一手继续本轮，符合入场条件的新人可加入。'
+    : blocked ? '可参与的本轮玩家不足两人，暂不开新手。已有鱼和预留保留；未到时可等返桌或符合条件的新人加入。'
+    : '缺席者不发新牌、不持续扣盲，已有鱼与预留保留。新人符合等盲或补盲及预留条件后，从下一手加入本轮，初始无鱼且总鱼数加 1。';
   return { paused: blocked, playing, round, countsForSquid, ordinaryHand, waitingAtExpiry, settlingAbsentees, label, note };
 }
 
@@ -85,6 +86,35 @@ export function entryBlindView(room, player) {
     missed: entry.reason === 'missed', canChoose: player.seat != null && !player.pendingDeparture && !player.sittingOut };
 }
 
+// The server projects admission against the next legal deal. The client does not
+// expand the round or calculate charges, including when several newcomers wait.
+export function squidJoinView(room, player) {
+  const squid = room.mini?.squid;
+  if (!squid?.active || room.status === 'closed' || player?.seat == null || squid.participants?.includes(player.id)) return null;
+  const quote = player.squidJoin;
+  if (quote && Number(quote.round) !== Number(squid.round)) return null;
+  if (!quote && player.waitingFor !== 'squid') return null;
+  const status = quote?.status || 'next-hand', entry = entryBlindView(room, player);
+  const names = {
+    'next-hand': ['等待加入本轮', '待入本轮'],
+    'entry-blind': [entry?.label || '等待入桌位置', entry?.seatLabel || '等入桌'],
+    reserve: ['等待补足鱿鱼预留', '等预留'], expired: ['已到时 · 不再加入本轮', '已到时'],
+    offline: ['连接恢复后再加入本轮', '离线'], 'sitting-out': ['返回后再加入本轮', '暂离'],
+    capacity: ['本轮暂不可增加参与者', '暂不可入'],
+  };
+  const [label, seatLabel] = names[status] || ['等待加入本轮', '待入本轮'];
+  const requiredReserve = Number.isSafeInteger(quote?.requiredReserve) && quote.requiredReserve >= 0 ? quote.requiredReserve : null;
+  const budget = Number.isSafeInteger(quote?.tokenBudgetAfterJoin) && quote.tokenBudgetAfterJoin > 0 ? quote.tokenBudgetAfterJoin : null;
+  return { status, label, seatLabel, requiredReserve, budget, minimum: room.hand?.status === 'playing',
+    note: typeof quote?.reason === 'string' && quote.reason ? quote.reason : '符合等盲或补盲及预留条件后，实际拿牌才加入本轮；以 0 鱼入轮，总鱼数加 1。' };
+}
+
+export function squidAdmissionClosed(room, player, now = Date.now()) {
+  const end = typeof room.endsAt === 'number' ? room.endsAt : Date.parse(room.endsAt);
+  return Boolean(room.mini?.squid?.active && !room.mini.squid.participants?.includes(player?.id) &&
+    (room.expiryMode || Number.isFinite(end) && now >= end));
+}
+
 export function participation(room, player) {
   if (!player || player.seat == null) return { label: '观战中', note: '选择空座，带入积分后参加。' };
   if (player.pendingDeparture) return {
@@ -93,27 +123,30 @@ export function participation(room, player) {
   };
   if (room.hand?.status === 'playing' && player.inHand) return { label: '正在参与本手', note: '' };
   if (player.sittingOut) return { label: '你已暂离', note: '座位、鱿鱼资格与预留保留。回来后可继续未结束的原轮。', canReturn: true };
-  if (player.waitingFor === 'squid') return { label: '等待下一轮鱿鱼', note: '当前轮名单固定；入桌等盲或补盲的选择在本轮结束后生效。' };
+  const join = squidJoinView(room, player);
+  if (join) return join;
   const entry = entryBlindView(room, player);
   if (entry) return entry;
   if (player.waitingFor === 'hand') return { label: '等待下一手', note: '已入座，从符合条件的下一手开始参与。' };
   return { label: '已入座', note: '' };
 }
 
-export function buyinTiming(room, isSit = true, player = null) {
-  if (!isSit && room.hand?.status === 'playing') return '本手结束后可补充积分，不影响当前手的投入。';
+export function buyinTiming(room, isSit = true, player = null, now = Date.now()) {
+  if (!isSit) return room.hand?.status === 'playing'
+    ? '现在补码将于本手结束后到账，下一手可用，不增加本手可下注筹码。'
+    : '立即到账，下次发牌前可用。';
   const original = room.mini?.squid?.active && room.mini.squid.participants?.includes(player?.id);
-  if (isSit && room.expiryMode && !original) return '牌桌已到时，仅收尾原轮鱿鱼；新入座者不参加原轮。';
-  if (isSit && original) return '本轮鱿鱼资格、已有标记与预留都保留，重新入座不会再收一份预留。';
-  if (isSit && room.mini?.squid?.active) return '本轮鱿鱼正在进行，入座后等下一轮，再按等盲或补盲方式参与。';
+  if (isSit && squidAdmissionClosed(room, player, now)) return '牌桌已到时，仅收尾本轮；新玩家不能再入座参加本轮，可留在房间观战。';
+  if (isSit && original) return '本轮鱿鱼资格、已有鱼与预留都保留，重新入座不重复增加鱼数或收一份入轮预留；漏盲仍按提示处理。';
+  if (isSit && room.mini?.squid?.active) return '可中途加入本轮。符合等盲或补盲及预留条件后，从符合条件的下一手以 0 鱼加入，总鱼数加 1；实际拿牌时才收预留，等待时不扣盲。';
   if (isSit && room.hand?.status === 'playing') return '这手已经开始，入座后等待后续符合条件的手牌。';
-  return isSit ? '确认后立即入座，无需房主审核。' : '确认后立即补充积分，无需房主审核。';
+  return '确认后立即入座，无需房主审核。';
 }
 
 export function departurePlan(room, player, type) {
   const squid = room.mini?.squid, participant = Boolean(squid?.active && squid.participants?.includes(player?.id));
   const progress = squidProgress(room), fishCount = participant ? progress.counts[player.id] || 0 : 0, won = fishCount > 0;
-  const maxFish = progress.mode === 'unlimited' ? progress.budget ?? progress.participants + Number(room.settings?.squidExtraTokens ?? 3) : progress.participants - 1;
+  const maxFish = progress.budget ?? (progress.mode === 'unlimited' ? progress.participants + Number(room.settings?.squidExtraTokens ?? 3) : progress.participants - 1);
   const cost = participant && !won ? Number.isSafeInteger(player?.squidMaxLoss) && player.squidMaxLoss >= 0
     ? player.squidMaxLoss : Math.max(0, maxFish * Number(squid.unit || 0)) : 0;
   const reserve = participant ? Math.max(0, Number(player?.squidReserve) || cost) : 0;

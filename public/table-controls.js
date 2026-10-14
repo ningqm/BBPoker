@@ -39,15 +39,45 @@ export function betPresetOptions(room) {
   const a=room?.actions||{},me=room?.players?.find(p=>p.id===room.meId);
   if(!betAmountBounds(room))return [];
   const call=Number(a.callAmount)||0,total=(Number(me?.bet)||0)+call,pot=(Number(room.hand?.pot)||0)+call;
-  return [['1/3池','third',1/3],['1/2池','half',.5],['2/3池','two-thirds',2/3],['满池','pot',1],['1.2倍池','over',1.2],['全下','all',null]].map(([label,id,fraction])=>{
-    const amount=id==='all'?a.maxRaiseTo:normalizeBetAmount(room,total+pot*fraction);
+  return [['1/3池','third',1/3],['1/2池','half',.5],['2/3池','two-thirds',2/3],['满池','pot',1]].map(([label,id,fraction])=>{
+    const amount=normalizeBetAmount(room,total+pot*fraction);
     return {id,label,amount,available:Number.isSafeInteger(amount)&&amount>=a.minRaiseTo&&amount<=a.maxRaiseTo};
   });
 }
 
 export function betActionLabel(room,amount) {
-  if(amount===room?.actions?.maxRaiseTo)return '全下至';
+  if(amount===room?.actions?.maxRaiseTo)return 'All-in';
   return Number(room?.hand?.currentBet)>0?'加至':'下注';
+}
+
+// Presets are selections, not amounts: rounding or a short stack may give two
+// presets the same amount without making both of them the chosen control.
+export function betSelection(room,amount,preset=null) {
+  const value=normalizeBetAmount(room,amount),option=betPresetOptions(room).find(p=>p.id===preset);
+  return {amount:value,preset:option?.available&&option.amount===value?option.id:null};
+}
+
+export function betTurnKey(room) {
+  if(!room?.actions?.canAct||room.hand?.status!=='playing'||room.hand?.transition||room.hand?.runout?.active)return null;
+  return [room.code,room.hand.id,room.hand.actionSeq,room.hand.actingId].join(':');
+}
+
+export function syncBetControls(room,current={}) {
+  const key=betTurnKey(room),same=Boolean(key&&key===current.key);
+  const selected=betSelection(room,same?current.amount:room?.actions?.minRaiseTo,same?current.preset:null);
+  return {...selected,key,panelOpen:Boolean(same&&room.actions.canRaise&&current.panelOpen)};
+}
+
+export function betSliderKeyPosition(key,position) {
+  const current=Math.max(0,Math.min(1000,Number(position)||0));
+  const next={ArrowUp:current+10,ArrowRight:current+10,ArrowDown:current-10,ArrowLeft:current-10,PageUp:current+100,PageDown:current-100,Home:0,End:1000}[key];
+  return next===undefined?null:Math.max(0,Math.min(1000,next));
+}
+
+export function betActionEnabled(room,action) {
+  const a=room?.actions||{};
+  if(room?.status==='closed'||room?.hand?.status!=='playing'||room?.hand?.transition||!a.canAct)return false;
+  return Boolean(({fold:a.canFold,check:a.canCheck,call:!a.canCheck&&Number(a.callAmount)>0,raise:a.canRaise,allin:a.canAllIn,timebank:a.canUseTimeBank,'raise-preset':a.canRaise,'toggle-raise-panel':a.canRaise})[action]);
 }
 
 export function revealOptions(room,player) {

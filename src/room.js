@@ -16,10 +16,10 @@ const MINI_CUTOFF = 5 * 60 * 1000;
 const AUTO_DEAL_DELAY = 5000;
 const REBUY_GRACE_DELAY = 5000;
 const SQUID_BLOCK_GRACE = 90000, EMPTY_ROOM_TIMEOUT = 30 * 60000;
-const RABBIT_START_DELAY = 1000, RABBIT_CARD_DELAY = 650, RABBIT_END_HOLD = 1300;
+const RABBIT_START_DELAY = 1000;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 1000, maxBuyIn: 10000, minBuyInBB: BUYIN_MIN_BB, maxBuyInBB: BUYIN_MAX_BB, buyInStepBB: BUYIN_STEP_BB, maxTotalBuyInBB: null,
-  actionSeconds: 30, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
+  actionSeconds: 20, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
   mushroom: false, mushroomUnit: 5, bombPot: false, bombIntervalMinutes: 10, bombAnteBB: 2,
   durationMinutes: 60, timeBankCards: 3, timeBankSeconds: 30 });
 export const now = () => new Date().toISOString();
@@ -202,6 +202,11 @@ export class RoomService {
         if (cmd.handId !== r.hand.id) fail('牌局已更新，请重新操作', 409);
         if (cmd.actionSeq !== r.hand.log.length) fail('行动轮次已更新，请重新操作', 409);
         if (!Number.isFinite(r.deadline) || Date.now() >= r.deadline) fail('行动已超时，请等待牌桌更新', 409);
+        // Limit new voluntary raise totals at the command boundary. Calls,
+        // blinds and an exact remaining-stack all-in keep their real amounts;
+        // historical hands and the underlying poker rules need no migration.
+        if (cmd.type === 'raise' && Number.isSafeInteger(cmd.amount) && cmd.amount % r.hand.bigBlind !== 0
+          && cmd.amount !== availableActions(r.hand, user.id).maxRaiseTo) fail('下注或加注总额需要是整数 BB，剩余积分全下除外');
         applyAction(r.hand, user.id, cmd.type, cmd.amount); this.afterAction(r); break;
       case 'show': this.show(r, m, cmd); break;
       case 'settings': this.host(r, user.id); this.changeSettings(r, cmd.settings); break;
@@ -540,15 +545,12 @@ export class RoomService {
     if (!own(r, 'autoDealPaused')) return null;
     if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return { nextHandAt: null, autoWaitReason: null };
     const autoWaitReason = this.autoBlockReason(r, timestamp);
-    const rabbit = r.hand?.rabbit;
-    const rabbitHold = rabbit?.active ? rabbit.nextAt + Math.max(0, 4 - rabbit.board.length) * RABBIT_CARD_DELAY + RABBIT_END_HOLD
-      : Number.isFinite(rabbit?.finishedAt) ? rabbit.finishedAt + RABBIT_END_HOLD : 0;
     const grace = this.rebuyGraceState(r, timestamp);
     if (grace && timestamp < grace.endsAt) {
       const due = timestamp < grace.startsAt || !grace.pendingIds.length ? grace.startsAt : grace.endsAt;
-      return { nextHandAt: autoWaitReason ? null : Math.max(due, rabbitHold), autoWaitReason };
+      return { nextHandAt: autoWaitReason ? null : due, autoWaitReason };
     }
-    return { nextHandAt: autoWaitReason ? null : Math.max(Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY, rabbitHold), autoWaitReason };
+    return { nextHandAt: autoWaitReason ? null : Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY, autoWaitReason };
   }
   reconcileAutoDeal(r, timestamp = Date.now()) {
     if (this.finishExpiredRoom(r, timestamp)) return true;
@@ -559,7 +561,7 @@ export class RoomService {
     if (changed) Object.assign(r, plan);
     const grace = this.rebuyGraceState(r, timestamp);
     // Buy-in/departure commands may finish the extra wait between timer ticks.
-    // The original five-second result hold and supplemental-card hold remain.
+    // The original five-second result hold remains.
     if (grace && timestamp >= grace.startsAt && timestamp < grace.endsAt && !grace.pendingIds.length
       && !r.hand?.rabbit?.active && Number.isFinite(r.nextHandAt) && r.nextHandAt <= timestamp && !r.autoDealPaused) {
       this.start(r, timestamp, { automatic: true }); return true;
@@ -628,16 +630,17 @@ export class RoomService {
     if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) {
       advanceRunout(r.hand); this.afterAction(r, timestamp); this.touch(r); return true;
     }
-    if (r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt) {
-      this.revealRabbit(r, timestamp); this.reconcileAutoDeal(r, timestamp); this.touch(r); return true;
-    }
+    // Drain the old hand before considering a due next hand in this same tick.
+    // A delayed timer or a restored partial preview must not extend the result
+    // interval or copy any old supplemental cards into the new hand.
+    const rabbitChanged = r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt ? this.revealRabbit(r, timestamp) : false;
     if (this.timeout(r, timestamp)) return true;
     const autoChanged = this.reconcileAutoDeal(r, timestamp);
     if (r.status !== 'closed' && r.hand?.status !== 'playing' && !r.hand?.rabbit?.active && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
       this.start(r, timestamp, { automatic: true }); this.touch(r); return true;
     }
-    if (refreshed || autoChanged || lifecycle) this.touch(r);
-    return refreshed || autoChanged || lifecycle;
+    if (refreshed || autoChanged || lifecycle || rabbitChanged) this.touch(r);
+    return refreshed || autoChanged || lifecycle || rabbitChanged;
   }
   finish(r, timestamp = Date.now()) {
     const h = r.hand; if (h.recorded) return;
@@ -663,7 +666,7 @@ export class RoomService {
       this.log(r, p.id, 'holdem', net, `第 ${h.number} 手德州结算`);
       if (miniNet) this.log(r, p.id, 'mini', miniNet, `第 ${h.number} 手小游戏结算`);
     }
-    if (rabbitRunout(h)) h.rabbit = { version: 1, originalCount: h.board.length, board: [...h.board], indices: [], active: true, nextAt: timestamp + RABBIT_START_DELAY, finishedAt: null };
+    if (rabbitRunout(h)) h.rabbit = { version: 2, originalCount: h.board.length, board: [...h.board], indices: [], active: true, nextAt: timestamp + RABBIT_START_DELAY, finishedAt: null };
     // One immutable opportunity per completed hand, after mini settlements and
     // declared departures. Old zero stacks and observers were not dealt cards.
     const eligibleIds = h.players.filter(p => p.startingStack > 0 && this.canRebuy(r, r.members[p.id])).map(p => p.id);
@@ -701,10 +704,10 @@ export class RoomService {
     if (!rabbit?.active || h.status !== 'complete') return false;
     const remaining = rabbitRunout(h), offset = rabbit.board.length - rabbit.originalCount;
     if (!remaining || offset < 0 || offset >= remaining.cards.length) fail('补看进度无效', 500);
-    rabbit.board.push(remaining.cards[offset]); rabbit.indices.push(remaining.indices[offset]);
-    rabbit.active = rabbit.board.length < 5;
-    rabbit.nextAt = rabbit.active ? timestamp + RABBIT_CARD_DELAY : null;
-    if (!rabbit.active) rabbit.finishedAt = timestamp;
+    // Reveal all still-hidden public cards together, including a persisted v1
+    // partial prefix. Only rabbit changes; real board/log/payout/EV stay fixed.
+    rabbit.board.push(...remaining.cards.slice(offset)); rabbit.indices.push(...remaining.indices.slice(offset));
+    rabbit.active = false; rabbit.nextAt = null; rabbit.finishedAt = timestamp;
     const archived = this.db.hands.find(hand => hand.id === h.id);
     if (archived) archived.rabbit = copy(rabbit);
     return true;

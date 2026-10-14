@@ -4,7 +4,7 @@ import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomInt } from 'node:crypto';
 import { EncryptedStore } from './src/store.js';
-import { RoomService, fail, exportText, exportCsv, now } from './src/room.js';
+import { RoomService, DEFAULTS, fail, exportText, exportCsv, now } from './src/room.js';
 import { fairnessInfo } from './src/fairness.js';
 import { originPolicy } from './src/origins.js';
 import { exportPhh } from './src/phh.js';
@@ -37,7 +37,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
       if (!Number.isFinite(r.hand.runout.nextAt)) r.hand.runout.nextAt = Date.now() + 1800;
       continue;
     }
-    if (!Number.isFinite(r.deadline) || r.deadline <= 0) r.deadline = Date.now() + r.settings.actionSeconds * 1000;
+    if (!Number.isFinite(r.deadline) || r.deadline <= 0) r.deadline = Date.now() + DEFAULTS.actionSeconds * 1000;
   }
   store.save();
 
@@ -328,6 +328,8 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
           res.writeHead(200, { 'Content-Type': format === 'json' ? 'application/json; charset=utf-8' : format === 'csv' ? 'text/csv; charset=utf-8' : 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="bbpoker-${code ?? 'career'}-${new Date().toISOString().slice(0,10)}.${format === 'phh' ? 'phhs' : format}"`, 'Cache-Control': 'no-store' });
           return res.end(data);
         }
+        const playerStatsMatch = /^\/api\/rooms\/([0-9]{6})\/players\/([a-zA-Z0-9_-]{1,80})\/stats$/.exec(path);
+        if (playerStatsMatch && req.method === 'GET') return send(res, 200, service.playerStats(user.id, playerStatsMatch[1], playerStatsMatch[2], Object.fromEntries(url.searchParams)));
         const match = /^\/api\/rooms\/([0-9]{6})(?:\/(join|action|history|hands|chat)(?:\/([a-zA-Z0-9-]+))?)?$/.exec(path);
         if (match) {
           const [, code, endpoint, handId] = match;

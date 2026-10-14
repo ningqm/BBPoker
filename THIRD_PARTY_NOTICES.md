@@ -14,6 +14,14 @@
 
 如后续复制或重新分发第三方代码、文档或二进制，应按对应版本的许可证保留版权与许可声明。本说明不替代第三方许可证。
 
+## 中文动作语音与筹码音效
+
+`public/audio/` 的七段 WAV 是离线生成的固定中文动作提示。使用 [hexgrad/Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) 模型（模型卡标注 Apache-2.0）、`zf_001` 声音和 1.05 语速。它们不是竞品音效，也不是对用户个人声音的录制或克隆。
+
+生成时使用 [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx/blob/main/LICENSE)（MIT，版权声明为 2025 github.com/thewh1teagle）和 [Misaki](https://github.com/hexgrad/misaki/blob/main/LICENSE)（Apache-2.0）。本仓库仅包含生成的短音频与本项目编写的重建脚本；不分发模型权重、训练数据、上述依赖的代码或二进制。运行网站无需安装语音模型或调用在线语音服务。模型与工具的许可声明不代表这些第三方对 BBPoker 的背书。
+
+筹码音效由本项目程序生成，没有下载第三方采样。输入文件哈希、依赖版本和生成步骤见 [音频素材说明](docs/audio-assets.md)。若自行重建或分发工具／模型，请另行遵循对应版本的完整许可证。
+
 ## 实验性客户端相关项目
 
 `apps/` 仅包含本项目编写且为测试保留的桥接辅助文件，没有随附 Electron、Electron Forge、Capacitor、esbuild、sharp 或其平台工程。以后提供完整原生 App 或依赖分发时，需要另行列出实际分发版本及完整许可清单。

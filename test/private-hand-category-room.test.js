@@ -149,8 +149,8 @@ test('omitting a viewer never grants private access, and a single public card ca
   assert.equal(f.service.handCategoryFor(f.hand, winner), '一对', 'fully public cards need no private viewer identity');
 });
 
-for (const [river, expected] of [['9s', '同花顺'], ['As', '皇家同花顺']]) {
-  test(`four-suit draw is not a made flush and upgrades only on dealt streets through ${expected}`, t => {
+for (const [river, expected] of [['9s', '同花顺'], ['As', '同花顺']]) {
+  test(`four-suit draw is not a made flush and upgrades only on dealt streets through ${river} (${expected})`, t => {
     const f = fixture(t, 3, { board: ['Js', '2s', '7d', 'Ts', river], holes: [['Ks', 'Qs'], ['Ac', 'Ah'], ['Jc', 'Jh']] });
     assert.equal(f.category(), '高牌');
     f.finishStreet(); assert.equal(f.category(), '高牌', 'four spades is still only a draw');
@@ -159,3 +159,28 @@ for (const [river, expected] of [['9s', '同花顺'], ['As', '皇家同花顺']]
     assert.equal(f.category(f.users[0].id, f.users[3].id), null, 'strong private category remains private');
   });
 }
+
+test('legacy result labels normalize for live views, history and exports without rewriting archives or exposing folded cards', t => {
+  const f = fixture(t, 3, { board: ['Ts', 'Js', 'Qs', 'Ks', 'As'], holes: [['2c', '3c'], ['4d', '5d'], ['6h', '7h']] });
+  const foldedId = f.hand.actingId;
+  f.act('fold');
+  while (f.hand.status === 'playing') {
+    if (!f.ready()) break;
+    f.act(availableActions(f.hand, f.hand.actingId).canCheck ? 'check' : 'call');
+  }
+  assert.equal(f.hand.status, 'complete');
+  const archived = f.store.data.hands[0], viewerId = f.hand.players.find(p => !p.folded).id;
+  // Simulate pre-update records, including an untrusted stale folded-player label.
+  for (const h of [f.hand, archived]) for (const p of h.players) h.result.handNames[p.id] = '皇家同花顺';
+  const frozen = structuredClone(f.store.data);
+  const live = f.service.state(f.room, viewerId);
+  const history = f.service.handFor(viewerId, f.room.code, archived.id);
+  const exported = f.service.exports(viewerId, f.room.code)[0];
+  for (const result of [live.hand.result, history.result, exported.result]) {
+    assert.deepEqual(Object.values(result.handNames), ['同花顺', '同花顺']);
+    assert.equal(Object.hasOwn(result.handNames, foldedId), false);
+  }
+  for (const hand of [history, exported]) assert.deepEqual(hand.players.find(p => p.id === foldedId).cards, [null, null]);
+  assert.deepEqual(f.store.data, frozen, 'display normalization must not rewrite persistent cards, results or balances');
+  assert.equal(archived.result.handNames[viewerId], '皇家同花顺');
+});

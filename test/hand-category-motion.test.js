@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {updateHandCategoryMotion, renderHandCategory} from '../public/hand-category.js';
+import {HAND_CATEGORIES, updateHandCategoryMotion, renderHandCategory} from '../public/hand-category.js';
 const room=(board=[],own='高牌',other=null)=>({code:'table',meId:'me',hand:{id:'hand',status:'playing',board},players:[{id:'me',handCategory:own},{id:'other',handCategory:other}]});
 const options={live:true,now:1000};
 test('own ordinary street upgrades without needing all-in or exposing hidden opponents',()=>{
@@ -38,8 +38,20 @@ test('unchanged strength, newly public holes and rabbit cards do not invent upgr
 });
 test('already public runout hands upgrade independently and only on a real board extension',()=>{
  const a=room(['Js','2s','7d','Ts'],'同花','一对'),b=room([...a.hand.board,'As'],'皇家同花顺','三条');
- assert.deepEqual(updateHandCategoryMotion(a,b,[],options).map(m=>m.playerId),['me','other']);
+ const motions=updateHandCategoryMotion(a,b,[],options);
+ assert.deepEqual(motions.map(m=>m.playerId),['me','other']);
+ assert.equal(motions[0].to,'同花顺');
+ assert.match(renderHandCategory('皇家同花顺',{motion:motions[0],now:1100}),/category-after" data-hand-category="straight-flush">同花顺/);
+ assert.deepEqual(updateHandCategoryMotion(b,{...b,chat:[]},motions,{live:true,now:1200}),motions);
  assert.deepEqual(updateHandCategoryMotion(b,{...b,players:[{id:'me',handCategory:'皇家同花顺'},{id:'other',handCategory:'四条'}]},[],options),[]);
+});
+test('legacy ace-high labels share the same badge and never invent a tenth-category upgrade',()=>{
+ assert.equal(HAND_CATEGORIES.length,9);
+ assert.equal(renderHandCategory('皇家同花顺'),renderHandCategory('同花顺'));
+ const a=room(['9s','Ts','Js','Qs'],'同花顺'),b=room([...a.hand.board,'As'],'皇家同花顺');
+ assert.deepEqual(updateHandCategoryMotion(a,b,[],options),[]);
+ assert.deepEqual(updateHandCategoryMotion(room(a.hand.board,'皇家同花顺'),room(b.hand.board,'同花顺'),[],options),[]);
+ assert.doesNotMatch(renderHandCategory('皇家同花顺',{motion:{from:'同花顺',to:'皇家同花顺',at:1000},now:1100}),/皇家|royal-flush|category-before/);
 });
 test('render ignores mismatched, stale or unsafe labels in animation metadata',()=>{
  assert.equal(renderHandCategory('<img src=x>'), '');

@@ -57,9 +57,9 @@ test('hand evaluator: every category, wheel, two trips, kickers, and board-only 
   assert.throws(() => evaluate(['As', 'As', 'Kh', 'Qh', 'Jh']), /不重复/);
 });
 
-test('royal flush has a distinct display name without changing straight-flush strength', () => {
+test('ace-high straight flush shares its category name while retaining rank and split strength', () => {
   for (const cards of ['As Ks Qs Js Ts', 'Ah Kh Qh Jh Th 2c', 'Ad Kd Qd Jd Td 2c 3s']) {
-    assert.deepEqual(evaluate(cards.split(' ')), { tuple: [8, 14], name: '皇家同花顺' });
+    assert.deepEqual(evaluate(cards.split(' ')), { tuple: [8, 14], name: '同花顺' });
   }
   assert.deepEqual(evaluate('Ks Qs Js Ts 9s'.split(' ')), { tuple: [8, 13], name: '同花顺' });
   assert.deepEqual(evaluate('As 2s 3s 4s 5s'.split(' ')), { tuple: [8, 5], name: '同花顺' });
@@ -69,8 +69,19 @@ test('royal flush has a distinct display name without changing straight-flush st
   const h = hand([100, 100], { deck: deck('2c 3c 4d 5d 6c As Ks Qs 7c Js 8c Ts'.split(' ')) });
   checkDown(h);
   assert.equal(h.result.showdown, true);
-  assert.deepEqual(h.result.handNames, { '0': '皇家同花顺', '1': '皇家同花顺' });
+  assert.deepEqual(h.result.handNames, { '0': '同花顺', '1': '同花顺' });
   assert.deepEqual(h.result.payouts, { '0': 10, '1': 10 });
+  conserved(h);
+});
+
+test('ace-high and king-high straight flushes keep distinct winners across main and side pots', () => {
+  const h = hand([100, 200, 300], { deck: deck('9s 2h As 4c 2c 3c 6d Ts Js Qs 7d Ks 8d 2d'.split(' ')) });
+  while (h.status === 'playing') act(h, availableActions(h, h.actingId).canRaise ? 'allin' : 'call');
+  assert.deepEqual(h.result.handNames, { '0': '同花顺', '1': '同花顺', '2': '三条' });
+  assert.deepEqual(h.result.pots.map(p => ({ amount: p.amount, winners: p.winnerIds })), [
+    { amount: 300, winners: ['0'] }, { amount: 200, winners: ['1'] },
+  ]);
+  assert.deepEqual(h.result.payouts, { '0': 300, '1': 200, '2': 0 });
   conserved(h);
 });
 

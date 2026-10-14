@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createHand, applyAction, availableActions, advanceRunout, rabbitRunout } from './poker.js';
+import { createHand, applyAction, availableActions, advanceRunout, advanceTransition, rabbitRunout, evaluate, potPreview } from './poker.js';
 import { commitDeck, cardProof, VERIFICATION_VERSION, hash } from './fairness.js';
 import { planEntry, commitEntry, needsEntry, entryState, setEntryMode, markEntrySeat, projectEntry } from './entry-blinds.js';
 import { avatarImageId } from './avatar.js';
@@ -21,6 +21,8 @@ const AUTO_DEAL_DELAY = 5000;
 const REBUY_GRACE_DELAY = 5000;
 const SQUID_BLOCK_GRACE = 90000, EMPTY_ROOM_TIMEOUT = 30 * 60000;
 const RABBIT_START_DELAY = 1000;
+const DEAL_PRESENTATION_DELAY = 1100, FLOP_PRESENTATION_DELAY = 900, STREET_PRESENTATION_DELAY = 700;
+export const transitionDelay = hand => hand.transition?.kind === 'award' ? 650 : hand.transition?.afterRunout || hand.transition?.revealed ? 700 : 900;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 1000, maxBuyIn: 10000, minBuyInBB: BUYIN_MIN_BB, maxBuyInBB: BUYIN_MAX_BB, buyInStepBB: BUYIN_STEP_BB, maxTotalBuyInBB: null,
   actionSeconds: ACTION_SECONDS, approvalRequired: false, squid: false, squidMode: 'normal', squidExtraTokens: 3, squidUnit: 20, squidUnitBB: 2,
@@ -191,6 +193,11 @@ export class RoomService {
     const r = this.room(code), m = this.member(r, user.id);
     if (typeof cmd.commandId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(cmd.commandId)) fail('缺少操作编号，请刷新页面重试');
     const key = `${user.id}:${cmd.commandId}`;
+    // Financial retries must outlive the bounded general command cache. Check
+    // before lifecycle, seat and limit validation: an accepted request remains
+    // the same request after delivery, cancellation, leaving or closing a table.
+    if (own(m.buyinReceipts ?? {}, `command:${cmd.commandId}`)
+      || (m.queuedBuyins ?? []).some(request => request.commandId === cmd.commandId)) return r;
     if (r.commandIds[key]) return r;
     if (cmd.type !== 'show') this.active(r);
     switch (cmd.type) {
@@ -224,6 +231,9 @@ export class RoomService {
         if (!r.hand || r.hand.status !== 'playing') fail('当前没有进行中的手牌');
         if (cmd.handId !== r.hand.id) fail('牌局已更新，请重新操作', 409);
         if (cmd.actionSeq !== r.hand.log.length) fail('行动轮次已更新，请重新操作', 409);
+        if (r.hand.transition || r.hand.runout?.active) fail('本轮行动已结束，请等待发牌或结算', 409);
+        if (r.presentation?.handId === r.hand.id && Number.isFinite(r.presentation.actionReadyAt)
+          && Date.now() < r.presentation.actionReadyAt) fail('发牌中，请稍候行动', 409);
         if (!Number.isFinite(r.deadline) || Date.now() >= r.deadline) fail('行动已超时，请等待牌桌更新', 409);
         // Limit new voluntary raise totals at the command boundary. Calls,
         // blinds and an exact remaining-stack all-in keep their real amounts;
@@ -259,7 +269,66 @@ export class RoomService {
     this.requestBuyin(r, m, seat, this.buyinAmount(r, cmd));
     this.setBlindMode(r, m, cmd.entryMode ?? 'wait');
   }
-  buyin(r, m, cmd) { this.idle(r); if (m.seat === null) fail('请先选择座位'); this.requestBuyin(r, m, m.seat, this.buyinAmount(r, cmd)); }
+  pendingBuyIn(m) { return (m.queuedBuyins ?? []).reduce((sum, request) => sum + request.amount, 0); }
+  recordBuyinReceipt(m, request, status) {
+    // The prefix also makes accepted IDs such as "__proto__" ordinary keys.
+    // Keep these compact receipts for the table's lifetime; never evict them
+    // with commandIds or clear them when the delivery queue is drained.
+    (m.buyinReceipts ??= {})[`command:${request.commandId}`] = {
+      amount: request.amount, requestedAt: request.at, status,
+      settledAt: status === 'queued' ? null : now(),
+    };
+  }
+  buyin(r, m, cmd) {
+    if (m.seat === null) fail('请先选择座位');
+    if (m.pendingDeparture === 'stand') fail('已安排离座，请先取消离座再补码', 409);
+    const amount = this.buyinAmount(r, cmd);
+    this.validateBuyin(r, m, amount);
+    r.pending = r.pending.filter(request => request.playerId !== m.id);
+    if (r.hand?.status === 'playing') {
+      // These are future chips, never a mid-hand change to stack, commitment,
+      // betting capacity, fish reserve, buy-in accounting or winnings.
+      const request = { id: randomUUID(), commandId: cmd.commandId, amount, handId: r.hand.id, at: now() };
+      (m.queuedBuyins ??= []).push(request);
+      this.recordBuyinReceipt(m, request, 'queued');
+      return;
+    }
+    // A top-up is not a request to resume, cancel departure or change seats.
+    m.stack += amount; m.totalBuyIn += amount;
+    this.recordBuyinReceipt(m, { commandId: cmd.commandId, amount, at: now() }, 'applied');
+    this.log(r, m.id, 'buyin', amount, '补充积分（不计入输赢）');
+  }
+  cancelQueuedBuyins(r, m, reason) {
+    const amount = this.pendingBuyIn(m);
+    if (!amount) return;
+    for (const request of m.queuedBuyins) this.recordBuyinReceipt(m, request, 'cancelled');
+    m.queuedBuyins = [];
+    const row = this.log(r, m.id, 'buyinCancelled', 0, `${reason}，已取消待到账补码 ${amount / r.settings.bigBlind} BB，不计入带入或输赢`);
+    row.cancelledAmount = amount;
+  }
+  applyQueuedBuyins(r) {
+    this.idle(r);
+    // Validate the whole batch before changing any member. Actual API/timer
+    // transactions additionally roll back the hand and this batch on save errors.
+    const plans = Object.values(r.members).filter(m => this.pendingBuyIn(m) > 0).map(m => {
+      if (m.seat === null || m.pendingDeparture === 'stand') return { m, cancel: true };
+      let total = m.totalBuyIn;
+      for (const request of m.queuedBuyins) {
+        this.validateBuyin(r, { ...m, queuedBuyins: [], totalBuyIn: total }, request.amount);
+        total += request.amount;
+      }
+      return { m, requests: [...m.queuedBuyins] };
+    });
+    for (const { m, requests, cancel } of plans) {
+      if (cancel) { this.cancelQueuedBuyins(r, m, '已离座'); continue; }
+      m.queuedBuyins = [];
+      for (const request of requests) {
+        m.stack += request.amount; m.totalBuyIn += request.amount;
+        this.recordBuyinReceipt(m, request, 'applied');
+        Object.assign(this.log(r, m.id, 'buyin', request.amount, '本手结束，待补积分到账（不计入输赢）'), { queuedRequestId: request.id, requestedAt: request.at, afterHandId: request.handId });
+      }
+    }
+  }
   buyinAmount(r, cmd) {
     const amount = own(cmd, 'amountBB') ? integer(cmd.amountBB, BUYIN_MIN_BB, BUYIN_MAX_BB, '单次带入大盲数') * r.settings.bigBlind : cmd.amount;
     this.validateBuyin(r, null, amount);
@@ -270,13 +339,13 @@ export class RoomService {
     integer(amount, BUYIN_MIN_BB * bb, BUYIN_MAX_BB * bb, '单次带入积分');
     if (amount % (BUYIN_STEP_BB * bb) !== 0) fail('每次带入需要是 50 BB 的整数倍（100–1000 BB）');
     if (!m) return;
-    const total = m.totalBuyIn + amount;
+    const total = m.totalBuyIn + this.pendingBuyIn(m) + amount;
     if (!Number.isSafeInteger(total) || total > MAX_TOTAL_BUYIN) fail('本场累计带入超过安全计数范围');
     const limitBB = r.settings.maxTotalBuyInBB;
-    if (limitBB != null && total > limitBB * bb) fail(`本场累计带入不能超过 ${limitBB} BB（已带入 ${m.totalBuyIn / bb} BB）`);
+    if (limitBB != null && total > limitBB * bb) fail(`本场累计带入不能超过 ${limitBB} BB（已带入 ${m.totalBuyIn / bb} BB${this.pendingBuyIn(m) ? `，待到账 ${this.pendingBuyIn(m) / bb} BB` : ''}）`);
   }
   canRebuy(r, m) {
-    if (!m || m.seat === null || m.sittingOut || m.pendingDeparture || m.stack !== 0) return false;
+    if (!m || m.seat === null || m.sittingOut || m.pendingDeparture || m.stack !== 0 || this.pendingBuyIn(m) > 0) return false;
     const amount = BUYIN_MIN_BB * r.settings.bigBlind, total = m.totalBuyIn + amount;
     return Number.isSafeInteger(total) && total <= MAX_TOTAL_BUYIN
       && (r.settings.maxTotalBuyInBB == null || total <= r.settings.maxTotalBuyInBB * r.settings.bigBlind);
@@ -336,6 +405,7 @@ export class RoomService {
     this.stand(r, m);
   }
   stand(r, m) {
+    this.cancelQueuedBuyins(r, m, '已离座');
     r.pending = r.pending.filter(p => p.playerId !== m.id);
     if (m.seat === null) return;
     markEntrySeat(r, m, null);
@@ -356,6 +426,75 @@ export class RoomService {
     r.settings = next; r.mini.squid.unit = next.squidUnit; r.mini.mushroom.unit = next.mushroomUnit;
   }
   online(r, id) { return (this.connections.get(`${r.code}:${id}`) ?? 0) > 0; }
+  // Planning never changes chips, the roster or entry debts. Only a successfully
+  // constructed future hand commits admission; current-hand money stays fixed.
+  squidJoinPlan(r, timestamp = Date.now(), { requireOnline = true } = {}) {
+    const q = r.mini.squid, detail = squidDetails(q);
+    const seated = Object.values(r.members).filter(m => m.seat !== null && !m.sittingOut && !m.pendingDeparture && m.stack > 0
+      && (!requireOnline || this.online(r, m.id))).sort((a,b) => a.seat-b.seat);
+    const originals = seated.filter(m => q.participants.includes(m.id));
+    const pending = Object.values(r.members).filter(m => m.seat !== null && !q.participants.includes(m.id)).sort((a,b) => a.seat-b.seat);
+    const base = { joinIds: [], debits: {}, tokenBudget: detail.tokenBudget, candidates: originals, entryPlan: planEntry(r, originals), waiting: {} };
+    const provisional = detail.tokenBudget + 1;
+    const wait = (m,status,reason,tokenBudget=provisional) => ({ status,reason,round:q.round,requiredReserve:tokenBudget*q.unit,tokenBudgetAfterJoin:tokenBudget });
+    if (!q.active) return base;
+    const eligible = [];
+    for (const m of pending) {
+      if (this.expired(r,timestamp)) base.waiting[m.id] = wait(m,'expired','牌桌已到时，本轮不再新增玩家；可等结束后开新局');
+      else if (m.sittingOut || m.pendingDeparture) base.waiting[m.id] = wait(m,'sitting-out','请先回到牌桌，再从下一手加入本轮鱿鱼');
+      else if (!this.online(r,m.id)) base.waiting[m.id] = wait(m,'offline','回到牌桌后，从下一手核对预留与补盲');
+      else if (r.hand?.status === 'playing') base.waiting[m.id] = wait(m,'next-hand','本手结束后核对预留与补盲，满足条件的下一手以 0 鱼加入');
+      else if (m.stack <= 0) base.waiting[m.id] = wait(m,'reserve','你的积分不足，请先补码，鱿鱼预留之外还需留出打牌积分');
+      else eligible.push(m);
+    }
+    if (!eligible.length) return base;
+    function combinations(items,count,start=0,prefix=[]) {
+      if (!count) return [prefix];
+      const result=[];
+      for(let i=start;i<=items.length-count;i++)result.push(...combinations(items,count-1,i+1,[...prefix,items[i]]));
+      return result;
+    }
+    const trial = newcomers => {
+      if (q.participants.length+newcomers.length>30) return { status:'capacity',reason:'本轮参与身份已达 30 人，请等待本轮结束' };
+      const tokenBudget = detail.tokenBudget+newcomers.length, target = tokenBudget*q.unit, debits = {};
+      for (const id of q.participants) {
+        if (detail.counts[id]) continue;
+        const member=r.members[id], held=q.reserves[id];
+        if (!member || !Number.isSafeInteger(held) || held<0) fail('鱿鱼预留积分异常，请保留牌桌并联系维护者',500);
+        const debit=Math.max(0,target-held);
+        if (member.stack<debit || originals.some(m=>m.id===id)&&member.stack<=debit) return {
+          status:'reserve',reason:`${this.user(id)?.name ?? '本轮玩家'}需补足鱿鱼预留；等待其补码或本轮结束，原轮继续` };
+        if (debit) debits[id]=debit;
+      }
+      for (const m of newcomers) {
+        const state=entryState(r,m), entry=needsEntry(r,m), minimum=entry?r.settings.bigBlind+(state.mode==='post'&&state.missedSmall?r.settings.smallBlind:0):1;
+        if (m.stack<target+minimum) return { status:'reserve',reason:`${this.user(m.id)?.name ?? '新玩家'}的积分不足，加入需预留 ${target} 积分并留出补盲积分` };
+        debits[m.id]=target;
+      }
+      const candidates=[...originals,...newcomers].map(m=>({...m,stack:m.stack-(debits[m.id]??0)})).sort((a,b)=>a.seat-b.seat);
+      const entryPlan=planEntry(r,candidates);
+      const excluded=newcomers.find(m=>!entryPlan.players.some(p=>p.id===m.id));
+      if (entryPlan.players.length<2 || excluded) return { status:'entry-blind',reason:entryPlan.waiting.find(p=>p.playerId===excluded?.id)?.reason ?? '等待至少两位玩家完成补盲后加入' };
+      return { joinIds:newcomers.map(m=>m.id),debits,tokenBudget,candidates,entryPlan,waiting:{} };
+    };
+    // At most nine seats: choose the largest legal simultaneous cohort. This
+    // handles two newcomers restoring a table without charging either before a
+    // hand exists, and never lets one unaffordable entrant block the old roster.
+    let selected=base;
+    outer: for(let count=eligible.length;count>0;count--) for(const subset of combinations(eligible,count)) {
+      const candidate=trial(subset);
+      if(candidate.joinIds){selected=candidate;break outer;}
+    }
+    selected.waiting={...base.waiting};
+    for(const m of eligible) {
+      if(selected.joinIds.includes(m.id)) selected.waiting[m.id]=wait(m,'next-hand','已具备加入条件，从下一手加入本轮鱿鱼',selected.tokenBudget);
+      else {
+        const check=trial([...eligible.filter(p=>selected.joinIds.includes(p.id)),m]);
+        selected.waiting[m.id]=wait(m,check.status??'entry-blind',check.reason??'等待下一个可补盲的位置');
+      }
+    }
+    return selected;
+  }
   waitingFor(r, m) {
     if (m.seat === null) return null;
     if (r.hand?.status === 'playing' && r.hand.players.some(p => p.id === m.id)) return null;
@@ -391,18 +530,24 @@ export class RoomService {
       return m && m.seat !== null && !m.sittingOut && this.squidStack(r, id) > 0 && this.online(r, id);
     });
   }
-  squidAbsentResult(r) {
+  squidAbsentResult(r, timestamp = Date.now(), admission = null) {
     const q = r.mini.squid;
     if (!q.active || r.status === 'closed' || r.hand?.status === 'playing' || !q.won.length) return false;
+    const join = admission ?? this.squidJoinPlan(r,timestamp);
+    if (join.joinIds.length) return false;
     const ready = this.squidReady(r), unmarked = q.participants.filter(id => !q.won.includes(id));
     // Never manufacture a winner when everyone is away. A participant waiting
     // for an entry blind is still available to earn a marker in a later hand.
     return unmarked.length > 1 && ready.length > 0 && ready.every(id => q.won.includes(id));
   }
-  squidBlock(r) {
+  squidBlock(r, timestamp = Date.now(), admission = null) {
     const q = r.mini.squid;
     if (!q.active || r.status === 'closed') return null;
     const ready = this.squidReady(r);
+    if (r.hand?.status !== 'playing') {
+      const join = admission ?? this.squidJoinPlan(r,timestamp);
+      if (join.entryPlan.players.length >= 2) return null;
+    }
     if (ready.length >= 2) {
       // A live hand remains playable even if the next hand would wait on entry.
       if (r.hand?.status === 'playing') return null;
@@ -418,7 +563,7 @@ export class RoomService {
   expired(r, timestamp = Date.now()) { return r.endsAt != null && timestamp >= r.endsAt; }
   expiryState(r, timestamp = Date.now()) {
     if (r.status === 'closed' || !this.expired(r, timestamp) || !r.mini.squid.active) return { mode: null, deadline: null };
-    if (!this.squidBlock(r)) return { mode: 'finish-squid', deadline: null };
+    if (!this.squidBlock(r, timestamp)) return { mode: 'finish-squid', deadline: null };
     const since = r.squidOvertimeEpoch === this.observationId && Number.isFinite(r.squidOvertimeWaitSince) ? r.squidOvertimeWaitSince : null;
     return { mode: 'wait-squid', deadline: since == null ? null : since + SQUID_BLOCK_GRACE };
   }
@@ -431,7 +576,7 @@ export class RoomService {
   }
   lifecyclePlan(r, timestamp = Date.now()) {
     if (r.status === 'closed') return { room: {}, squid: {} };
-    const block = this.squidBlock(r), q = r.mini.squid;
+    const block = this.squidBlock(r, timestamp), q = r.mini.squid;
     const blockerSince = block ? q.blockerEpoch === this.observationId && q.blockerKey === block.key && Number.isFinite(q.blockerSince) ? q.blockerSince : timestamp : null;
     const idle = r.status !== 'closed' && r.startedAt == null && !Object.keys(r.members).some(id => this.online(r, id));
     const idleSince = idle ? r.idleEpoch === this.observationId && Number.isFinite(r.idleSince) ? r.idleSince : timestamp : null;
@@ -441,7 +586,7 @@ export class RoomService {
     }
     const squid = block ? { blockerSince, blockerKey: block.key, blockerEpoch: this.observationId, settleReady: timestamp - blockerSince >= SQUID_BLOCK_GRACE }
       : q.blockerSince != null || q.blockerKey != null || q.settleReady ? { blockerSince: null, blockerKey: null, settleReady: false } : {};
-    const pending = this.squidAbsentResult(r);
+    const pending = this.squidAbsentResult(r, timestamp);
     let pendingAt = pending ? q.absentEpoch === this.observationId && Number.isFinite(q.absentSettlementAt) ? q.absentSettlementAt : timestamp + AUTO_DEAL_DELAY : null;
     const rebuy = this.rebuyGraceState(r, timestamp);
     // A busted original participant's wait is already anchored to this hand.
@@ -462,7 +607,7 @@ export class RoomService {
     return changed;
   }
   canSettleSquid(r, userId, timestamp = Date.now()) {
-    const q = r.mini.squid, block = this.squidBlock(r);
+    const q = r.mini.squid, block = this.squidBlock(r, timestamp);
     return Boolean(r.hand?.status !== 'playing' && block && q.participants.includes(userId) && this.online(r, userId) && q.blockerEpoch === this.observationId && q.blockerKey === block.key && Number.isFinite(q.blockerSince) && timestamp - q.blockerSince >= SQUID_BLOCK_GRACE);
   }
   bombDueAt(r, settings = r.settings) {
@@ -474,9 +619,11 @@ export class RoomService {
     let candidates = Object.values(r.members).filter(m => m.seat !== null && !m.sittingOut && m.stack > 0 && (!requireOnline || this.online(r, m.id))).sort((a, b) => a.seat - b.seat);
     const s = settingsFor({}, r.settings), squid = r.mini.squid;
     const mayStartMini = r.endsAt == null || timestamp < r.endsAt - MINI_CUTOFF;
+    let squidAdmission = null;
     if (squid.active) {
-      if (this.squidAbsentResult(r)) fail('无鱼玩家暂不可参与，等待几秒重连后结算本轮');
-      candidates = candidates.filter(m => squid.participants.includes(m.id));
+      squidAdmission = this.squidJoinPlan(r,timestamp,{requireOnline});
+      if (this.squidAbsentResult(r,timestamp,squidAdmission)) fail('无鱼玩家暂不可参与，等待几秒重连后结算本轮');
+      candidates = squidAdmission.candidates;
     }
     if (candidates.length < 2) fail('至少需要两位已入座且有积分的朋友');
     // A due timer waits for the next eligible hand; it never interrupts play
@@ -495,7 +642,7 @@ export class RoomService {
     }
     if (entryPlan.players.length < 2) fail(entryPlan.waiting[0]?.reason || '等待至少两位玩家完成入桌补盲或等大盲');
     const players = entryPlan.players.map(m => r.members[m.id]);
-    return { players, s, squid, mayStartMini, newSquid, buttonSeat: entryPlan.buttonSeat, reserve, tokenBudget, ordinaryFallback: false, entryPlan, bombPot };
+    return { players, s, squid, mayStartMini, newSquid, buttonSeat: entryPlan.buttonSeat, reserve, tokenBudget, ordinaryFallback: false, entryPlan, bombPot, squidAdmission };
   }
   requestStart(r, timestamp = Date.now()) {
     this.idle(r);
@@ -512,21 +659,37 @@ export class RoomService {
   start(r, timestamp = Date.now(), { automatic = false } = {}) {
     this.idle(r);
     if (this.finishExpiredRoom(r, timestamp)) return;
-    const { players, s, squid, mayStartMini, newSquid, buttonSeat, reserve, tokenBudget, ordinaryFallback, entryPlan, bombPot } = this.prepareStart(r, timestamp, { requireOnline: automatic });
+    const { players, s, squid, mayStartMini, newSquid, buttonSeat, reserve, tokenBudget, ordinaryFallback, entryPlan, bombPot, squidAdmission } = this.prepareStart(r, timestamp, { requireOnline: automatic });
+    // Construct before charging either initial or incremental reserve. A failed
+    // deal leaves the pending cohort and every old participant's balance intact.
+    const h = createHand({ id: randomUUID(), players: players.map(m => ({ id: m.id, name: this.user(m.id).name, seat: m.seat,
+      stack: m.stack-(newSquid?reserve:squidAdmission?.debits[m.id]??0) })), buttonSeat, smallBlind: s.smallBlind, bigBlind: s.bigBlind,
+      entryPosts: entryPlan.posts, bombPot, ante: bombPot ? s.bombAnteBB * s.bigBlind : 0, deferredRunout: true, deferredTransitions: true });
+    h.audit = commitDeck(h);
     this.completeRabbit(r, timestamp);
     r.nextHandAt = null; r.autoWaitReason = null; r.rebuyGrace = null;
     if (newSquid) {
       squid.active = true; squid.round++; squid.participants = players.map(m => m.id); squid.won = []; squid.reserves = {}; squid.unit = s.squidUnit; squid.roundSettlementId = randomUUID(); squid.rulesVersion = 5;
       squid.mode = s.squidMode; squid.extraTokens = s.squidMode === 'unlimited' ? s.squidExtraTokens : 0;
-      squid.tokenBudget = tokenBudget; squid.counts = Object.fromEntries(squid.participants.map(id => [id, 0]));
+      squid.tokenBudget = tokenBudget; squid.counts = Object.fromEntries(squid.participants.map(id => [id, 0])); squid.admissions = [];
       squid.blockerSince = null; squid.blockerKey = null; squid.settleReady = false; squid.absentSettlementAt = null; squid.absentEpoch = null;
       for (const m of players) { m.stack -= reserve; squid.reserves[m.id] = reserve; }
+    } else if (squidAdmission?.joinIds.length) {
+      const detail=squidDetails(squid), before=detail.tokenBudget;
+      for(const [id,amount] of Object.entries(squidAdmission.debits)) {
+        r.members[id].stack-=amount; squid.reserves[id]=(squid.reserves[id]??0)+amount;
+      }
+      squid.participants.push(...squidAdmission.joinIds);
+      squid.counts={...detail.counts,...Object.fromEntries(squidAdmission.joinIds.map(id=>[id,0]))};
+      squid.tokenBudget=squidAdmission.tokenBudget; squid.rulesVersion=6;
+      (squid.admissions??=[]).push({handId:h.id,handNumber:r.handNumber+1,at:new Date(timestamp).toISOString(),playerIds:[...squidAdmission.joinIds],
+        tokenBudgetBefore:before,tokenBudgetAfter:squid.tokenBudget,reserveIncreases:copy(squidAdmission.debits)});
+      for(const id of squidAdmission.joinIds)r.members[id].waitingSquidRound=null;
+      squid.absentSettlementAt=null;squid.absentEpoch=null;
     }
     r.settings = s;
     if (r.startedAt == null) { r.startedAt = timestamp; r.endsAt = timestamp + s.durationMinutes * 60000; }
     this.refreshTimeBanks(r, timestamp);
-    const h = createHand({ id: randomUUID(), players: players.map(m => ({ id: m.id, name: this.user(m.id).name, seat: m.seat, stack: m.stack })), buttonSeat, smallBlind: s.smallBlind, bigBlind: s.bigBlind,
-      entryPosts: entryPlan.posts, bombPot, ante: bombPot ? s.bombAnteBB * s.bigBlind : 0, deferredRunout: true });
     // Commit the clock only after the hand is successfully constructed.
     r.nextBombAt = !s.bombPot ? null : bombPot ? timestamp + s.bombIntervalMinutes * 60000 : this.bombDueAt(r, s);
     h.number = ++r.handNumber; h.at = new Date(timestamp).toISOString(); h.roomCode = r.code; h.roomName = r.name; h.settings = copy(s); h.shown = {};
@@ -535,20 +698,32 @@ export class RoomService {
     h.squidMode = detail?.mode ?? null; h.squidTokenBudget = detail?.tokenBudget ?? null; h.squidCounts = copy(detail?.counts ?? {}); h.squidAwardedId = null;
     if (detail) { h.settings.squidMode = detail.mode; h.settings.squidExtraTokens = detail.extraTokens; }
     if (h.squidRound !== null) { r.squidOvertimeWaitSince = null; r.squidOvertimeEpoch = null; }
-    h.miniChanges = Object.fromEntries(players.map(m => [m.id, 0])); h.timeBankUses = []; h.audit = commitDeck(h);
-    h.miniBefore = copy(r.mini); r.hand = h; commitEntry(r, entryPlan, h); r.buttonSeat = buttonSeat; r.status = 'playing';
+    h.miniChanges = Object.fromEntries(players.map(m => [m.id, 0])); h.timeBankUses = [];
+    h.miniBefore = copy(r.mini); r.hand = h; r.presentation = null; r.resultReadyAt = null; commitEntry(r, entryPlan, h); r.buttonSeat = buttonSeat; r.status = 'playing';
     this.afterAction(r, timestamp);
   }
   afterAction(r, timestamp = Date.now()) {
     const h = r.hand;
+    if (h.transition?.revealed) {
+      h.shown ??= {};
+      for (const p of h.players) if (!p.folded) h.shown[p.id] = [0, 1];
+    }
     this.recordEquity(h);
+    const previous = r.presentation?.handId === h.id ? r.presentation : null;
+    const revealDelay = !previous ? DEAL_PRESENTATION_DELAY : h.board.length > previous.boardCount
+      ? (h.board.length === 3 ? FLOP_PRESENTATION_DELAY : STREET_PRESENTATION_DELAY) : 0;
+    const actionReadyAt = h.status === 'playing' && h.actingId ? timestamp + revealDelay : null;
+    r.presentation = { handId: h.id, boardCount: h.board.length, actionReadyAt, turnStartedAt: actionReadyAt, readyPublished: revealDelay === 0 || actionReadyAt === null };
     for (const p of h.players) r.members[p.id].stack = p.stack;
     if (h.status === 'complete') {
       r.deadline = null; r.status = 'waiting'; this.finish(r, timestamp);
       if (!this.finishExpiredRoom(r, timestamp)) { r.autoDealPaused ??= false; this.syncLifecycle(r, timestamp); this.reconcileAutoDeal(r, timestamp); }
+    } else if (h.transition) {
+      r.deadline = null;
+      if (!Number.isFinite(h.transition.nextAt)) h.transition.nextAt = timestamp + transitionDelay(h);
     } else if (h.runout?.active) {
       r.deadline = null; h.runout.nextAt = timestamp + (h.board.length === h.allInLock.board.length ? 1800 : 1500);
-    } else r.deadline = timestamp + ACTION_SECONDS * 1000;
+    } else r.deadline = actionReadyAt + ACTION_SECONDS * 1000;
     this.syncLifecycle(r, timestamp);
   }
   recordEquity(h) {
@@ -568,8 +743,8 @@ export class RoomService {
     if (r.status === 'closed' || r.hand?.status === 'playing' || r.handNumber === 0) return null;
     if (!own(r, 'autoDealPaused')) return '等待房主继续，之后会自动发牌';
     if (r.autoDealPaused) return '房主已暂停自动发牌';
-    if (this.squidAbsentResult(r)) return '等待几秒重连后，按已有鱼结算本轮';
-    const block = this.squidBlock(r);
+    if (this.squidAbsentResult(r, timestamp)) return '等待几秒重连后，按已有鱼结算本轮';
+    const block = this.squidBlock(r, timestamp);
     if (block && !this.squidFallback(r, timestamp)) return this.expired(r, timestamp) ? '牌桌已到时，等待原鱿鱼轮恢复；90 秒后仍无法继续将结算散桌' : block.reason;
     if (!Object.values(r.members).some(m => m.seat !== null && !m.sittingOut && m.stack > 0 && this.online(r, m.id))) return OFFLINE_WAIT;
     let players;
@@ -586,9 +761,12 @@ export class RoomService {
     const grace = this.rebuyGraceState(r, timestamp);
     if (grace && timestamp < grace.endsAt) {
       const due = timestamp < grace.startsAt || !grace.pendingIds.length ? grace.startsAt : grace.endsAt;
-      return { nextHandAt: autoWaitReason ? null : due, autoWaitReason };
+      const minimum = Number.isFinite(r.resultReadyAt) ? r.resultReadyAt + AUTO_DEAL_DELAY : 0;
+      return { nextHandAt: autoWaitReason ? null : Math.max(due, minimum), autoWaitReason };
     }
-    return { nextHandAt: autoWaitReason ? null : Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY, autoWaitReason };
+    const due = Number.isFinite(r.nextHandAt) ? r.nextHandAt : timestamp + AUTO_DEAL_DELAY;
+    const minimum = Number.isFinite(r.resultReadyAt) ? r.resultReadyAt + AUTO_DEAL_DELAY : 0;
+    return { nextHandAt: autoWaitReason ? null : Math.max(due, minimum), autoWaitReason };
   }
   reconcileAutoDeal(r, timestamp = Date.now()) {
     if (this.finishExpiredRoom(r, timestamp)) return true;
@@ -641,6 +819,8 @@ export class RoomService {
   useTimeBank(r, m, cmd, timestamp = Date.now()) {
     if (r.hand?.status !== 'playing' || cmd.handId !== r.hand.id || cmd.actionSeq !== r.hand.log.length) fail('行动轮次已更新，请重新操作', 409);
     if (r.hand.actingId !== m.id) fail('只有当前行动的玩家可以使用时间牌', 403);
+    if (r.presentation?.handId === r.hand.id && Number.isFinite(r.presentation.actionReadyAt)
+      && timestamp < r.presentation.actionReadyAt) fail('发牌中，请稍候使用时间牌', 409);
     if (!Number.isFinite(r.deadline) || timestamp >= r.deadline) fail('行动已超时，不能使用时间牌', 409);
     this.refreshTimeBanks(r, timestamp);
     if (!m.timeBank?.remaining) fail('本场时间牌已用完');
@@ -651,13 +831,16 @@ export class RoomService {
   }
   needsTick(r, timestamp = Date.now()) {
     if (r.status === 'closed') return false;
+    if (r.hand?.status === 'playing' && r.presentation?.handId === r.hand.id && !r.presentation.readyPublished
+      && Number.isFinite(r.presentation.actionReadyAt) && timestamp >= r.presentation.actionReadyAt) return true;
     const rebuyPhase = this.rebuyGracePhase(r, timestamp);
     if (rebuyPhase !== null && r.rebuyGrace.phase !== rebuyPhase) return true;
     if (this.lifecycleChanged(r, this.lifecyclePlan(r, timestamp))) return true;
     if (r.startedAt == null && Number.isFinite(r.idleSince) && r.idleEpoch === this.observationId && timestamp - r.idleSince >= EMPTY_ROOM_TIMEOUT) return true;
-    if (this.squidAbsentResult(r) && r.mini.squid.absentEpoch === this.observationId && Number.isFinite(r.mini.squid.absentSettlementAt) && timestamp >= r.mini.squid.absentSettlementAt) return true;
+    if (this.squidAbsentResult(r, timestamp) && r.mini.squid.absentEpoch === this.observationId && Number.isFinite(r.mini.squid.absentSettlementAt) && timestamp >= r.mini.squid.absentSettlementAt) return true;
     if (r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt) return true;
     if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) return true;
+    if (r.hand?.status === 'playing' && r.hand.transition && timestamp >= r.hand.transition.nextAt) return true;
     if (r.hand?.status === 'playing' && r.deadline != null && timestamp >= r.deadline) return true;
     if (this.expired(r, timestamp) && r.hand?.status !== 'playing') {
       const expiry = this.expiryState(r, timestamp);
@@ -670,30 +853,36 @@ export class RoomService {
   tick(r, timestamp = Date.now()) {
     if (!this.needsTick(r, timestamp)) return false;
     const lifecycle = this.syncLifecycle(r, timestamp);
+    const presentationReady = r.hand?.status === 'playing' && r.presentation?.handId === r.hand.id && !r.presentation.readyPublished
+      && Number.isFinite(r.presentation.actionReadyAt) && timestamp >= r.presentation.actionReadyAt;
+    if (presentationReady) r.presentation.readyPublished = true;
     if (r.startedAt == null && Number.isFinite(r.idleSince) && timestamp - r.idleSince >= EMPTY_ROOM_TIMEOUT) { this.close(r, timestamp); this.touch(r); return true; }
-    if (this.squidAbsentResult(r) && r.mini.squid.absentEpoch === this.observationId && Number.isFinite(r.mini.squid.absentSettlementAt) && timestamp >= r.mini.squid.absentSettlementAt) {
+    if (this.squidAbsentResult(r, timestamp) && r.mini.squid.absentEpoch === this.observationId && Number.isFinite(r.mini.squid.absentSettlementAt) && timestamp >= r.mini.squid.absentSettlementAt) {
       this.settleSquid(r, { reason: 'absent', timestamp });
       this.syncLifecycle(r, timestamp); this.reconcileAutoDeal(r, timestamp); this.touch(r); return true;
     }
     if (this.finishExpiredRoom(r, timestamp)) { this.touch(r); return true; }
     const refreshed = this.refreshTimeBanks(r, timestamp);
+    if (r.hand?.status === 'playing' && r.hand.transition && timestamp >= r.hand.transition.nextAt) {
+      advanceTransition(r.hand); this.afterAction(r, timestamp); this.touch(r); return true;
+    }
     if (r.hand?.runout?.active && timestamp >= r.hand.runout.nextAt) {
       advanceRunout(r.hand); this.afterAction(r, timestamp); this.touch(r); return true;
     }
-    // Drain the old hand before considering a due next hand in this same tick.
-    // A delayed timer or a restored partial preview must not extend the result
-    // interval or copy any old supplemental cards into the new hand.
+    // Finish any delayed supplemental reveal first. Its actual publication
+    // anchors a fresh result hold, so a slow tick cannot skip the result screen.
     const rabbitChanged = r.hand?.rabbit?.active && timestamp >= r.hand.rabbit.nextAt ? this.revealRabbit(r, timestamp) : false;
     if (this.timeout(r, timestamp)) return true;
     const autoChanged = this.reconcileAutoDeal(r, timestamp);
     if (r.status !== 'closed' && r.hand?.status !== 'playing' && !r.hand?.rabbit?.active && r.nextHandAt !== null && Number.isFinite(r.nextHandAt) && timestamp >= r.nextHandAt) {
       this.start(r, timestamp, { automatic: true }); this.touch(r); return true;
     }
-    if (refreshed || autoChanged || lifecycle || rabbitChanged) this.touch(r);
-    return refreshed || autoChanged || lifecycle || rabbitChanged;
+    if (refreshed || autoChanged || lifecycle || rabbitChanged || presentationReady) this.touch(r);
+    return refreshed || autoChanged || lifecycle || rabbitChanged || presentationReady;
   }
   finish(r, timestamp = Date.now()) {
     const h = r.hand; if (h.recorded) return;
+    r.resultReadyAt = timestamp;
     const cashedBefore = Object.fromEntries(Object.values(r.members).map(m => [m.id, m.cashedOut]));
     const squid = r.mini.squid, mushroom = r.mini.mushroom;
     const main = h.result.mainWinnerIds;
@@ -728,6 +917,9 @@ export class RoomService {
       if (miniNet) this.log(r, p.id, 'mini', miniNet, `第 ${h.number} 手小游戏结算`);
     }
     if (rabbitRunout(h)) h.rabbit = { version: 2, originalCount: h.board.length, board: [...h.board], indices: [], active: true, nextAt: timestamp + RABBIT_START_DELAY, finishedAt: null };
+    // Archive ending stacks and poker/mini profit above exclude new buy-ins.
+    // Now deliver queued chips before deciding who needs a rebuy grace window.
+    this.applyQueuedBuyins(r);
     // One immutable opportunity per completed hand, after mini settlements and
     // declared departures. Old zero stacks and observers were not dealt cards.
     const eligibleIds = h.players.filter(p => p.startingStack > 0 && this.canRebuy(r, r.members[p.id])).map(p => p.id);
@@ -756,7 +948,7 @@ export class RoomService {
       Object.assign(row, { at: new Date(timestamp).toISOString(), roundSettlementId, round: q.round, reason,
         squidMode: mode, squidCount: counts[id], tokenBudget, tokensAwarded, tokensExhausted,
         squidUnit: q.unit, participantIds: [...q.participants],
-        handId: hand?.id ?? (r.hand?.status === 'complete' ? r.hand.id : null), rulesVersion: 5 });
+        handId: hand?.id ?? (r.hand?.status === 'complete' ? r.hand.id : null), rulesVersion: q.rulesVersion ?? 5 });
       if (hand) hand.miniChanges[id] = (hand.miniChanges[id] ?? 0) + amount;
     }
     if (hand) { hand.squidSettlementId = roundSettlementId; hand.squidSettlementChanges = copy(changes); }
@@ -776,6 +968,12 @@ export class RoomService {
     // partial prefix. Only rabbit changes; real board/log/payout/EV stay fixed.
     rabbit.board.push(...remaining.cards.slice(offset)); rabbit.indices.push(...remaining.indices.slice(offset));
     rabbit.active = false; rabbit.nextAt = null; rabbit.finishedAt = timestamp;
+    r.resultReadyAt = timestamp;
+    if (r.rebuyGrace?.handId === h.id && r.rebuyGrace.startsAt < timestamp + AUTO_DEAL_DELAY) {
+      r.rebuyGrace.startsAt = timestamp + AUTO_DEAL_DELAY;
+      r.rebuyGrace.endsAt = r.rebuyGrace.startsAt + REBUY_GRACE_DELAY;
+      r.rebuyGrace.phase = 'watch';
+    }
     const archived = this.db.hands.find(hand => hand.id === h.id);
     if (archived) archived.rabbit = copy(rabbit);
     return true;
@@ -801,6 +999,7 @@ export class RoomService {
   }
   close(r, timestamp = Date.now()) {
     this.idle(r);
+    for (const m of Object.values(r.members)) this.cancelQueuedBuyins(r, m, '牌桌已结束');
     this.completeRabbit(r, timestamp);
     const q = r.mini.squid, mushroom = r.mini.mushroom;
     if (q.active) this.settleSquid(r, { reason: 'partial', timestamp });
@@ -833,6 +1032,25 @@ export class RoomService {
     for (const p of h.players) for (let i = 0; i < p.cardIndices.length; i++) if (p.id === viewerId || this.shownIndicesFor(h, p).includes(i)) positions.push(p.cardIndices[i]);
     return [...new Set(positions)].map(i => cardProof(h, i));
   }
+  handCategoryFor(h, p, viewerId) {
+    // A player's private category belongs only to that player. Opponents and
+    // spectators see categories only for live, fully exposed contenders.
+    if (p.id !== viewerId && (p.folded || this.shownIndicesFor(h, p).length !== 2)) return null;
+    let board = h.board;
+    if (p.folded) {
+      // Preserve the category at the fold, including after reconnect/restart.
+      // Reconstruct from the persisted action street rather than subsequent
+      // public cards; rabbit cards must never change the actual hand category.
+      const fold = h.log.find(event => event.playerId === p.id && event.type === 'fold');
+      const count = { preflop: 0, flop: 3, turn: 4, river: 5 }[fold?.street];
+      if (count === undefined) return null;
+      board = h.board.slice(0, count);
+    }
+    const cards = [...p.cards, ...board];
+    if (cards.length >= 5) return evaluate(cards).name;
+    const counts = Object.values(cards.reduce((all, card) => { all[card[0]] = (all[card[0]] ?? 0) + 1; return all; }, {})).sort((a, b) => b - a);
+    return counts[0] === 4 ? '四条' : counts[0] === 3 ? '三条' : counts[0] === 2 && counts[1] === 2 ? '两对' : counts[0] === 2 ? '一对' : '高牌';
+  }
   resultFor(h) {
     if (!h.result) return null;
     const result = { pots: copy(h.result.pots), payouts: copy(h.result.payouts), mainWinnerIds: [...h.result.mainWinnerIds], showdown: h.result.showdown, handNames: {} };
@@ -850,22 +1068,29 @@ export class RoomService {
     const timestamp = Date.now(), bank = this.timeBankFor(r, this.member(r, viewerId));
     const currentSettings = r.status === 'closed' ? r.settings : settingsFor({}, r.settings), nextBombAt = this.bombDueAt(r, currentSettings);
     const timeBankCards = bank.remaining;
-    const mini = copy(r.mini), block = this.squidBlock(r);
+    const squidAdmission=r.mini.squid.active?this.squidJoinPlan(r,timestamp):null;
+    const mini = copy(r.mini), block = this.squidBlock(r, timestamp, squidAdmission);
     Object.assign(mini.squid, squidDetails(r.mini.squid));
     const expiry = this.expiryState(r, timestamp);
     mini.squid.paused = Boolean(block?.offlineOnly); mini.squid.pauseReason = block?.offlineOnly ? block.reason : null;
     mini.squid.expiryGraceEndsAt = expiry.deadline;
     mini.squid.blockerSince = r.mini.squid.blockerEpoch === this.observationId && r.mini.squid.blockerKey === block?.key ? r.mini.squid.blockerSince : null;
     mini.squid.blockerIds = block?.ids ?? []; mini.squid.canSettle = this.canSettleSquid(r, viewerId, timestamp); mini.squid.settleAfterSeconds = SQUID_BLOCK_GRACE / 1000;
-    mini.squid.absentSettlementAt = this.squidAbsentResult(r) && r.mini.squid.absentEpoch === this.observationId ? r.mini.squid.absentSettlementAt ?? null : null;
+    mini.squid.absentSettlementAt = this.squidAbsentResult(r, timestamp, squidAdmission) && r.mini.squid.absentEpoch === this.observationId ? r.mini.squid.absentSettlementAt ?? null : null;
     delete mini.squid.absentEpoch;
     delete mini.squid.blockerEpoch; delete mini.squid.blockerKey; delete mini.squid.settleReady;
     const actions = h && h.status === 'playing' ? availableActions(h, viewerId) : { canAct: false, canCheck: false, canFold: false, callAmount: 0, canRaise: false, minRaiseTo: 0, maxRaiseTo: 0, canAllIn: false };
+    const presentation = r.presentation?.handId === h?.id ? r.presentation : null;
+    actions.turnAvailable = actions.canAct;
+    actions.canAct = actions.canAct && (!Number.isFinite(presentation?.actionReadyAt) || timestamp >= presentation.actionReadyAt);
     actions.canUseTimeBank = actions.canAct && timeBankCards > 0 && Number.isFinite(r.deadline) && timestamp < r.deadline;
     actions.timeBankCards = timeBankCards; actions.timeBankSeconds = TIME_BANK_SECONDS;
-    const publicHand = h ? { id: h.id, number: h.number, status: h.status, street: h.street, board: [...h.board], buttonSeat: h.buttonSeat,
+    const pots = h ? potPreview(h) : null;
+    const publicHand = h ? { actionReadyAt: presentation?.actionReadyAt ?? null, turnStartedAt: presentation?.turnStartedAt ?? null,
+      pots: pots.pots, uncalledBets: pots.uncalledBets, id: h.id, number: h.number, status: h.status, street: h.street, board: [...h.board], buttonSeat: h.buttonSeat,
       ...this.handSquidInfo(h),
       rabbit: this.rabbitFor(h),
+      transition: h.transition ? { kind: h.transition.kind, nextAt: h.transition.nextAt, revealed: Boolean(h.transition.revealed || h.transition.afterRunout) } : null,
       runout: h.runout ? { active: h.runout.active, nextAt: h.runout.active ? h.runout.nextAt : null } : null, equity: copy(h.equityFrames?.at(-1)?.equity ?? null),
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
@@ -875,12 +1100,14 @@ export class RoomService {
       timeBankResetAt: null,
       players: Object.values(r.members).map(m => {
         const u = this.user(m.id), p = h?.players.find(x => x.id === m.id);
-        return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, avatarImage: avatarImageId(u?.avatarImage), seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn,
+        return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, avatarImage: avatarImageId(u?.avatarImage), seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn, pendingBuyIn: this.pendingBuyIn(m),
           sessionProfit: m.stack + m.cashedOut + (r.mini.squid.reserves[m.id] ?? 0) - m.totalBuyIn,
           timeBankCardsRemaining: this.timeBankFor(r, m).remaining, sittingOut: m.sittingOut, connected: (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0,
           entryBlind: this.entryFor(r, m), pendingDeparture: m.pendingDeparture ?? null, waitingFor: this.waitingFor(r, m), connectionWait: m.seat !== null && !this.online(r, m.id) ? '等待回到牌桌' : null,
           squidWon: (mini.squid.counts[m.id] ?? 0) > 0, squidCount: mini.squid.counts[m.id] ?? 0, squidReserve: r.mini.squid.reserves[m.id] ?? 0,
+          squidJoin: squidAdmission?.waiting[m.id] ?? null,
           squidMaxLoss: r.mini.squid.active && r.mini.squid.participants.includes(m.id) && !mini.squid.counts[m.id] ? mini.squid.tokenBudget * r.mini.squid.unit : 0,
+          handCategory: p ? this.handCategoryFor(h, p, viewerId) : null,
           cards: p ? this.cardsFor(h, p, viewerId) : [], shownIndices: p ? this.shownIndicesFor(h, p) : [],
           handSeat: p?.seat ?? null, folded: p?.folded ?? false, allIn: p?.allIn ?? false, bet: h?.status === 'playing' ? p?.bet ?? 0 : 0,
           contributed: p?.contributed ?? 0, inHand: Boolean(p), lastAction: h?.log.filter(a => a.playerId === m.id && !['payout', 'street', 'refund'].includes(a.type)).at(-1)?.type ?? null };

@@ -113,7 +113,10 @@ export function directSquidTransfers(rows, evidence) {
     && evidence.lastResult && typeof evidence.lastResult==='object'
     && evidence.lastResult.roundSettlementId===first.roundSettlementId ? evidence.lastResult : evidence;
   const ids = evidence.participants ?? q.participants ?? (Array.isArray(q.winnerIds) && Array.isArray(q.loserIds) ? [...q.winnerIds,...q.loserIds] : null);
-  if (!validIds(ids) || ids.length<3 || ids.length>9 || !natural(q.unit) || !q.unit
+  // A hand has at most nine seats, but a round can retain departed players
+  // while admitting replacements. Its complete liability roster is bounded
+  // by the room's 30-member limit, not the number dealt the final hand.
+  if (!validIds(ids) || ids.length<3 || ids.length>30 || !natural(q.unit) || !q.unit
     || !['normal','unlimited'].includes(q.mode ?? 'normal')) return unavailable('invalid_squid_evidence');
   if (typeof first.roomCode !== 'string' || typeof first.roundSettlementId !== 'string' || !first.roundSettlementId
     || q.roundSettlementId !== first.roundSettlementId) return unavailable('invalid_squid_identity');

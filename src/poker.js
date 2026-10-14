@@ -62,7 +62,7 @@ export function evaluate(cards) {
             const tuple = five([cards[a], cards[b], cards[c], cards[d], cards[e]]);
             if (!best || compare(tuple, best) > 0) best = tuple;
           }
-  return { tuple: best, name: NAMES[best[0]] };
+  return { tuple: best, name: best[0] === 8 && best[1] === 14 ? '皇家同花顺' : NAMES[best[0]] };
 }
 
 function log(hand, event) {
@@ -172,6 +172,20 @@ function settlementPots(hand) {
   return pots;
 }
 
+/** Public live-pot display without refunding or mutating the actual hand. */
+export function potPreview(hand) {
+  if (hand.result) return { pots: hand.result.pots.map(({ amount, eligibleIds }) => ({ amount, eligibleIds: [...eligibleIds] })), uncalledBets: [] };
+  // The rules helper removes uncalled overbets. Run it only on a disposable
+  // copy, and report that unmatched portion separately as still awaiting calls.
+  const preview = structuredClone(hand);
+  const pots = settlementPots(preview);
+  const uncalledBets = hand.players.flatMap((player, index) => {
+    const amount = player.contributed - preview.players[index].contributed;
+    return amount > 0 ? [{ playerId: player.id, amount }] : [];
+  });
+  return { pots, uncalledBets };
+}
+
 function settle(hand) {
   refundUncalled(hand);
   const contenders = hand.players.filter(p => !p.folded);
@@ -226,7 +240,10 @@ function lockAllIn(hand) {
 function advance(hand, afterSeat) {
   while (hand.status === 'playing') {
     const live = hand.players.filter(p => !p.folded);
-    if (live.length === 1) { settle(hand); return; }
+    if (live.length === 1) {
+      if (hand.deferredTransitions) { hand.actingId = null; hand.transition = { kind: 'award' }; return; }
+      settle(hand); return;
+    }
     const mobile = live.filter(p => !p.allIn);
     // When nobody else can respond, no pointless check/raise is requested.
     const pending = mobile.filter(p => {
@@ -236,6 +253,11 @@ function advance(hand, afterSeat) {
     if (pending.length) {
       hand.actingId = clockwise(hand, afterSeat).find(p => pending.includes(p)).id;
       return;
+    }
+    // Live rooms publish the final action before drawing or exposing a
+    // showdown. No future community card is drawn into this pending state.
+    if (hand.deferredTransitions && hand.street === 'river') {
+      hand.actingId = null; hand.transition = { kind: 'showdown' }; return;
     }
     refundUncalled(hand);
     if (mobile.length <= 1) lockAllIn(hand);
@@ -247,15 +269,19 @@ function advance(hand, afterSeat) {
         return;
       }
     }
+    if (hand.deferredTransitions) {
+      hand.actingId = null; hand.transition = { kind: 'street' }; return;
+    }
     nextStreet(hand);
     afterSeat = hand.buttonSeat;
   }
 }
 
-export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, entryPosts = [], deck, deferredRunout = false } = {}) {
+export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante = 0, bombPot = false, entryPosts = [], deck, deferredRunout = false, deferredTransitions = false } = {}) {
   if (!Array.isArray(players) || players.length < 2 || players.length > 9) throw new Error('需要 2 至 9 位玩家');
   if (typeof bombPot !== 'boolean' || (bombPot && !integer(ante, 1))) throw new Error('炸弹池前注无效');
   if (typeof deferredRunout !== 'boolean') throw new Error('跑牌设置无效');
+  if (typeof deferredTransitions !== 'boolean') throw new Error('换轮设置无效');
   if (!integer(smallBlind, 1) || !integer(bigBlind, smallBlind) || !integer(ante)) throw new Error('盲注或前注无效');
   if (players.some(p => !p || typeof p.id !== 'string' || !p.id || !integer(p.seat) || !integer(p.stack, 1)) ||
       new Set(players.map(p => p.id)).size !== players.length || new Set(players.map(p => p.seat)).size !== players.length ||
@@ -267,14 +293,14 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   const shuffled = deck === undefined ? shuffleDeck() : [...deck];
   if (shuffled.length !== 52 || new Set(shuffled).size !== 52 || shuffled.some(c => !CARDS.includes(c))) throw new Error('牌堆必须含 52 张不同扑克牌');
   const hand = {
-    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot, deferredRunout,
+    id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot, deferredRunout, deferredTransitions,
     smallBlindSeat: null, bigBlindSeat: null, board: [], boardIndices: [],
     deck: Object.freeze(shuffled), deckCursor: 0, burnIndices: [],
     players: players.map(p => ({ id: p.id, name: p.name ?? '', seat: p.seat,
       startingStack: p.stack, stack: p.stack, cards: [], cardIndices: [], folded: false,
       allIn: false, bet: 0, contributed: 0, deadContribution: 0, _acted: false, lastActedBet: null, reopenAt: null,
     })).sort((a, b) => a.seat - b.seat),
-    actingId: null, currentBet: bigBlind, minRaise: bigBlind, log: [], result: null, allInLock: null, runout: null,
+    actingId: null, currentBet: bigBlind, minRaise: bigBlind, log: [], result: null, allInLock: null, runout: null, transition: null,
   };
   const order = clockwise(hand, buttonSeat);
   const sb = players.length === 2 ? hand.players.find(p => p.seat === buttonSeat) : order[0];
@@ -308,7 +334,30 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   return hand;
 }
 
-/** Draw exactly one visible card after betting is locked; no equity code sees the deck. */
+/** Resolve one server-scheduled round boundary, without skipping its next turn. */
+export function advanceTransition(hand) {
+  if (hand.status !== 'playing' || !hand.transition) return hand;
+  if (hand.actingId !== null || hand.runout?.active) throw new Error('换轮状态无效');
+  const { kind } = hand.transition;
+  if (!['street', 'showdown', 'award'].includes(kind)
+    || (kind === 'street' && hand.street === 'river') || (kind === 'showdown' && hand.street !== 'river')
+    || (kind === 'award' && hand.players.filter(p => !p.folded).length !== 1)) throw new Error('换轮阶段无效');
+  if (kind === 'showdown' && !hand.transition.afterRunout && !hand.transition.revealed) {
+    hand.transition = { kind: 'showdown', revealed: true };
+    return hand;
+  }
+  hand.transition = null;
+  if (kind !== 'street') {
+    if (kind === 'showdown' && hand.players.filter(p => !p.folded && !p.allIn).length <= 1) lockAllIn(hand);
+    settle(hand);
+  } else {
+    nextStreet(hand);
+    advance(hand, hand.buttonSeat);
+  }
+  return hand;
+}
+
+/** Reveal one complete street after betting locks; no equity code sees the deck. */
 export function advanceRunout(hand) {
   if (hand.status !== 'playing' || !hand.runout?.active) return hand;
   if (hand.actingId !== null || !hand.allInLock || hand.board.length >= 5) throw new Error('跑牌状态无效');
@@ -320,17 +369,27 @@ export function advanceRunout(hand) {
     hand.minRaise = hand.bigBlind;
     for (const p of hand.players) { p.bet = 0; p._acted = false; p.lastActedBet = null; p.reopenAt = null; }
   }
-  const { card, index } = draw(hand);
-  hand.board.push(card);
-  hand.boardIndices.push(index);
-  log(hand, { type: hand.board.length < 3 ? 'runoutCard' : 'street', board: [...hand.board] });
-  if (hand.board.length === 5) settle(hand);
+  // Legacy saved hands may already have one or two flop cards. Complete that
+  // same flop without another burn, then continue with one turn and one river.
+  const targetCount = count < 3 ? 3 : count + 1;
+  while (hand.board.length < targetCount) {
+    const { card, index } = draw(hand);
+    hand.board.push(card);
+    hand.boardIndices.push(index);
+  }
+  log(hand, { type: 'street', board: [...hand.board] });
+  if (hand.board.length === 5) {
+    if (hand.deferredTransitions) {
+      hand.runout.active = false;
+      hand.transition = { kind: 'showdown', afterRunout: true };
+    } else settle(hand);
+  }
   return hand;
 }
 
 export function availableActions(hand, playerId) {
   const p = hand.players.find(p => p.id === playerId);
-  const canAct = hand.status === 'playing' && hand.actingId === playerId && !!p && !p.folded && !p.allIn;
+  const canAct = hand.status === 'playing' && !hand.transition && hand.actingId === playerId && !!p && !p.folded && !p.allIn;
   if (!canAct) return { canAct: false, canCheck: false, canFold: false, callAmount: 0, canRaise: false, minRaiseTo: 0, maxRaiseTo: 0, canAllIn: false };
   const responder = hand.players.some(q => q.id !== p.id && !q.folded && !q.allIn);
   const amountToMatch = responder ? hand.currentBet : Math.max(0, ...hand.players.filter(q => q.id !== p.id && !q.folded).map(q => q.bet));

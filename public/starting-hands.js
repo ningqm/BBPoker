@@ -8,11 +8,12 @@ export const STARTING_HAND_PRESETS = Object.freeze([
   { id: 'all', label: '不限', description: '所有起手牌' },
   { id: 'pair', label: '口袋对子', description: '22–AA，任意口袋对子' },
   { id: 'bigPair', label: '大对子', description: '10、J、Q、K、A 的口袋对子' },
-  { id: 'suitedConnector', label: '同花连张', description: '相邻点数且同花，例如 76、QJ、AK；不含 A2' },
-  { id: 'suitedGapper', label: '同花隔张', description: '点数相隔 2 且同花，例如 75、QT、AQ；不含 A3' },
-  { id: 'suitedAce', label: '同花 A', description: '一张 A 与另一张牌同花（A2 到 AK）' },
+  { id: 'suitedConnector', label: '同花连张', description: '相邻点数且同花（同一花色）：23 到 AK，含 KQ、AK；不含 A2' },
+  { id: 'offsuitConnector', label: '杂色连张', description: '相邻点数、不同花色：23 到 AK，含 KQ、AK；不含 A2（同红或同黑也可）' },
+  { id: 'suitedGapper', label: '同花隔张', description: '中间隔 1 个点数、同一花色：24 到 AQ，例如 75、QT；不含 A3' },
+  { id: 'suitedAce', label: '同花 A', description: '一张 A 与另一张牌为同一花色，A2 到 AK；不含 AA' },
   { id: 'broadway', label: '两张大牌', description: 'T、J、Q、K、A 中的两个不同点数，花色不限，不含对子' },
-  { id: 'premium', label: '顶端范围', description: 'AA、KK、QQ 或 AK（不限花色）' },
+  { id: 'premium', label: '顶端范围', description: '固定集合：AA、KK、QQ 或 AK（AK 花色不限）' },
 ].map(value => Object.freeze(value)));
 
 function option(value, choices, fallback, label) {
@@ -55,6 +56,7 @@ export function matchesStartingHand(cards, filter) {
     case 'pair': if (!pair) return false; break;
     case 'bigPair': if (!pair || x < 8) return false; break;
     case 'suitedConnector': if (!suited || gap !== 1) return false; break;
+    case 'offsuitConnector': if (suited || gap !== 1) return false; break;
     case 'suitedGapper': if (!suited || gap !== 2) return false; break;
     case 'suitedAce': if (!suited || ![a[0], b[0]].includes('A')) return false; break;
     case 'broadway': if (pair || x < 8 || y < 8) return false; break;

@@ -42,7 +42,8 @@
 .table-stage .table-center .board{margin:7px 0 5px}
 .table-stage .table-center .equity-runout{margin-top:1px;margin-bottom:3px}
 @media(max-width:760px){
- .table-stage .seat[data-side="left"]{--seat-x:4%}.table-stage .seat[data-side="right"]{--seat-x:96%}
+ /* Leave room for the wider fish-count badge at either screen edge. */
+ .table-stage .seat[data-side="left"]{--seat-x:5%}.table-stage .seat[data-side="right"]{--seat-x:95%}
  .table-stage .seat .seat-main{grid-template-columns:16px minmax(0,1fr);column-gap:3px;padding:4px 3px 3px;min-height:46px}.table-stage .seat.acting .seat-main{padding:3px 2px 2px}
  .table-stage .seat .seat-identity .seat-avatar-button{width:16px;height:16px}
  .table-stage .seat .name{font-size:10px}.table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:8px;border-width:1px}
@@ -55,6 +56,7 @@
  .table-stage .table-center.is-idle .table-config{margin-bottom:13px}
 }
 @media(max-width:360px){
+ .table-stage .seat[data-side="left"]{--seat-x:4%}.table-stage .seat[data-side="right"]{--seat-x:96%}
  .table-stage .table-center{width:158px}.table-config{max-width:158px}.table-stage .seat .seat-main{column-gap:2px}.table-stage .seat .name{font-size:9px}
  .table-stage .seat .seat-identity .seat-avatar-button{width:16px;height:16px}.table-stage .seat .stack-value{font-size:13px}.table-stage .seat .stack-unit{font-size:8px}
  .table-config .game-mode,.table-config .game-mode .mode-stake,.table-blinds,.table-config .room-countdown{font-size:8px}

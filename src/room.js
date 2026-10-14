@@ -5,13 +5,15 @@ import { planEntry, commitEntry, needsEntry, entryState, setEntryMode, markEntry
 import { avatarImageId } from './avatar.js';
 import { calculateEquity } from './equity.js';
 import { aggregateAnalytics } from './analytics.js';
+import { publicPlayerStats } from './player-stats.js';
 import { recordFilters, resultMatches, handBigBlind, amountInBB, holeMatches, recordTotals, recordBBTotals, opponentRecords, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
 import { handContext, handContextMatches } from './hand-context.js';
 
 // At most 30 members can fund a room; keep even their summed ledger safe.
 const MAX_TOTAL_BUYIN = Math.floor(Number.MAX_SAFE_INTEGER / 30);
 const BUYIN_MIN_BB = 100, BUYIN_MAX_BB = 1000, BUYIN_STEP_BB = 50;
-const TIME_BANK_WINDOW = 30 * 60 * 1000;
+const ACTION_SECONDS = 20, TIME_BANK_SECONDS = 30;
+const timeBankGrant = settings => 3 * Math.ceil((settings.durationMinutes ?? 60) / 30);
 const MINI_CUTOFF = 5 * 60 * 1000;
 const AUTO_DEAL_DELAY = 5000;
 const REBUY_GRACE_DELAY = 5000;
@@ -19,9 +21,9 @@ const SQUID_BLOCK_GRACE = 90000, EMPTY_ROOM_TIMEOUT = 30 * 60000;
 const RABBIT_START_DELAY = 1000;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 1000, maxBuyIn: 10000, minBuyInBB: BUYIN_MIN_BB, maxBuyInBB: BUYIN_MAX_BB, buyInStepBB: BUYIN_STEP_BB, maxTotalBuyInBB: null,
-  actionSeconds: 20, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
+  actionSeconds: ACTION_SECONDS, approvalRequired: false, squid: false, squidUnit: 20, squidUnitBB: 2,
   mushroom: false, mushroomUnit: 5, bombPot: false, bombIntervalMinutes: 10, bombAnteBB: 2,
-  durationMinutes: 60, timeBankCards: 3, timeBankSeconds: 30 });
+  durationMinutes: 60, timeBankCards: 6, timeBankSeconds: TIME_BANK_SECONDS });
 export const now = () => new Date().toISOString();
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const copy = x => structuredClone(x);
@@ -69,8 +71,10 @@ export function settingsFor(input = {}, original = DEFAULTS) {
   // Hand-count schedules are deliberately not interpreted as minutes. Old
   // open tables migrate to the default 10-minute clock on their next start.
   delete s.bombEveryHands;
-  integer(s.actionSeconds, 15, 90, '思考时间'); integer(s.durationMinutes, 30, 720, '牌桌时长（分钟）');
-  integer(s.timeBankCards, 0, 20, '时间牌数量'); integer(s.timeBankSeconds, 5, 120, '每张时间牌秒数');
+  integer(s.durationMinutes, 30, 720, '牌桌时长（分钟）');
+  // The server owns timing. Ignore obsolete client configuration, including
+  // settings copied from older tables; only the table duration determines cards.
+  s.actionSeconds = ACTION_SECONDS; s.timeBankSeconds = TIME_BANK_SECONDS; s.timeBankCards = timeBankGrant(s);
   integer(s.bombIntervalMinutes, 1, 120, '炸弹池间隔（分钟）'); integer(s.bombAnteBB, 1, 1000, '炸弹池前注大盲数');
   for (const k of ['approvalRequired', 'squid', 'mushroom', 'bombPot']) if (typeof s[k] !== 'boolean') fail('玩法开关格式错误');
   if (input.mushroom === true) fail('蘑菇玩法已停用，历史牌谱和旧池退款仍保留');
@@ -110,6 +114,7 @@ export class RoomService {
       if (Object.keys(r.members).length >= 30) fail('本桌成员已达 30 人');
       r.members[user.id] = { id: user.id, seat: null, stack: 0, totalBuyIn: 0, cashedOut: 0, sittingOut: false, joinedAt: now() };
     }
+    if (r.startedAt != null) this.refreshTimeBanks(r);
     return r.members[user.id];
   }
   join(user, code, invite) {
@@ -510,7 +515,7 @@ export class RoomService {
       if (!this.finishExpiredRoom(r, timestamp)) { r.autoDealPaused ??= false; this.syncLifecycle(r, timestamp); this.reconcileAutoDeal(r, timestamp); }
     } else if (h.runout?.active) {
       r.deadline = null; h.runout.nextAt = timestamp + (h.board.length === h.allInLock.board.length ? 1800 : 1500);
-    } else r.deadline = timestamp + r.settings.actionSeconds * 1000;
+    } else r.deadline = timestamp + ACTION_SECONDS * 1000;
     this.syncLifecycle(r, timestamp);
   }
   recordEquity(h) {
@@ -577,13 +582,26 @@ export class RoomService {
     if (changed) this.touch(r);
     return changed;
   }
-  timeBankWindow(r, timestamp) { return r.startedAt == null ? null : Math.max(0, Math.floor((timestamp - r.startedAt) / TIME_BANK_WINDOW)); }
-  refreshTimeBanks(r, timestamp) {
-    const window = this.timeBankWindow(r, timestamp);
-    if (window === null || (r.endsAt != null && timestamp >= r.endsAt)) return false;
+  timeBankFor(r, m) {
+    if (m.timeBank?.version === 2) return m.timeBank;
+    const granted = timeBankGrant(r.settings);
+    // Preserve the exact remaining balance of an already-running legacy table.
+    // Migration never refreshes spent cards or changes the current deadline.
+    if (Number.isSafeInteger(m.timeBank?.remaining) && m.timeBank.remaining >= 0) {
+      return { version: 2, granted, remaining: m.timeBank.remaining, legacyPreserved: true };
+    }
+    // An interrupted old save may contain usage but no bank. Count each hand
+    // once, including an unarchived current hand, rather than grant spent cards.
+    const hands = new Map(this.db.hands.filter(h => h.roomCode === r.code).map(h => [h.id, h]));
+    if (r.hand) hands.set(r.hand.id, r.hand);
+    const used = [...hands.values()].reduce((sum, h) => sum + (h.timeBankUses ?? []).filter(use => use.playerId === m.id).length, 0);
+    return { version: 2, granted, remaining: Math.max(0, granted - used) };
+  }
+  refreshTimeBanks(r) {
+    if (r.startedAt == null) return false;
     let changed = false;
-    for (const m of Object.values(r.members)) if (m.timeBank?.window !== window) {
-      m.timeBank = { window, remaining: r.settings.timeBankCards ?? DEFAULTS.timeBankCards }; changed = true;
+    for (const m of Object.values(r.members)) if (m.timeBank?.version !== 2) {
+      m.timeBank = this.timeBankFor(r, m); changed = true;
     }
     return changed;
   }
@@ -592,9 +610,9 @@ export class RoomService {
     if (r.hand.actingId !== m.id) fail('只有当前行动的玩家可以使用时间牌', 403);
     if (!Number.isFinite(r.deadline) || timestamp >= r.deadline) fail('行动已超时，不能使用时间牌', 409);
     this.refreshTimeBanks(r, timestamp);
-    if (!m.timeBank?.remaining) fail('本轮时间牌已用完');
+    if (!m.timeBank?.remaining) fail('本场时间牌已用完');
     m.timeBank.remaining--;
-    const seconds = r.settings.timeBankSeconds ?? DEFAULTS.timeBankSeconds;
+    const seconds = TIME_BANK_SECONDS;
     r.deadline += seconds * 1000;
     (r.hand.timeBankUses ??= []).push({ playerId: m.id, at: timestamp, actionSeq: cmd.actionSeq, seconds, remaining: m.timeBank.remaining });
   }
@@ -614,8 +632,7 @@ export class RoomService {
     }
     const plan = this.autoPlan(r, timestamp);
     if (plan && (r.nextHandAt !== plan.nextHandAt || r.autoWaitReason !== plan.autoWaitReason || (plan.nextHandAt !== null && timestamp >= plan.nextHandAt))) return true;
-    const window = this.timeBankWindow(r, timestamp);
-    return !this.expired(r, timestamp) && window !== null && Object.values(r.members).some(m => m.timeBank?.window !== window);
+    return r.startedAt != null && Object.values(r.members).some(m => m.timeBank?.version !== 2);
   }
   tick(r, timestamp = Date.now()) {
     if (!this.needsTick(r, timestamp)) return false;
@@ -658,6 +675,7 @@ export class RoomService {
     }
     this.applyDepartures(r, h, timestamp);
     // Mandatory showdown exposes live contenders only. Folded cards remain private.
+    h.shown ??= {};
     if (h.result.showdown) for (const p of h.players) if (!p.folded) h.shown[p.id] = [0, 1];
     h.endingStacks = Object.fromEntries(h.players.map(p => [p.id, r.members[p.id].stack + r.members[p.id].cashedOut - cashedBefore[p.id]]));
     h.miniAfter = copy(r.mini); h.recorded = true;
@@ -753,16 +771,22 @@ export class RoomService {
     r.hand.log.push({ seq: r.hand.log.length + 1, street: r.hand.street, playerId: actor, type: 'timeout', amount: 0 });
     this.afterAction(r, timestamp); this.touch(r); return true;
   }
-  cardsFor(h, p, viewerId) { return p.cards.map((c, i) => p.id === viewerId || (h.shown?.[p.id] ?? []).includes(i) ? c : null); }
+  shownIndicesFor(h, p) {
+    // A completed showdown is authoritative. Old archives must not hide a
+    // called river hand merely because their optional shown marker is missing.
+    if (h.status === 'complete' && h.result?.showdown === true && !p.folded) return [0, 1];
+    return [...new Set(h.shown?.[p.id] ?? [])].filter(index => index === 0 || index === 1).sort();
+  }
+  cardsFor(h, p, viewerId) { return p.cards.map((c, i) => p.id === viewerId || this.shownIndicesFor(h, p).includes(i) ? c : null); }
   proofsFor(h, viewerId) {
     const positions = [...h.boardIndices];
-    for (const p of h.players) for (let i = 0; i < p.cardIndices.length; i++) if (p.id === viewerId || (h.shown?.[p.id] ?? []).includes(i)) positions.push(p.cardIndices[i]);
+    for (const p of h.players) for (let i = 0; i < p.cardIndices.length; i++) if (p.id === viewerId || this.shownIndicesFor(h, p).includes(i)) positions.push(p.cardIndices[i]);
     return [...new Set(positions)].map(i => cardProof(h, i));
   }
   resultFor(h) {
     if (!h.result) return null;
     const result = { pots: copy(h.result.pots), payouts: copy(h.result.payouts), mainWinnerIds: [...h.result.mainWinnerIds], showdown: h.result.showdown, handNames: {} };
-    for (const [id, name] of Object.entries(h.result.handNames ?? {})) if ((h.shown?.[id] ?? []).length === 2) result.handNames[id] = name;
+    for (const [id, name] of Object.entries(h.result.handNames ?? {})) if (h.players.some(p => p.id === id && this.shownIndicesFor(h, p).length === 2)) result.handNames[id] = name;
     return result;
   }
   summary(h, userId) {
@@ -773,9 +797,9 @@ export class RoomService {
   }
   state(r, viewerId) {
     this.member(r, viewerId); const h = r.hand;
-    const timestamp = Date.now(), bank = this.member(r, viewerId).timeBank;
+    const timestamp = Date.now(), bank = this.timeBankFor(r, this.member(r, viewerId));
     const currentSettings = r.status === 'closed' ? r.settings : settingsFor({}, r.settings), nextBombAt = this.bombDueAt(r, currentSettings);
-    const timeBankCards = bank?.remaining ?? (r.settings.timeBankCards ?? DEFAULTS.timeBankCards);
+    const timeBankCards = bank.remaining;
     const mini = copy(r.mini), block = this.squidBlock(r);
     const expiry = this.expiryState(r, timestamp);
     mini.squid.paused = Boolean(block?.offlineOnly); mini.squid.pauseReason = block?.offlineOnly ? block.reason : null;
@@ -787,7 +811,7 @@ export class RoomService {
     delete mini.squid.blockerEpoch; delete mini.squid.blockerKey; delete mini.squid.settleReady;
     const actions = h && h.status === 'playing' ? availableActions(h, viewerId) : { canAct: false, canCheck: false, canFold: false, callAmount: 0, canRaise: false, minRaiseTo: 0, maxRaiseTo: 0, canAllIn: false };
     actions.canUseTimeBank = actions.canAct && timeBankCards > 0 && Number.isFinite(r.deadline) && timestamp < r.deadline;
-    actions.timeBankCards = timeBankCards; actions.timeBankSeconds = r.settings.timeBankSeconds ?? DEFAULTS.timeBankSeconds;
+    actions.timeBankCards = timeBankCards; actions.timeBankSeconds = TIME_BANK_SECONDS;
     const publicHand = h ? { id: h.id, number: h.number, status: h.status, street: h.street, board: [...h.board], buttonSeat: h.buttonSeat,
       squidRound: this.handSquidRound(h),
       rabbit: this.rabbitFor(h),
@@ -797,22 +821,26 @@ export class RoomService {
     return { code: r.code, name: r.name, access: r.access === 'public' ? 'public' : 'invite', status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(currentSettings), approvalRequired: false }, nextBombAt, bombDue: nextBombAt !== null && timestamp >= nextBombAt, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
       expiryMode: expiry.mode, autoDeal: { paused: own(r, 'autoDealPaused') ? Boolean(r.autoDealPaused) : r.handNumber > 0, nextHandAt: r.nextHandAt ?? null, waitReason: this.autoBlockReason(r, timestamp), delaySeconds: AUTO_DEAL_DELAY / 1000, rebuyGrace: this.rebuyGraceState(r, timestamp) },
       miniGamesCutoffAt: r.endsAt == null ? null : r.endsAt - MINI_CUTOFF,
-      timeBankResetAt: r.startedAt == null ? null : (r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW < r.endsAt ? r.startedAt + (this.timeBankWindow(r, timestamp) + 1) * TIME_BANK_WINDOW : null),
+      timeBankResetAt: null,
       players: Object.values(r.members).map(m => {
         const u = this.user(m.id), p = h?.players.find(x => x.id === m.id);
         return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, avatarImage: avatarImageId(u?.avatarImage), seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn,
           sessionProfit: m.stack + m.cashedOut + (r.mini.squid.reserves[m.id] ?? 0) - m.totalBuyIn,
-          timeBankCardsRemaining: m.timeBank?.remaining ?? (r.settings.timeBankCards ?? DEFAULTS.timeBankCards), sittingOut: m.sittingOut, connected: (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0,
+          timeBankCardsRemaining: this.timeBankFor(r, m).remaining, sittingOut: m.sittingOut, connected: (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0,
           entryBlind: this.entryFor(r, m), pendingDeparture: m.pendingDeparture ?? null, waitingFor: this.waitingFor(r, m), connectionWait: m.seat !== null && !this.online(r, m.id) ? '等待回到牌桌' : null,
           squidWon: r.mini.squid.won.includes(m.id), squidReserve: r.mini.squid.reserves[m.id] ?? 0,
-          cards: p ? this.cardsFor(h, p, viewerId) : [], shownIndices: p ? [...new Set(h.shown?.[p.id] ?? [])].filter(index => index === 0 || index === 1).sort() : [],
-          folded: p?.folded ?? false, allIn: p?.allIn ?? false, bet: h?.status === 'playing' ? p?.bet ?? 0 : 0,
+          cards: p ? this.cardsFor(h, p, viewerId) : [], shownIndices: p ? this.shownIndicesFor(h, p) : [],
+          handSeat: p?.seat ?? null, folded: p?.folded ?? false, allIn: p?.allIn ?? false, bet: h?.status === 'playing' ? p?.bet ?? 0 : 0,
           contributed: p?.contributed ?? 0, inHand: Boolean(p), lastAction: h?.log.filter(a => a.playerId === m.id && !['payout', 'street', 'refund'].includes(a.type)).at(-1)?.type ?? null };
       }),
       pending: copy(r.pending.filter(p => viewerId === r.hostId || p.playerId === viewerId)),
       hand: publicHand, actions,
       mini, recentHands: this.db.hands.filter(x => x.roomCode === r.code).slice(-20).reverse().map(x => this.summary(x, viewerId)),
       ledger: this.db.ledger.filter(x => x.roomCode === r.code).slice(-80), messages: [], chat: (r.chat ?? []).slice(-CHAT_LIMIT).map(chatProjection) };
+  }
+  playerStats(viewerId, roomCode, playerId, options = {}) {
+    const room = this.room(roomCode); this.member(room, viewerId); this.member(room, playerId);
+    return publicPlayerStats(this.db, viewerId, roomCode, this.user(playerId), options);
   }
   history(userId, roomCode, options = {}) {
     const r = this.room(roomCode); this.member(r, userId);

@@ -8,6 +8,8 @@ import { aggregateAnalytics } from './analytics.js';
 import { publicPlayerStats } from './player-stats.js';
 import { recordFilters, resultMatches, handBigBlind, amountInBB, holeMatches, recordTotals, recordBBTotals, opponentRecords, sessionRecord, sessionLibrary, squidSettlementMap, handMiniNet } from './records.js';
 import { handContext, handContextMatches } from './hand-context.js';
+import { handGameMatches } from './record-games.js';
+import { directRecordLibrary } from './direct-records.js';
 
 // At most 30 members can fund a room; keep even their summed ledger safe.
 const MAX_TOTAL_BUYIN = Math.floor(Number.MAX_SAFE_INTEGER / 30);
@@ -753,12 +755,14 @@ export class RoomService {
       const row = this.log(r, id, 'squidSettlement', amount, `第 ${q.round} 轮鱿鱼${reason === 'partial' ? '提前' : reason === 'absent' ? '缺席多人' : reason === 'forfeit' ? '主动退出' : ''}结算`);
       Object.assign(row, { at: new Date(timestamp).toISOString(), roundSettlementId, round: q.round, reason,
         squidMode: mode, squidCount: counts[id], tokenBudget, tokensAwarded, tokensExhausted,
+        squidUnit: q.unit, participantIds: [...q.participants],
         handId: hand?.id ?? (r.hand?.status === 'complete' ? r.hand.id : null), rulesVersion: 5 });
       if (hand) hand.miniChanges[id] = (hand.miniChanges[id] ?? 0) + amount;
     }
     if (hand) { hand.squidSettlementId = roundSettlementId; hand.squidSettlementChanges = copy(changes); }
     q.roundSettlementId = roundSettlementId;
     q.lastResult = { handId: hand?.id ?? (r.hand?.status === 'complete' ? r.hand.id : null), roundSettlementId, round: q.round, reason, loserId, loserIds: losers, amount: tokensAwarded * losers.length * q.unit, winnerIds: winners, unit: q.unit, changes,
+      settledAt: new Date(timestamp).toISOString(),
       mode, counts: copy(counts), tokenBudget, tokensAwarded, tokensExhausted };
     q.active = false; q.reserves = {}; q.absentSettlementAt = null; q.absentEpoch = null; q.blockerSince = null; q.blockerKey = null; q.settleReady = false;
     return q.lastResult;
@@ -914,6 +918,10 @@ export class RoomService {
     if (options.room) this.member(this.room(options.room), userId);
     return sessionLibrary(this.db, userId, options);
   }
+  opponents(userId, options = {}) {
+    if (options.room) this.member(this.room(options.room), userId);
+    return directRecordLibrary(this.db, userId, options);
+  }
   sessionFor(userId, roomCode) {
     const room = this.room(roomCode); this.member(room, userId);
     return { session: sessionRecord(this.db, room, userId) };
@@ -936,7 +944,7 @@ export class RoomService {
         && (filter.handNumber === null || h.number === filter.handNumber)
         && resultMatches((p ? p.stack - p.startingStack : 0) + (h.miniChanges?.[userId] ?? 0), filter.result, filter.minBB, handBigBlind(h))
         && holeMatches(p?.cards, filter)
-        && (filter.type === 'all' || Boolean(h.bombPot) === (filter.type === 'bomb'))
+        && handGameMatches(h, filter)
         && (!filter.q || `${h.number} ${h.id} ${h.roomName}`.toLocaleLowerCase('zh-CN').includes(filter.q)))) continue;
       const context = handContext(h, userId);
       if (handContextMatches(context, userId, filter)) entries.push({ hand: h, player: p, context });

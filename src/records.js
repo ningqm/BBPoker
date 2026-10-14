@@ -39,10 +39,11 @@ export function recordFilters(input = {}) {
     handNumber = Number(value);
   }
   const type = choice(input.type, ['all', 'holdem', 'bomb'], '牌局类型');
+  const squid = choice(input.squid, ['all', 'none', 'normal', 'unlimited'], '鱿鱼玩法');
   const status = choice(input.status, ['all', 'active', 'closed'], '对局状态');
-  const position = choice(input.position, ['all', 'BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'LJ', 'HJ', 'CO', 'unknown'], '位置筛选');
+  const position = choice(input.position, ['all', 'BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'LJ', 'HJ', 'CO', 'bomb', 'unknown'], '位置筛选');
   const potType = choice(input.potType, ['all', 'headsUp', 'multiway', 'noFlop', 'unknown'], '翻牌人数筛选');
-  const tableSize = choice(input.tableSize, ['all', 'headsUp', 'short', 'full'], '发牌人数筛选');
+  const tableSize = choice(input.tableSize, ['all', 'headsUp', 'short', 'full', '2', '3', '4', '5', '6', '7', '8', '9'], '发牌人数筛选');
   if (!optional(input.opponent) && (typeof input.opponent !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.opponent))) fail('对手筛选无效');
   const opponent = optional(input.opponent) ? '' : input.opponent;
   let maxHands = null;
@@ -52,7 +53,7 @@ export function recordFilters(input = {}) {
   }
   if (!optional(input.q) && (typeof input.q !== 'string' || [...input.q].length > 80)) fail('搜索内容最多 80 字');
   const q = (input.q || '').trim().toLocaleLowerCase('zh-CN');
-  return { start, end, result, minBB, holeRanks, ...startingHand, handNumber, type, status, position, potType, tableSize, opponent, maxHands, q };
+  return { start, end, result, minBB, holeRanks, ...startingHand, handNumber, type, squid, status, position, potType, tableSize, opponent, maxHands, q };
 }
 function thresholdBB(value, required = false) {
   if (optional(value)) { if (required) fail('请输入盈亏筛选的 BB 阈值'); return null; }

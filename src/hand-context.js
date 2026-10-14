@@ -16,7 +16,7 @@ function positionFor(hand, players, userId) {
   const clockwise = [...ordered.slice(buttonIndex + 1), ...ordered.slice(0, buttonIndex + 1)];
   const button = clockwise.at(-1);
   // Bomb pots have no natural blinds. Only their archived button is meaningful.
-  if (hand.bombPot) return button.id === userId ? 'BTN' : 'unknown';
+  if (hand.bombPot) return button.id === userId ? 'BTN' : 'bomb';
   const sb = players.length === 2 ? button : clockwise[0], bb = players.length === 2 ? clockwise[0] : clockwise[1];
   if (hand.smallBlindSeat !== sb.seat || hand.bigBlindSeat !== bb.seat) return 'unknown';
   if (button.id === userId) return players.length === 2 ? 'BTN/SB' : 'BTN';
@@ -79,6 +79,6 @@ export function handContextMatches(context, userId, filter) {
   if (filter.opponent && ['headsUp', 'multiway'].includes(filter.potType)
     && !context.flopPlayerIds.includes(filter.opponent)) return false;
   const size = context.tableSize;
-  return filter.tableSize === 'all' || filter.tableSize === 'headsUp' && size === 2
+  return filter.tableSize === 'all' || /^[2-9]$/.test(filter.tableSize) && size === Number(filter.tableSize) || filter.tableSize === 'headsUp' && size === 2
     || filter.tableSize === 'short' && size >= 3 && size <= 6 || filter.tableSize === 'full' && size >= 7 && size <= 9;
 }

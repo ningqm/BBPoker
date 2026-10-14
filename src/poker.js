@@ -62,7 +62,7 @@ export function evaluate(cards) {
             const tuple = five([cards[a], cards[b], cards[c], cards[d], cards[e]]);
             if (!best || compare(tuple, best) > 0) best = tuple;
           }
-  return { tuple: best, name: best[0] === 8 && best[1] === 14 ? '皇家同花顺' : NAMES[best[0]] };
+  return { tuple: best, name: NAMES[best[0]] };
 }
 
 function log(hand, event) {

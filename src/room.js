@@ -1054,7 +1054,9 @@ export class RoomService {
   resultFor(h) {
     if (!h.result) return null;
     const result = { pots: copy(h.result.pots), payouts: copy(h.result.payouts), mainWinnerIds: [...h.result.mainWinnerIds], showdown: h.result.showdown, handNames: {} };
-    for (const [id, name] of Object.entries(h.result.handNames ?? {})) if (h.players.some(p => p.id === id && this.shownIndicesFor(h, p).length === 2)) result.handNames[id] = name;
+    // Normalize the legacy display label only in this viewer-safe projection;
+    // the stored hand, ranking tuples and payouts must remain untouched.
+    for (const [id, name] of Object.entries(h.result.handNames ?? {})) if (h.players.some(p => p.id === id && this.shownIndicesFor(h, p).length === 2)) result.handNames[id] = name === '皇家同花顺' ? '同花顺' : name;
     return result;
   }
   summary(h, userId) {

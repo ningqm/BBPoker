@@ -1,7 +1,10 @@
+import {updateHandCategoryMotion} from '../public/hand-category.js';
 import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
+import * as tableScene from '../public/table-scene.js';
+import * as tableControls from '../public/table-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -56,7 +59,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({...money,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
+  const context = vm.createContext({updateHandCategoryMotion,...money,...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {
@@ -271,6 +274,9 @@ test('identity adoption removes private state and aborts its stream before stora
   client.state.sessionDetailData = { code:'123456',players:[{id:'old-user',net:1234}] };
   client.state.modal = { kind: 'show' };
   client.state.revealed.add(0);
+  client.state.pendingFeedback = { eventId:'123456:old-user:h1:5',sound:'chip',speech:'raise' };
+  client.state.potMotion = { handId:'h1',at:Date.now(),awards:[{playerId:'old-user',amount:300}] };
+  Object.assign(client.state,{raise:300,raisePreset:'pot',raisePanelOpen:true,raiseTurnKey:'old-turn'});
 
   const adoption = client.adoptIdentity({ token: 'new-token', user: { id: 'new-user' } });
   assert.equal(aborted, true);
@@ -283,6 +289,9 @@ test('identity adoption removes private state and aborts its stream before stora
   assert.equal(client.state.sessionDetailData, null, 'unit-switch cached results belong to the old identity');
   assert.equal(client.state.modal, null);
   assert.equal(client.state.revealed.size, 0);
+  assert.equal(client.state.pendingFeedback,null,'deferred render must not announce the previous identity\'s action');
+  assert.equal(client.state.potMotion,null,'previous identity payout animation must not survive reset');
+  assert.equal(client.state.raise,0);assert.equal(client.state.raisePreset,null);assert.equal(client.state.raisePanelOpen,false);assert.equal(client.state.raiseTurnKey,null);
   assert.equal(client.state.page, 'loading');
   assert.equal(client.renders.at(-1).room, null);
   assert.deepEqual(written, ['new-token']);
@@ -381,9 +390,11 @@ test('a server-rejected squid exit quote refreshes the table without repeating a
 
 test('even an immediate reconnect resets the countdown baseline before the next periodic tick',()=>{
   const c=clientHarness(),view={code:'123456',meId:'old-user',deadline:30000,hand:{id:'same-hand',actionSeq:4,status:'playing',actingId:'old-user'}};
+  c.state.pendingFeedback={sound:'chip',speech:'raise'};c.state.potMotion={handId:'same-hand',at:Date.now()};
   c.turnCountdown.update(view,{now:22000});
   assert.equal(c.turnCountdown.update(view,{now:23000}).sound,'countdown');
   c.stopStream();
+  assert.equal(c.state.pendingFeedback,null,'disconnect drops unrendered action audio');assert.equal(c.state.potMotion,null);
   assert.equal(c.turnCountdown.update(view,{now:24000}).sound,null,'the first restored frame cannot replay a skipped warning');
   assert.equal(c.turnCountdown.update(view,{now:25000}).sound,'countdown');
 });

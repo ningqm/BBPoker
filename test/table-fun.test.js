@@ -100,8 +100,8 @@ test('ordinary boards, rabbit cards, skipped frames and rewritten public cards n
   tracker.reset(); update(tracker, room());
   const rabbit = room({ revision: 2, values: [10, 90] }); rabbit.hand.rabbit = { board: BOARD, active: true };
   noEffects(update(tracker, rabbit));
-  noEffects(update(tracker, room({ revision: 3, board: 3, values: [90, 10] })));
-  const rewritten = room({ revision: 4, board: 4, values: [10, 90] }); rewritten.hand.board[0] = 'Kh';
+  noEffects(update(tracker, room({ revision: 3, board: 4, values: [90, 10] })));
+  const rewritten = room({ revision: 4, board: 5, values: [10, 90] }); rewritten.hand.board[0] = 'Kh';
   noEffects(update(tracker, rewritten));
 });
 
@@ -167,4 +167,15 @@ test('disabled, hidden, expired and invalid effects cannot leave a blocking over
   mountFunEffects(stage, [effect], { now: NOW + 2000 }); assert.equal(stage.querySelector('.fun-layer'), null);
   mountFunEffects(stage, [{ ...effect, type: '<script>' }, { ...effect, toId: 'outside' }], { now: NOW }); assert.equal(stage.querySelector('.fun-layer'), null);
   f.doc.visibilityState = 'hidden'; mountFunEffects(stage, [effect], { now: NOW }); assert.equal(stage.querySelector('.fun-layer'), null);
+});
+
+
+test('a grouped three-card flop can reverse the lead once, but skipped turn/river snapshots do not manufacture a reversal',()=>{
+  const tracker=createTableFunTracker();update(tracker,room({values:[90,10]}));
+  const flop=room({revision:2,board:3,values:[10,90]});
+  assert.deepEqual(update(tracker,flop).effects,[{id:'pat:h1:a',type:'pat',fromId:'b',toId:'a',at:NOW}]);
+  noEffects(update(tracker,flop));
+  assert.equal(update(tracker,room({revision:3,board:4,values:[90,10]})).effects[0].toId,'b');
+  tracker.reset();update(tracker,room({values:[90,10]}));
+  noEffects(update(tracker,room({revision:2,board:4,values:[10,90]})));
 });

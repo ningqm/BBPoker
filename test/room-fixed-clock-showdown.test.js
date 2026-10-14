@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { RoomService, settingsFor } from '../src/room.js';
 import { availableActions } from '../src/poker.js';
 import { verifyProof } from '../src/fairness.js';
+import { readyRoomAction } from './helpers/room-clock.js';
 
 function fixture(t, settings = {}, count = 3) {
   let time = 1800000000000; t.mock.method(Date, 'now', () => time);
@@ -15,13 +16,15 @@ function fixture(t, settings = {}, count = 3) {
     handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   cmd(0, 'start');
-  const act = (type, extra) => cmd(users.findIndex(u => u.id === room.hand.actingId), type, extra);
-  return { users, store, room, cmd, act, get service() { return service; }, get time() { return time; },
+  const ready = () => readyRoomAction(service, room, value => { time = value; }); ready();
+  const act = (type, extra) => { assert.ok(ready()); return cmd(users.findIndex(u => u.id === room.hand.actingId), type, extra); };
+  return { users, store, room, cmd, act, ready, get service() { return service; }, get time() { return time; },
     advance(ms) { time += ms; }, restart() { const connections = service.connections; service = new RoomService(store); service.connections = connections; } };
 }
 function checkToRiver(f) {
   for (let n = 0; f.room.hand.street !== 'river'; n++) {
-    assert.ok(n < 20); f.act(availableActions(f.room.hand, f.room.hand.actingId).canCheck ? 'check' : 'call');
+    assert.ok(n < 20); assert.ok(f.ready()); if (f.room.hand.street === 'river') break;
+    f.act(availableActions(f.room.hand, f.room.hand.actingId).canCheck ? 'check' : 'call');
   }
 }
 
@@ -79,6 +82,7 @@ test('river bet and call exposes all live contenders including a player departin
   const f = fixture(t, {}, 2); checkToRiver(f);
   const bettor = f.room.hand.actingId, index = f.users.findIndex(u => u.id === bettor), originalSeat = f.room.members[bettor].seat;
   f.act('raise', { amount: 20 }); f.cmd(index, 'stand'); f.act('call');
+  assert.equal(f.ready(), false);
   assert.equal(f.room.hand.status, 'complete'); assert.equal(f.room.hand.result.showdown, true);
   assert.equal(f.room.members[bettor].seat, null);
   const observer = f.users.at(-1).id, state = f.service.state(f.room, observer);
@@ -93,6 +97,7 @@ test('river bet and call exposes all live contenders including a player departin
 test('archived mandatory showdown repairs absent shown markers without exposing folded hands or mutating archive', t => {
   const f = fixture(t); const folded = f.room.hand.actingId; f.act('fold'); checkToRiver(f);
   f.act('raise', { amount: 20 }); f.act('call');
+  assert.equal(f.ready(), false);
   const archive = f.store.data.hands[0]; delete archive.shown; delete f.room.hand.shown;
   const before = structuredClone(f.store.data), observer = f.users.at(-1).id;
   for (const h of [f.service.handFor(observer, f.room.code, archive.id), f.service.exports(archive.players.find(p => !p.folded).id, f.room.code)[0]]) {
@@ -108,6 +113,7 @@ test('archived mandatory showdown repairs absent shown markers without exposing 
 
 test('river fold stays private even with five public cards and known winner', t => {
   const f = fixture(t, {}, 2); checkToRiver(f); f.act('raise', { amount: 20 }); f.act('fold');
+  assert.equal(f.ready(), false);
   assert.equal(f.room.hand.result.showdown, false); assert.equal(f.room.hand.board.length, 5);
   const h = f.service.handFor(f.users.at(-1).id, f.room.code, f.room.hand.id);
   assert.ok(h.players.every(p => p.cards.every(c => c === null))); assert.equal(h.proofs.length, 5);

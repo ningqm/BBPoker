@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -24,12 +25,15 @@ function setup(t, settings = {}, buyins = Array(9).fill(100)) {
   const f = { users, data, service, room, get time() { return time; }, advance(ms) { assert.ok(ms >= 0); time += ms; } };
   f.id = i => users[i].id; f.member = i => room.members[f.id(i)];
   f.cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { time = value; });
     const q = room.mini.squid, part = q.active && q.participants.includes(f.id(i));
-    return service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length,
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length,
       ...(['stand', 'sitout'].includes(type) ? { expectedSquidRound: part ? q.round : 0,
         expectedSquidCost: part && !q.counts[f.id(i)] ? 240 : 0 } : {}), ...extra });
-  };
-  f.connect = (i, connected) => { service.connections.set(`${room.code}:${f.id(i)}`, connected ? 1 : 0); service.connectionChanged(room, time, { reconnected: connected }); };
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { time = value; }));
+    return result;
+  };  f.connect = (i, connected) => { service.connections.set(`${room.code}:${f.id(i)}`, connected ? 1 : 0); service.connectionChanged(room, time, { reconnected: connected }); };
   f.start = () => { service.start(room, time, { automatic: true }); return room.hand; };
   f.win = i => {
     for (let n = 0; room.hand.status === 'playing'; n++) {
@@ -219,6 +223,7 @@ test('combined nine: four different bomb-pot winners, side-pot leaver and rebuy 
 });
 
 test('combined nine HTTP: concurrent retries, stale actions and nine personalized reads never duplicate chips or reveal folded hands', async t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-combined-nine-'));
   const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -237,9 +242,15 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
   const initial = (await request(users[0], '/api/rooms', { settings: { maxPlayers: 9, smallBlind: 5, bigBlind: 10,
     squid: true, squidMode: 'unlimited', squidExtraTokens: 3, squidUnitBB: 2, bombPot: true, bombIntervalMinutes: 1 } }, [201])).room;
   const path = `/api/rooms/${initial.code}`, room = () => app.store.data.rooms[initial.code], id = i => users[i].user.id;
-  const cmd = (i, type, extra = {}, statuses = [200]) => request(users[i], path + '/action', {
+  const cmd = async (i, type, extra = {}, statuses = [200])  => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room().hand?.actingId) readyRoomAction(app.service, room(), value => { clock = value; });
+    const result = await request(users[i], path + '/action', {
     type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra,
   }, statuses);
+    if (action) while (room().hand?.transition) { assert.ok(advanceRoomEvent(app.service, room(), value => { clock = value; })); app.store.save(); }
+    return result;
+  };
   const consent = i => ({ expectedSquidRound: room().mini.squid.round, expectedSquidCost: room().mini.squid.counts[id(i)] ? 0 : 240 });
   const privacy = (view, viewer) => {
     const h = room().hand;
@@ -275,18 +286,26 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
   assert.equal(room().hand.players.find(p => p.id === id(3)).contributed, 30);
   await cmd(4, 'raise', { amount: 90 }); await cmd(5, 'raise', { amount: 250 });
   const standId = randomUUID();
-  await Promise.all([
+  const departureRace = await Promise.all([
     cmd(5, 'stand', { commandId: standId, ...consent(5) }),
     cmd(5, 'stand', { commandId: standId, ...consent(5) }),
-    cmd(5, 'buyin', { amountBB: 100 }, [400]), nineReads(),
+    // Either serialization is valid: a top-up arriving first waits and is
+    // cancelled on departure; one arriving after stand is rejected explicitly.
+    cmd(5, 'buyin', { amountBB: 100 }, [200,409]), nineReads(),
   ]);
   assert.equal(room().members[id(5)].pendingDeparture, 'stand');
+  assert.equal(app.service.pendingBuyIn(room().members[id(5)]), departureRace[2].room ? 1000 : 0);
+  assert.equal(room().members[id(5)].totalBuyIn, 1000);
   for (const i of [6,7,8,0,1,2,3,4]) await cmd(i, 'fold');
   // After the 4bet everyone folds: 250-90=160 returned, actual pot=90+90+30+5+10=225.
   assert.deepEqual(room().hand.log.filter(e => e.type === 'refund').map(e => e.amount), [160]);
   assert.equal(room().hand.result.payouts[id(5)], 225);
   assert.deepEqual(room().hand.players.map(p => p.stack - p.startingStack), [0,-5,-10,-30,-90,135,0,0,0]);
   assert.equal(room().members[id(5)].cashedOut, 895); assert.equal(room().members[id(5)].seat, null);
+  assert.equal(app.service.pendingBuyIn(room().members[id(5)]), 0);
+  assert.equal(room().members[id(5)].totalBuyIn, 1000);
+  assert.equal(app.store.data.ledger.filter(e => e.playerId === id(5) && e.type === 'buyin').length, 1);
+  assert.equal(app.store.data.ledger.filter(e => e.playerId === id(5) && e.type === 'buyinCancelled').length, departureRace[2].room ? 1 : 0);
   assert.equal(room().mini.squid.counts[id(5)], 1); assert.equal(room().mini.squid.reserves[id(5)], 240);
   await nineReads();
   const historyViews = await Promise.all(users.slice(0,9).map(u => request(u, path + '/hands/' + handId)));

@@ -62,14 +62,20 @@ test('multi-seat hand can reach a two-player flop and pair filters require that 
   assert.equal(handContextMatches(context, 'p2', recordFilters({ tableSize: 'headsUp' })), false);
 });
 
-test('real deferred preflop all-in runouts count after third card, rabbit runouts never do', () => {
+test('real deferred preflop all-in runouts count when the three-card flop is published, rabbit runouts never do', () => {
   const allIn = hand([1, 7], { deferredRunout: true });
   applyAction(allIn, allIn.actingId, 'allin'); applyAction(allIn, allIn.actingId, 'call');
-  advanceRunout(allIn); advanceRunout(allIn);
+  assert.equal(allIn.board.length, 0);
   assert.equal(handContext(allIn, 'p1').potType, 'unknown');
-  advanceRunout(allIn); finish(allIn);
+  advanceRunout(allIn);
+  assert.equal(allIn.board.length, 3); assert.equal(allIn.status, 'playing');
   assert.equal(handContext(allIn, 'p1').potType, 'headsUp');
   assert.equal(handContext(allIn, 'p1').flopPlayers, 2);
+  for (const count of [4, 5]) {
+    advanceRunout(allIn); assert.equal(allIn.board.length, count);
+    assert.equal(handContext(allIn, 'p1').potType, 'headsUp');
+    assert.equal(handContext(allIn, 'p1').flopPlayers, 2);
+  }
   const folded = hand([1, 7]); applyAction(folded, folded.actingId, 'fold');
   folded.rabbit = { board: rabbitRunout(folded).cards, originalCount: 0, active: false };
   for (const id of ['p1', 'p7']) {

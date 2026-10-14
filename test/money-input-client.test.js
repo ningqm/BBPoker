@@ -3,22 +3,25 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import * as money from '../public/money.js';
-import {betActionLabel,betPresetOptions,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions} from '../public/table-controls.js';
+import {betActionLabel,betPresetOptions,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betTurnKey,betSliderKeyPosition,betActionEnabled,revealOptions} from '../public/table-controls.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(unit='bb') {
   money.setDisplayUnit(unit);
-  const state={raise:20,connected:true,feedbackResync:false,room:{meId:'hero',settings:{bigBlind:10},hand:{id:'h1',status:'playing',currentBet:10,pot:105},players:[{id:'hero',bet:20,stack:1980,inHand:true,cards:['As','Kh'],shownIndices:[]}],actions:{canRaise:true,callAmount:30,minRaiseTo:100,maxRaiseTo:2000}}};
-  const nodes={'#raise-range':{setAttribute(key,value){this[key]=value;}},'#raise-button':{dataset:{}},'#raise-amount':{}};
-  const listeners=new Map(),sent=[],messages=[],presets=['third','half','two-thirds','pot','over','all'].map(preset=>({dataset:{preset},classList:{toggle(key,value){this[key]=value;}}}));
-  const context=vm.createContext({...money,state,betActionLabel,betPresetOptions,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,Math,Number,$:s=>nodes[s],esc:String,
+  const state={raise:20,connected:true,feedbackResync:false,room:{meId:'hero',settings:{bigBlind:10},hand:{id:'h1',status:'playing',currentBet:10,pot:105},players:[{id:'hero',bet:20,stack:1980,inHand:true,cards:['As','Kh'],shownIndices:[]}],actions:{canAct:true,canRaise:true,callAmount:30,minRaiseTo:100,maxRaiseTo:2000}}};
+  const nodes={'#raise-range':{value:0,setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}},'#raise-button':{dataset:{}},'#raise-amount':{},'#raise-panel':{hidden:true},'#raise-toggle':{setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}}};
+  const listeners=new Map(),sent=[],messages=[],presets=['third','half','two-thirds','pot'].map(preset=>({dataset:{preset},setAttribute(key,value){this[key]=value;},classList:{toggle(key,value){this[key]=value;}}}));
+  const context=vm.createContext({...money,state,betActionLabel,betPresetOptions,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betTurnKey,betSliderKeyPosition,betActionEnabled,revealOptions,Math,Number,$:s=>nodes[s],esc:String,
     document:{querySelectorAll:selector=>selector==='[data-action="raise-preset"]'?presets:[],addEventListener:(type,listener)=>listeners.set(type,listener)},updateSettingConstraints(){},updateBuyinSummary(){},chips:n=>money.formatChips(n,10),toast:message=>messages.push(message),
     command:async(type,payload)=>{sent.push({type,...payload});return true;}});
   vm.runInContext(section('function setRaise(','document.addEventListener('),context);
   vm.runInContext(section('async function handleAction(','function setRaise('),context);
   vm.runInContext(section("document.addEventListener('input'","document.addEventListener('change'"),context);
-  return {state,nodes,context,sent,messages,presets,input:value=>listeners.get('input')({target:{id:'raise-range',value:String(value),dataset:{}}}),act:(action,data={})=>context.handleAction({dataset:{action,...data}})};
+  vm.runInContext(section("document.addEventListener('keydown',event=>{if(event.key===","document.addEventListener('pointerup'"),context);
+  vm.runInContext(section("document.addEventListener('pointerdown',event=>{if(state.raisePanelOpen","document.addEventListener('keydown'"),context);
+  state.raiseTurnKey=betTurnKey(state.room);
+  return {state,nodes,context,sent,messages,presets,listeners,input:value=>listeners.get('input')({target:{id:'raise-range',value:String(value),dataset:{}}}),act:(action,data={})=>context.handleAction({dataset:{action,...data}})};
 }
 
 test('a preset previews whole-BB points and only the final raise button submits them in either display unit',async()=>{
@@ -32,21 +35,22 @@ test('a preset previews whole-BB points and only the final raise button submits 
 });
 
 test('changing display units keeps the chosen amount and exact all-in ceiling',async()=>{
-  const h=harness('points');h.context.setRaise(125);assert.equal(h.nodes['#raise-range']['aria-valuetext'],'加至 130 积分');
+  const h=harness('points');h.state.room.actions.maxRaiseTo=2005;h.context.setRaise(125);assert.equal(h.nodes['#raise-range']['aria-valuetext'],'加至 130 积分');
   money.setDisplayUnit('bb');h.context.setRaise(h.state.raise);assert.equal(h.state.raise,130);assert.equal(h.nodes['#raise-range']['aria-valuetext'],'加至 13 BB');
-  await h.act('raise-preset',{preset:'all'});assert.equal(h.state.raise,2000);assert.equal(h.nodes['#raise-button'].dataset.allin,'true');assert.equal(h.nodes['#raise-button'].textContent,'全下至 200 BB');
-  await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:2000}]);money.setDisplayUnit('points');
+  h.input(1000);assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].dataset.allin,'true');assert.equal(h.nodes['#raise-button'].textContent,'All-in 200.5 BB');assert.equal(h.sent.length,0);
+  money.setDisplayUnit('points');h.context.setRaise(h.state.raise);assert.equal(h.nodes['#raise-button'].textContent,'All-in 2,005 积分');
+  await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:2005}]);
 });
 
 test('rounded and clamped presets only preview a wager and unavailable actions never submit',async()=>{
   const h=harness();h.state.raise=100;h.state.room.actions.maxRaiseTo=155;
-  for(const [preset,amount] of [['third',100],['half',120],['pot',155],['over',155]]){
+  for(const [preset,amount] of [['third',100],['half',120],['two-thirds',140],['pot',155]]){
     await h.act('raise-preset',{preset});assert.equal(h.state.raise,amount);assert.equal(h.sent.length,0);
   }
-  for(const preset of ['min','missing']){await h.act('raise-preset',{preset});assert.equal(h.state.raise,155);assert.equal(h.sent.length,0);}
+  for(const preset of ['min','over','all','missing']){await h.act('raise-preset',{preset});assert.equal(h.state.raise,155);assert.equal(h.sent.length,0);}
   await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:155}]);
   h.state.room.actions.canRaise=false;h.state.raise=120;
-  await h.act('raise-preset',{preset:'all'});assert.equal(h.state.raise,120);assert.equal(h.sent.length,1);
+  await h.act('raise-preset',{preset:'pot'});assert.equal(h.state.raise,120);assert.equal(h.sent.length,1);
   money.setDisplayUnit('points');
 });
 
@@ -68,7 +72,7 @@ test('slider input snaps before rendering and cannot submit until the final acti
     assert.ok(h.state.raise===2005||h.state.raise%10===0);
     assert.equal(h.nodes['#raise-range'].value,betSliderFromAmount(h.state.room,h.state.raise));
   }
-  assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].textContent,'全下至 200.5 BB');
+  assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].textContent,'All-in 200.5 BB');
   await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:2005}]);
   money.setDisplayUnit('points');
 });
@@ -158,4 +162,36 @@ test('a pending buy-in admits only one mutation even if confirmation is triggere
   await h.command('buyin',{amountBB:200});assert.equal(h.calls.length,1);
   reject(Object.assign(new Error('响应丢失，需要同步'),{resync:true}));await pending;
   assert.equal(h.calls.length,1);assert.deepEqual(h.events,['close','reconnect:synthetic-room']);assert.equal(h.state.busy,false);
+});
+
+test('selecting equally clamped pot presets highlights only the explicitly chosen shortcut',async()=>{
+  const h=harness();h.state.room.actions.maxRaiseTo=125;
+  for(const preset of ['two-thirds','pot']){
+    await h.act('raise-preset',{preset});
+    assert.deepEqual(h.presets.filter(p=>p.classList.selected).map(p=>p.dataset.preset),[preset]);
+    assert.deepEqual(h.presets.filter(p=>p['aria-pressed']==='true').map(p=>p.dataset.preset),[preset]);
+    assert.equal(h.sent.length,0);
+  }
+  h.input(1000);assert.equal(h.state.raise,125);assert.equal(h.presets.filter(p=>p.classList.selected).length,0);
+  assert.equal(h.sent.length,0);money.setDisplayUnit('points');
+});
+
+test('amount panel is a reversible preview: open, keyboard adjust, Escape, and outside press never submit',async()=>{
+  const h=harness();await h.act('toggle-raise-panel');
+  assert.equal(h.state.raisePanelOpen,true);assert.equal(h.nodes['#raise-panel'].hidden,false);assert.equal(h.nodes['#raise-toggle']['aria-expanded'],'true');assert.equal(h.nodes['#raise-range'].focused,true);
+  const key=event=>h.listeners.get('keydown')({target:{id:'raise-range',value:500},preventDefault(){this.prevented=true;},...event});
+  key({key:'ArrowUp'});assert.equal(h.state.raise,betAmountFromSlider(h.state.room,510));
+  key({key:'End'});assert.equal(h.state.raise,2000);assert.equal(h.sent.length,0);
+  key({key:'Escape'});assert.equal(h.state.raisePanelOpen,false);assert.equal(h.nodes['#raise-panel'].hidden,true);assert.equal(h.nodes['#raise-toggle'].focused,true);
+  await h.act('toggle-raise-panel');h.listeners.get('pointerdown')({target:{id:'raise-range',closest:()=>({})}});assert.equal(h.state.raisePanelOpen,true);
+  h.listeners.get('pointerdown')({target:{id:'table',closest:()=>null}});assert.equal(h.state.raisePanelOpen,false);assert.equal(h.sent.length,0);
+  money.setDisplayUnit('points');
+});
+
+test('a stale turn or lost connection cannot open the amount panel or submit its old raise',async()=>{
+  const h=harness();h.state.room.actions.canAct=false;
+  await h.act('toggle-raise-panel');assert.equal(h.state.raisePanelOpen,false);await h.act('raise');assert.equal(h.sent.length,0);
+  h.state.room.actions.canAct=true;h.state.connected=false;await h.act('toggle-raise-panel');assert.equal(h.state.raisePanelOpen,false);
+  h.state.connected=true;h.state.busy=true;await h.act('toggle-raise-panel');assert.equal(h.state.raisePanelOpen,false);
+  money.setDisplayUnit('points');
 });

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -10,7 +11,8 @@ import { RoomService } from '../src/room.js';
 import { availableActions } from '../src/poker.js';
 import { verifyExport } from '../scripts/verify-export.mjs';
 
-function realExport(count = 3, folds = false, { foldStreet = 'preflop', rabbitCards = 0 } = {}) {
+function realExport(t, count = 3, folds = false, { foldStreet = 'preflop', rabbitCards = 0 } = {}) {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const users = Array.from({ length: count }, (_, i) => ({ id: `user-${i}`, name: `朋友${i}`, avatar: 0 }));
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store);
@@ -23,6 +25,7 @@ function realExport(count = 3, folds = false, { foldStreet = 'preflop', rabbitCa
   }
   command(users[0], 'start');
   while (room.hand.status === 'playing') {
+    if (!readyRoomAction(service, room, value => { clock = value; })) break;
     const actor = users.find(u => u.id === room.hand.actingId);
     const a = availableActions(room.hand, actor.id);
     command(actor, folds && room.hand.street === foldStreet ? 'fold' : a.canCheck ? 'check' : 'call', { handId: room.hand.id });
@@ -33,9 +36,9 @@ function realExport(count = 3, folds = false, { foldStreet = 'preflop', rabbitCa
     hands: service.exports(users[0].id, room.code), adjustments: service.exportAdjustments(users[0].id, room.code) };
 }
 
-test('actual service exports verify for heads-up, multiway and hidden folded cards', () => {
+test('actual service exports verify for heads-up, multiway and hidden folded cards', t => {
   for (const count of [2, 3]) for (const folds of [false, true]) {
-    const data = realExport(count, folds);
+    const data = realExport(t, count, folds);
     const result = verifyExport(data);
     assert.equal(result.hands, 1);
     assert.equal(result.proofs, data.hands[0].proofs.length);
@@ -44,9 +47,9 @@ test('actual service exports verify for heads-up, multiway and hidden folded car
   }
 });
 
-test('partial and complete rabbit exports verify only their revealed supplemental cards, with legacy compatibility', () => {
+test('partial and complete rabbit exports verify only their revealed supplemental cards, with legacy compatibility', t => {
   for (const count of [2, 3]) for (const foldStreet of ['preflop', 'flop', 'turn']) for (const rabbitCards of [0, 1, 5]) {
-    const data = realExport(count, true, { foldStreet, rabbitCards });
+    const data = realExport(t, count, true, { foldStreet, rabbitCards });
     const hand = data.hands[0];
     assert.equal(hand.rabbit.originalCount, hand.board.length);
     assert.deepEqual(hand.rabbit.board.slice(0, hand.board.length), hand.board);
@@ -57,8 +60,8 @@ test('partial and complete rabbit exports verify only their revealed supplementa
   }
 });
 
-test('rabbit prefix, count, cards, proof and proof-channel tampering are rejected', () => {
-  const original = realExport(3, true, { foldStreet: 'flop', rabbitCards: 5 });
+test('rabbit prefix, count, cards, proof and proof-channel tampering are rejected', t => {
+  const original = realExport(t, 3, true, { foldStreet: 'flop', rabbitCards: 5 });
   const cases = [
     hand => { hand.rabbit.originalCount = 0; },
     hand => { hand.rabbit.originalCount = '3'; },
@@ -79,8 +82,8 @@ test('rabbit prefix, count, cards, proof and proof-channel tampering are rejecte
   }
 });
 
-test('partial rabbit exports reject missing proofs and valid future-card proofs', () => {
-  const complete = realExport(2, true, { rabbitCards: 5 });
+test('partial rabbit exports reject missing proofs and valid future-card proofs', t => {
+  const complete = realExport(t, 2, true, { rabbitCards: 5 });
   const partial = structuredClone(complete);
   const hand = partial.hands[0];
   hand.rabbit.board = hand.rabbit.board.slice(0, 2);
@@ -97,8 +100,8 @@ test('partial rabbit exports reject missing proofs and valid future-card proofs'
   assert.throws(() => verifyExport(duplicate), /位置重复/);
 });
 
-test('root, payload, position, displayed board and proof tampering are rejected', () => {
-  const original = realExport();
+test('root, payload, position, displayed board and proof tampering are rejected', t => {
+  const original = realExport(t);
   const cases = [
     data => { data.hands[0].commitment = '0'.repeat(64); },
     data => { data.hands[0].proofs[0].salt = '0'.repeat(64); },
@@ -116,8 +119,8 @@ test('root, payload, position, displayed board and proof tampering are rejected'
   }
 });
 
-test('duplicate positions, duplicate hands and unsupported versions fail closed', () => {
-  const original = realExport();
+test('duplicate positions, duplicate hands and unsupported versions fail closed', t => {
+  const original = realExport(t);
   const duplicate = structuredClone(original);
   duplicate.hands[0].proofs.push(structuredClone(duplicate.hands[0].proofs[0]));
   assert.throws(() => verifyExport(duplicate), /位置重复/);
@@ -134,7 +137,7 @@ test('CLI reports counts privately, exits 1 for tampering, and handles malformed
   const path = join(dir, 'hands.json');
   const script = fileURLToPath(new URL('../scripts/verify-export.mjs', import.meta.url));
   const run = () => spawnSync(process.execPath, [script, path], { encoding: 'utf8' });
-  const data = realExport();
+  const data = realExport(t);
   writeFileSync(path, JSON.stringify(data));
   const success = run();
   assert.equal(success.status, 0);
@@ -157,7 +160,7 @@ test('CLI reports counts privately, exits 1 for tampering, and handles malformed
   assert.ok(!malformed.stderr.includes('As'));
 });
 
-test('empty exports explicitly verify zero records', () => {
+test('empty exports explicitly verify zero records', t => {
   const empty = { app: '同桌', version: 1, viewerId: 'user-0', hands: [], adjustments: [] };
   assert.deepEqual(verifyExport(empty), { hands: 0, proofs: 0, verificationVersion: 'tz-merkle-sha256-v1' });
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES, chipContactSamples } from '../public/table-feedback.js';
+import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES, TABLE_VOICE_LABELS, TABLE_AUDIO_MIX } from '../public/table-feedback.js';
 
 const blinds = [{ seq: 1, type: 'smallBlind', playerId: 'a', amount: 5, street: 'preflop' }, { seq: 2, type: 'bigBlind', playerId: 'b', amount: 10, street: 'preflop' }];
 function frame({ log = blinds, seq = 1, actor = 'a', deadline = 30000, status = 'playing', allIn = [] } = {}) {
@@ -47,7 +47,7 @@ test('chips remain audible when an action also advances the board, changes the a
   const log = [...blinds, { seq: 3, type: 'call', playerId: 'b', amount: 5 }, { seq: 4, type: 'street', street: 'flop' }];
   const next = frame({ log, seq: 2 }); next.hand.board = ['As', 'Kd', '2h'];
   const cues = tracker.update(next);
-  assert.equal(cues.sound, 'yourturn'); assert.equal(cues.chips, true); assert.equal(cues.speech, 'call');
+  assert.equal(cues.sound, 'board'); assert.equal(cues.chips, true); assert.equal(cues.speech, 'call');
   const complete = frame({ log: [...log, { seq: 5, type: 'allin', playerId: 'a' }], seq: 3, actor: null, status: 'complete' });
   assert.equal(tracker.update(complete).speech, 'allin');
   assert.equal(tracker.update(complete).speech, undefined, 'same snapshot cannot repeat speech');
@@ -118,16 +118,16 @@ function audioFixture({ fetchOk = true, fetchDelay = null } = {}) {
     async suspend() { stats.suspended++; this.state = 'suspended'; }
     async close() { stats.closed++; this.state = 'closed'; }
     createOscillator() { const node = { frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {}, start() {}, stop() {} }; stats.oscillators.push(node); return node; }
-    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+    createGain() { const values = []; return { values, gain: { setValueAtTime(value) { values.push(value); }, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
     createBuffer(channels, count, rate) { return { duration: count / rate, noise: true, getChannelData: () => new Float32Array(count) }; }
-    createBufferSource() { const node = { connect() {}, disconnect() {}, start() { this.started = true; }, stop() { this.stopped = true; } }; stats.sources.push(node); return node; }
-    async decodeAudioData(data) { return { duration: 0.4, cue: TABLE_VOICE_CUES[new Uint8Array(data)[0]] }; }
+    createBufferSource() { const node = { connect(gain) { this.gain = gain; }, disconnect() {}, start(at) { this.started = true; this.at = at; }, stop(at) { if (at === undefined) this.stopped = true; else this.stopAt = at; } }; stats.sources.push(node); return node; }
+    async decodeAudioData(data) { const cue = ['chips', ...TABLE_VOICE_CUES][new Uint8Array(data)[0]]; return { duration: cue === 'chips' ? 0.929 : 0.4, cue }; }
   }
   const fetcher = async (url, options) => {
     stats.requests.push({ url: String(url), options });
     if (fetchDelay) await fetchDelay;
-    const type = String(url).split('/').at(-1).replace('.wav', '');
-    return { ok: fetchOk, arrayBuffer: async () => new Uint8Array([TABLE_VOICE_CUES.indexOf(type)]).buffer };
+    const type = new URL(url).pathname.split('/').at(-1).replace('.wav', '');
+    return { ok: fetchOk, arrayBuffer: async () => new Uint8Array([['chips', ...TABLE_VOICE_CUES].indexOf(type)]).buffer };
   };
   return { stats, doc, listeners, AudioContext, fetcher };
 }
@@ -143,9 +143,9 @@ test('short voice clips are same-origin, warmed by gesture and never queue stale
   assert.equal(fixture.stats.sources.length, 0, 'resource completion must not play the missed action');
   assert.equal(sounds.speak('raise'), true);
   assert.equal(fixture.stats.sources.at(-1).buffer.cue, 'raise');
-  assert.equal(fixture.stats.requests.length, 7);
+  assert.equal(fixture.stats.requests.length, 8);
   for (const { url, options } of fixture.stats.requests) {
-    assert.match(url, /\/public\/audio\/(bet|raise|reraise|call|check|fold|allin)\.wav$/);
+    assert.match(url, /\/public\/audio\/(chips|bet|raise|reraise|call|check|fold|allin)\.wav\?v=[\w-]+$/);
     assert.equal(options.credentials, 'omit');
   }
   sounds.dispose();
@@ -157,7 +157,7 @@ test('new action replaces speech; timer sounds do not cancel voice; voice-off re
   await sounds.unlock(); await sounds.preloadVoices();
   sounds.playFeedback({ sound: 'yourturn', chips: true, speech: 'call' });
   const firstVoice = fixture.stats.sources.find(source => source.buffer.cue === 'call');
-  assert.ok(firstVoice.started); assert.equal(fixture.stats.sources.filter(source => source.buffer.noise).length, 1);
+  assert.ok(firstVoice.started); assert.equal(fixture.stats.sources.filter(source => source.buffer.cue === 'chips').length, 1);
   now += 1000; sounds.play('countdown'); assert.equal(firstVoice.stopped, undefined, 'timer cue coexists with short speech');
   sounds.speak('raise'); assert.equal(firstVoice.stopped, true);
   const secondVoice = fixture.stats.sources.at(-1); assert.equal(secondVoice.buffer.cue, 'raise');
@@ -180,7 +180,8 @@ test('hidden, disabled, disposed and unavailable voice output are silent without
   const failed = audioFixture({ fetchOk: false });
   const fallback = createTableSounds({ enabled: true, AudioContext: failed.AudioContext, document: failed.doc, fetch: failed.fetcher });
   await fallback.unlock(); assert.equal(await fallback.preloadVoices(), false);
-  assert.equal(fallback.playFeedback({ sound: 'chip', speech: 'raise' }), true);
+  assert.equal(fallback.playFeedback({ sound: 'chip', speech: 'raise' }), false, 'missing files stay silent instead of replaying old synthetic clicks');
+  assert.equal(fallback.play('check'), true, 'ordinary procedural notifications still work');
   assert.equal(failed.stats.sources.some(node => node.buffer.cue), false); fallback.dispose();
 });
 
@@ -194,36 +195,217 @@ test('bundled recorded cues are short mono PCM WAV with real non-silent audio', 
     assert.equal(data.toString('ascii', 36, 40), 'data'); const count = data.readUInt32LE(40) / 2;
     assert.ok(count / rate >= 0.25 && count / rate <= 1.6, `${type} should be concise`);
     let peak = 0; for (let i = 0; i < count; i++) peak = Math.max(peak, Math.abs(data.readInt16LE(44 + i * 2)));
-    assert.ok(peak >= 10000 && peak < 32767, `${type} is audible without clipping`);
+    assert.ok(peak >= 10000 && peak <= 19661, `${type} retains headroom for louder chips`);
+    let energy = 0; for (let i = 0; i < count; i++) energy += (data.readInt16LE(44 + i * 2) / 32768) ** 2;
+    assert.ok(Math.sqrt(energy / count) >= 0.11 && Math.sqrt(energy / count) < 0.16, `${type} has a steady audible body`);
   }
   assert.ok(total < 400000, 'all seven voice files together stay below 400 KB');
 });
 
-test('chip foley has bounded gain, quiet tails and separated contacts at browser sample rates', () => {
-  for (const rate of [22050, 44100, 48000, 96000]) {
-    const samples = chipContactSamples(rate);
-    assert.equal(samples.length, Math.ceil(rate * 0.32));
-    assert.ok(samples.every(Number.isFinite));
-    const peak = samples.reduce((value, sample) => Math.max(value, Math.abs(sample)), 0);
-    assert.ok(peak > 0.1 && peak < 0.75, `unclipped and audible at ${rate}`);
-    const energy = (start, end) => {
-      const range = samples.slice(Math.round(start * rate), Math.round(end * rate));
-      return range.reduce((value, sample) => value + sample * sample, 0) / range.length;
-    };
-    assert.ok(energy(0.012, 0.025) > 20 * energy(0.03, 0.04), 'each contact decays promptly');
-    assert.ok(energy(0.047, 0.06) > 10 * energy(0.075, 0.09), 'irregular second contact is distinct');
-    assert.ok(energy(0.29, 0.32) < 1e-10, 'no sustained ringing or cutoff tail');
-  }
+test('selected chip push is played once, retains contact energy and ends without clipping', () => {
+  const wav = readFileSync(new URL('../public/audio/chips.wav', import.meta.url));
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF'); assert.equal(wav.toString('ascii', 8, 12), 'WAVE');
+  assert.equal(wav.readUInt16LE(20), 1); assert.equal(wav.readUInt16LE(22), 1);
+  assert.equal(wav.readUInt16LE(34), 16); assert.equal(wav.toString('ascii', 36, 40), 'data');
+  const rate = wav.readUInt32LE(24), count = wav.readUInt32LE(40) / 2;
+  assert.ok(count / rate >= 0.8 && count / rate <= 1.2, 'one short chip push, not the repeated audition');
+  const samples = Array.from({ length: count }, (_, i) => wav.readInt16LE(44 + i * 2) / 32768);
+  const peak = Math.max(...samples.map(Math.abs));
+  assert.ok(peak > 0.2 && peak < 0.95, 'audible headroom');
+  const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+  assert.ok(rms >= 0.05 && rms < 0.15, 'recording has audible contact energy without added compression');
+  const energy = (a, b) => samples.slice(Math.floor(a * rate), Math.floor(b * rate)).reduce((sum, value) => sum + value * value, 0);
+  assert.ok(energy(0.1, 0.25) > 0.01 && energy(0.25, 0.4) > 0.01, 'cluster continues beyond a single tap');
+  assert.ok(Math.abs(samples.at(-1)) < 0.005, 'no hard cutoff');
+  assert.ok(wav.length < 110000, 'short local asset, not a streaming dependency');
 });
 
 test('chip-only output uses one reusable foley buffer without pitched oscillators', async () => {
   const fixture = audioFixture(); let now = 1000;
   const sounds = createTableSounds({ enabled: true, voiceEnabled: false, AudioContext: fixture.AudioContext, document: fixture.doc, fetch: fixture.fetcher, now: () => now });
-  await sounds.unlock(); sounds.play('chip');
+  await sounds.unlock(); await sounds.preloadAudio(); sounds.play('chip');
   const first = fixture.stats.sources[0];
-  assert.ok(first.started); assert.equal(fixture.stats.oscillators.length, 0);
+  assert.ok(first.started); assert.equal(first.buffer.cue, 'chips'); assert.equal(fixture.stats.oscillators.length, 0);
+  assert.equal(fixture.stats.requests.length, 1, 'voice-off still preloads the chip file');
   now += 200; sounds.play('chip');
   assert.equal(fixture.stats.sources[1].buffer, first.buffer, 'reuse without reallocating on every action');
   assert.equal(first.stopped, true, 'a rapid new action replaces the previous effect');
   sounds.dispose(); assert.equal(fixture.stats.sources[1].stopped, true);
+});
+
+test('board, turn and timer prompts preserve the full chip tail without repeating the recording', async () => {
+  for (const prompt of ['board', 'yourturn', 'win', 'countdown', 'countdown-last', 'check', 'fold']) {
+    const fixture = audioFixture(); let now = 1000;
+    const sounds = createTableSounds({ enabled: true, voiceEnabled: false, AudioContext: fixture.AudioContext,
+      document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+    await sounds.unlock(); await sounds.preloadAudio();
+    sounds.playFeedback({ eventId: 'bet', sound: 'chip', chips: true });
+    const chip = fixture.stats.sources[0];
+    assert.equal(chip.stopped, undefined);
+    assert.ok(chip.stopAt >= chip.buffer.duration, 'scheduled stop permits the complete recording');
+    now += 200; sounds.play(prompt);
+    assert.equal(chip.stopped, undefined, `${prompt} cannot interrupt the recorded chip tail`);
+    assert.equal(fixture.stats.sources.filter(source => source.buffer.cue === 'chips').length, 1);
+    sounds.dispose(); assert.equal(chip.stopped, true);
+  }
+});
+
+test('disconnect cleanup stops both channels without losing event deduplication or gesture unlock', async () => {
+  const fixture = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: fixture.AudioContext,
+    document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+  await sounds.unlock(); await sounds.preloadAudio();
+  const action = { eventId: 'before-disconnect', sound: 'chip', chips: true, speech: 'call' };
+  sounds.playFeedback(action);
+  const playing = [...fixture.stats.sources];
+  sounds.stopPlayback();
+  assert.ok(playing.every(source => source.stopped), 'no audible tail survives disconnect or leaving the table');
+  now += 1000;
+  assert.equal(sounds.playFeedback(action), false, 'reconnect cannot replay the consumed action');
+  assert.equal(sounds.playFeedback({ ...action, eventId: 'after-reconnect' }), true, 'a new action can use the existing unlock');
+  sounds.dispose();
+});
+
+test('a following check or fold voice ducks the surviving chip tail without restarting it', async () => {
+  for (const speech of ['check', 'fold']) {
+    const fixture = audioFixture(); let now = 1000;
+    const sounds = createTableSounds({ enabled: true, AudioContext: fixture.AudioContext,
+      document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+    await sounds.unlock(); await sounds.preloadAudio();
+    sounds.playFeedback({ eventId: 'first-bet', sound: 'chip' });
+    const chip = fixture.stats.sources[0];
+    assert.deepEqual(chip.gain.values, [TABLE_AUDIO_MIX.chips]);
+    now += 100; sounds.playFeedback({ eventId: 'next-player', sound: speech, speech });
+    assert.equal(chip.stopped, undefined);
+    assert.deepEqual(chip.gain.values, [TABLE_AUDIO_MIX.chips, TABLE_AUDIO_MIX.chipsUnderVoice]);
+    assert.equal(fixture.stats.sources.filter(source => source.buffer.cue === 'chips').length, 1);
+    assert.equal(fixture.stats.sources.at(-1).buffer.cue, speech);
+    sounds.dispose();
+  }
+});
+
+test('muting and backgrounding immediately stop the preserved chip channel', async () => {
+  for (const mode of ['mute', 'hidden']) {
+    const fixture = audioFixture();
+    const sounds = createTableSounds({ enabled: true, AudioContext: fixture.AudioContext,
+      document: fixture.doc, fetch: fixture.fetcher });
+    await sounds.unlock(); await sounds.preloadAudio();
+    sounds.playFeedback({ sound: 'chip', speech: 'raise' });
+    const playing = [...fixture.stats.sources];
+    if (mode === 'mute') sounds.setEnabled(false);
+    else { fixture.doc.visibilityState = 'hidden'; fixture.listeners.get('visibilitychange')(); }
+    assert.ok(playing.every(source => source.stopped), `${mode} stops both voice and chip immediately`);
+    sounds.dispose();
+  }
+});
+
+test('batched actions cannot attach an old bet sound to the latest fold or check', () => {
+  for (const type of ['check', 'fold']) {
+    const tracker = createTableFeedback(); tracker.update(frame());
+    const log = [...blinds, { seq: 3, type: 'raise', playerId: 'a', amount: 30, to: 40 },
+      { seq: 4, type, playerId: 'b' }];
+    const result = tracker.update(frame({ log, seq: 2, actor: null }));
+    assert.equal(result.speech, type);
+    assert.equal(result.sound, type);
+    assert.equal(result.chips, false, 'chips follow the announced action, not earlier events in the batch');
+    assert.equal(result.animations.filter(event => event.type === 'action').length, 2, 'both actions remain available to the visual layer');
+  }
+});
+
+test('zero-chip actions, timebank, chat, buyin and refund-only updates do not produce chip impacts', () => {
+  const tracker = createTableFeedback(); tracker.update(frame());
+  let log = [...blinds, { seq: 3, type: 'call', playerId: 'b', amount: 0 }];
+  const zero = tracker.update(frame({ log, seq: 2 }));
+  assert.equal(zero.chips, false); assert.notEqual(zero.sound, 'chip');
+  log.push({ seq: 4, type: 'refund', playerId: 'a', amount: 10 });
+  const refund = tracker.update(frame({ log, seq: 3 }));
+  assert.equal(refund.sound, null); assert.equal(refund.speech, undefined);
+  for (const extra of [{ deadline: 60000 }, { chat: [{ id: 'm1' }] }, { players: [{ id: 'a', stack: 5000 }] }]) {
+    const next = tracker.update({ ...frame({ log, seq: 4 }), ...extra });
+    assert.equal(next.sound, null); assert.equal(next.speech, undefined);
+  }
+});
+
+test('late server snapshots and disconnected updates are silent, with no delayed playback after recovery', () => {
+  const tracker = createTableFeedback(); tracker.update({ ...frame(), serverTime: 1000 }, { now: 1000 });
+  const log = [...blinds, { seq: 3, type: 'raise', playerId: 'a', amount: 30 }];
+  assert.equal(tracker.update({ ...frame({ log, seq: 2 }), serverTime: 2000 }, { now: 8000 }).sound, null);
+  assert.equal(tracker.update({ ...frame({ log, seq: 2 }), serverTime: 8000 }, { now: 8000 }).sound, null);
+  log.push({ seq: 4, type: 'call', playerId: 'b', amount: 25 });
+  assert.equal(tracker.update({ ...frame({ log, seq: 3 }), serverTime: 8100 }, { now: 8100, connected: false }).sound, null);
+  log.push({ seq: 5, type: 'check', playerId: 'a' });
+  assert.equal(tracker.update({ ...frame({ log, seq: 4 }), serverTime: 8200 }, { now: 8200 }).sound, null);
+  log.push({ seq: 6, type: 'raise', playerId: 'b', amount: 50 });
+  assert.equal(tracker.update({ ...frame({ log, seq: 5 }), serverTime: 8300 }, { now: 8300 }).sound, 'chip');
+});
+
+test('playback consumes a sound event once across duplicate SSE/response hooks, even while disabled', async () => {
+  const fixture = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: fixture.AudioContext, document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+  await sounds.unlock(); await sounds.preloadVoices();
+  const cue = { eventId: '123456:a:h1:3', sound: 'chip', chips: true, speech: 'allin' };
+  assert.equal(sounds.playFeedback(cue), true);
+  const count = fixture.stats.sources.length;
+  now += 1000; assert.equal(sounds.playFeedback(cue), false);
+  assert.equal(fixture.stats.sources.length, count, 'no duplicate voice or chip source');
+  sounds.setEnabled(false);
+  const muted = { ...cue, eventId: '123456:a:h1:4' };
+  assert.equal(sounds.playFeedback(muted), false);
+  sounds.setEnabled(true); await sounds.unlock(); now += 1000;
+  assert.equal(sounds.playFeedback(muted), false, 'enable cannot replay the skipped action');
+  assert.equal(sounds.playFeedback({ ...cue, eventId: '123456:a:h2:3' }), true, 'same action number in a new hand is fresh');
+  sounds.dispose();
+});
+
+test('the fixed action vocabulary uses the usual All-in term and never player-provided speech', () => {
+  assert.equal(TABLE_VOICE_LABELS.allin, 'All-in');
+  assert.deepEqual(TABLE_VOICE_CUES.map(type => TABLE_VOICE_LABELS[type]), ['下注', '加注', '再加注', '跟注', '过牌', '弃牌', 'All-in']);
+  assert.ok(Object.isFrozen(TABLE_VOICE_LABELS));
+});
+
+test('street transitions and card reveal guards have no countdown until the full turn begins', () => {
+  const tracker=createTurnCountdown(),base=frame({deadline:21000});
+  base.actions={canAct:true};base.hand.actionReadyAt=1000;
+  assert.deepEqual(tracker.update(base,{now:900}),{remaining:null,urgent:false,sound:null});
+  const pending=structuredClone(base);pending.hand.transition={kind:'street',nextAt:900};
+  // Even a stale actor/deadline cannot create a warning during a transition.
+  assert.deepEqual(tracker.update(pending,{now:16000}),{remaining:null,urgent:false,sound:null});
+  const waiting=structuredClone(base);waiting.actions.canAct=false;
+  assert.deepEqual(tracker.update(waiting,{now:1000}),{remaining:null,urgent:false,sound:null});
+  assert.deepEqual(tracker.update(base,{now:1000}),{remaining:20,urgent:false,sound:null});
+  assert.deepEqual(tracker.update(base,{now:14000}),{remaining:7,urgent:true,sound:'countdown'});
+  assert.equal(tracker.update(base,{now:14001}).sound,null);
+});
+
+
+test('chip effects duck only for an available spoken cue and preserve the voice onset', async () => {
+  const fixture = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: fixture.AudioContext, document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.playFeedback({ sound: 'chip', speech: 'allin' });
+  const chip = fixture.stats.sources.find(source => source.buffer.cue === 'chips');
+  const voice = fixture.stats.sources.find(source => source.buffer.cue === 'allin');
+  assert.deepEqual(chip.gain.values, [TABLE_AUDIO_MIX.chipsUnderVoice]);
+  assert.deepEqual(voice.gain.values, [TABLE_AUDIO_MIX.voice]);
+  assert.equal(voice.at, TABLE_AUDIO_MIX.voiceLead);
+  assert.ok(TABLE_AUDIO_MIX.chipsUnderVoice < TABLE_AUDIO_MIX.chips);
+  sounds.setVoiceEnabled(false); now += 300;
+  sounds.playFeedback({ sound: 'chip', speech: 'allin' });
+  assert.deepEqual(fixture.stats.sources.at(-1).gain.values, [TABLE_AUDIO_MIX.chips]);
+  sounds.dispose();
+});
+
+test('enabling voice during chip preload loads only missing clips and never queues an action', async () => {
+  let done; const wait = new Promise(resolve => { done = resolve; });
+  const fixture = audioFixture({ fetchDelay: wait });
+  const sounds = createTableSounds({ enabled: true, voiceEnabled: false, AudioContext: fixture.AudioContext, document: fixture.doc, fetch: fixture.fetcher });
+  await sounds.unlock(); assert.equal(fixture.stats.requests.length, 1);
+  assert.equal(sounds.playFeedback({ eventId: 'loading', sound: 'chip', speech: 'allin' }), false);
+  sounds.setVoiceEnabled(true); const pending = sounds.preloadAudio();
+  assert.equal(fixture.stats.requests.length, 8, 'chip request shared, seven voice requests added');
+  done(); assert.equal(await pending, true);
+  assert.equal(fixture.stats.sources.length, 0);
+  assert.equal(sounds.playFeedback({ eventId: 'loading', sound: 'chip', speech: 'allin' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'new', sound: 'chip', speech: 'allin' }), true);
+  sounds.dispose();
 });

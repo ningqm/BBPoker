@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -23,16 +24,19 @@ function fixture(t, count = 6, settings = { squid: true, squidUnitBB: 2 }) {
   let service = new RoomService(store), room = service.create(users[0], { settings });
   for (const u of users.slice(1)) service.join(u, room.code, room.invite);
   const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { timestamp = value; });
     const q = room.mini.squid, participating = q.active && q.participants.includes(users[i].id);
     const quote = ['stand', 'sitout'].includes(type) ? {
       expectedSquidRound: participating ? q.round : 0,
       expectedSquidCost: participating && !q.won.includes(users[i].id) ? (q.participants.length - 1) * q.unit : 0,
     } : {};
-    return service.command(users[i], room.code, {
+    const result = service.command(users[i], room.code, {
       type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...quote, ...extra,
     });
-  };
-  const connect = (i, count) => {
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; }));
+    return result;
+  };  const connect = (i, count) => {
     service.connections.set(`${room.code}:${users[i].id}`, Number(count));
     service.connectionChanged(room, timestamp, { reconnected: Boolean(count) });
   };
@@ -41,7 +45,7 @@ function fixture(t, count = 6, settings = { squid: true, squidUnitBB: 2 }) {
     assert.ok(room.hand.players.some(p => p.id === users[i].id), 'intended winner must have been dealt');
     for (let n = 0; room.hand.status === 'playing'; n++) {
       assert.ok(n < 100, 'hand must terminate');
-      if (room.hand.runout?.active) { timestamp += 2000; service.tick(room, timestamp); continue; }
+      if (!room.hand.actingId) { assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; })); continue; }
       const actor = users.findIndex(u => u.id === room.hand.actingId), a = availableActions(room.hand, room.hand.actingId);
       cmd(actor, actor === i ? a.canCheck ? 'check' : 'call' : 'fold');
     }
@@ -239,31 +243,28 @@ test('oracle: three simultaneous wait-BB newcomers enter on successive natural b
   }
 });
 
-test('oracle: new squid round cannot reserve or penalize waiting newcomers who have not received any hand', t => {
+test('oracle: waiting newcomers incur no current-round reserve until their first legal entry hand', t => {
   const f = fixture(t, 3); f.cmd(0, 'start');
   for (const i of [3, 4, 5]) { f.cmd(i, 'sit', { seat: i, amountBB: 100 }); f.connect(i, 1); }
-  f.win(0); f.service.start(f.room, f.time, { automatic: true }); f.win(1);
-  assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.mini.squid.round, 1);
-  let nextRoundStarted = false;
+  f.win(0);
+  let allJoined = false;
   for (let step = 0; step < 9; step++) {
     f.service.start(f.room, f.time, { automatic: true });
     const dealt = new Set(f.room.hand.players.map(p => p.id));
-    if (f.room.mini.squid.active) {
-      nextRoundStarted = true;
-      assert.equal(f.room.mini.squid.round, 2);
-      assert.deepEqual(f.room.mini.squid.participants.slice().sort(), f.users.slice(0, 6).map(u => u.id).sort());
-      assert.deepEqual([...dealt].sort(), f.room.mini.squid.participants.slice().sort());
-      conserved(f.room); break;
-    }
-    assert.equal(f.room.hand.squidRound, null);
-    assert.deepEqual(f.room.mini.squid.reserves, {});
+    assert.equal(f.room.mini.squid.round,1);assert.equal(f.room.hand.squidRound,1);
     for (const i of [3, 4, 5]) if (!dealt.has(f.users[i].id) && !f.store.data.hands.some(h => h.players.some(p => p.id === f.users[i].id))) {
       assert.equal(f.room.members[f.users[i].id].stack, 1000);
+      assert.equal(f.room.mini.squid.reserves[f.users[i].id],undefined);
+      assert.equal(f.room.mini.squid.participants.includes(f.users[i].id),false);
       assert.equal(f.service.stats(f.users[i].id).miniNet, 0);
     }
-    conserved(f.room); f.win(0);
+    conserved(f.room);f.win(0);
+    if(f.room.mini.squid.participants.length===6){allJoined=true;break;}
   }
-  assert.equal(nextRoundStarted, true, 'blind waiting cannot permanently prevent the next squid round');
+  assert.equal(allJoined,true,'natural BB must eventually admit each newcomer to the same round');
+  assert.equal(f.room.mini.squid.tokenBudget,5);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],40);
+  for(const user of f.users.slice(1,6))assert.equal(f.room.mini.squid.reserves[user.id],100);
 });
 
 test('oracle: original unmarked player reconnects mid-hand then returns to that round without a second reserve', t => {

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { RoomService } from '../src/room.js';
@@ -16,7 +17,7 @@ function fixture(t, settings = {}, count = 3) {
   const connect = (i, connected) => { service.connections.set(`${room.code}:${users[i].id}`, connected ? 1 : 0); service.connectionChanged(room, timestamp, { reconnected: connected }); };
   const win = i => {
     for (let n = 0; room.hand.status === 'playing'; n++) {
-      assert.ok(n < 100); const actor = users.findIndex(u => u.id === room.hand.actingId), a = availableActions(room.hand, room.hand.actingId);
+      assert.ok(n < 100); if (!readyRoomAction(service, room, value => { timestamp = value; })) break; const actor = users.findIndex(u => u.id === room.hand.actingId), a = availableActions(room.hand, room.hand.actingId);
       cmd(actor, actor === i ? a.canCheck ? 'check' : 'call' : 'fold');
     }
     service.completeRabbit(room, timestamp);
@@ -45,21 +46,19 @@ test('late seating preserves the current hand; departure is cancelable and occur
   f.service.start(f.room); assert.deepEqual(f.room.hand.players.map(p => p.id), [f.users[1].id, f.users[2].id, f.users[3].id]); conserved(f.room);
 });
 
-test('squid entrants wait for the next round while the fixed original roster completes', t => {
+test('a squid entrant joins the next eligible hand and pays only the enlarged current round', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); const roster = [...f.room.mini.squid.participants];
   f.cmd(3, 'sit', { seat: 3, amountBB: 100 }); f.connect(3, true); f.win(0);
   assert.deepEqual(f.room.mini.squid.participants, roster);
   assert.equal(f.service.state(f.room, f.users[3].id).players.find(p => p.id === f.users[3].id).waitingFor, 'squid');
-  f.service.start(f.room); assert.deepEqual(f.room.hand.players.map(p => p.id), roster); f.win(1);
-  assert.equal(f.room.mini.squid.active, false); conserved(f.room);
-  f.service.start(f.room); assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.hand.squidRound, null);
-  assert.equal(f.room.hand.players.some(p => p.id === f.users[3].id), false); assert.deepEqual(f.room.mini.squid.reserves, {});
-  for (let i = 0; !f.room.mini.squid.active; i++) {
-    assert.ok(i < 5, 'the big blind must reach the newcomer');
-    f.win(f.users.findIndex(u => u.id === f.room.hand.players[0].id)); f.service.start(f.room); conserved(f.room);
-  }
-  assert.equal(f.room.mini.squid.round, 2); assert.equal(f.room.mini.squid.participants.length, 4);
-  assert.ok(f.room.hand.players.some(p => p.id === f.users[3].id)); conserved(f.room);
+  f.service.start(f.room); assert.deepEqual(f.room.hand.players.map(p => p.id), [...roster,f.users[3].id]);
+  assert.equal(f.room.mini.squid.tokenBudget,3); assert.equal(f.room.mini.squid.counts[f.users[3].id],0);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],40);
+  for(const i of [1,2,3])assert.equal(f.room.mini.squid.reserves[f.users[i].id],60);
+  f.win(1); assert.equal(f.room.mini.squid.active,true);conserved(f.room);
+  f.service.start(f.room); f.win(2);
+  assert.equal(f.room.mini.squid.round,1);assert.equal(f.room.mini.squid.active,false);
+  assert.deepEqual(f.room.mini.squid.lastResult.changes,Object.fromEntries(f.users.slice(0,4).map((u,i)=>[u.id,i===3?-60:20])));conserved(f.room);
 });
 
 test('unmarked departure requires a current quote and retains its original reserve through rejoining', t => {

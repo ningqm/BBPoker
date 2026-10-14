@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -13,15 +14,21 @@ function table(t, settings = {}, count = 3) {
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   let service = new RoomService(store), room = service.create(users[0], { settings });
   for (const user of users.slice(1)) service.join(user, room.code, room.invite);
-  const cmd = (i, type, extra = {}) => service.command(users[i], room.code, {
+  const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { timestamp = value; });
+    const result = service.command(users[i], room.code, {
     type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra,
   });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; }));
+    return result;
+  };
   const connect = (i, online = true) => service.connections.set(`${room.code}:${users[i].id}`, Number(online));
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); connect(i); }
   function finish(winner = 0) {
     for (let n = 0; room.hand?.status === 'playing'; n++) {
       assert.ok(n < 100, 'a normal hand must finish');
-      if (room.hand.runout?.active) { timestamp += 2000; service.tick(room, timestamp); continue; }
+      if (!room.hand.actingId) { assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; })); continue; }
       const i = users.findIndex(user => user.id === room.hand.actingId);
       const action = availableActions(room.hand, users[i].id);
       cmd(i, i === winner ? action.canCheck ? 'check' : 'call' : 'fold');

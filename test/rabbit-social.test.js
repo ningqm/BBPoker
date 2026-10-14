@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +15,13 @@ function fixture(t, seated = 3) {
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store), room = service.create(users[0], {});
   for (const u of users.slice(1, 4)) service.join(u, room.code, room.invite);
-  const command = (index, type, extra = {}) => service.command(users[index], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const command = (index, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { timestamp = value; });
+    const result = service.command(users[index], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; }));
+    return result;
+  };
   for (let i = 0; i < seated; i++) { command(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   const act = type => command(users.findIndex(u => u.id === room.hand.actingId), type);
   const foldFinish = () => { while (room.hand.status === 'playing') act('fold'); };
@@ -61,17 +68,19 @@ test('fold-win rabbit reveals every remaining card together while real settlemen
   assert.ok(view.hand.rabbit.proofs.every(p => !h.players.some(player => player.cardIndices.includes(p.position)) && !h.burnIndices.includes(p.position)));
   assert.deepEqual(view.hand.board, []); assert.ok(view.players.every(player => player.cards.every(card => card === null)));
   assert.deepEqual(immutable(h), actual); assert.deepEqual(f.store.data.ledger, ledger); assert.deepEqual(f.service.stats(f.users[0].id), stats);
-  assert.equal(h.rabbit.active, false); assert.equal(h.rabbit.finishedAt, initial + 1000); assert.equal(f.room.nextHandAt, initial + 5000);
+  assert.equal(h.rabbit.active, false); assert.equal(h.rabbit.finishedAt, initial + 1000); assert.equal(f.room.nextHandAt, initial + 6000);
   assert.deepEqual(f.service.history(f.users[3].id, f.room.code).hands[0].rabbit.board, h.rabbit.board);
   assert.equal(f.service.handLibrary(f.users[0].id).hands[0].rabbit.board.length, 5);
   const id = h.id; f.advance(f.room.nextHandAt - f.time - 1); assert.equal(f.service.tick(f.room), false);
   f.advance(1); assert.equal(f.service.tick(f.room), true); assert.notEqual(f.room.hand.id, id); assert.equal(f.store.data.hands.length, 1);
 });
 
-test('slow clocks drain rabbit and deal in the same due tick; pause/offline only stop dealing', t => {
+test('slow clocks reveal rabbit then preserve a five-second result hold; pause/offline only stop dealing', t => {
   const f = fixture(t); f.command(0, 'start'); f.foldFinish(); const h = f.room.hand;
   f.advance(6000); f.service.tick(f.room);
-  assert.equal(h.rabbit.board.length, 5); assert.equal(h.rabbit.active, false); assert.equal(f.room.handNumber, 2);
+  assert.equal(h.rabbit.board.length, 5); assert.equal(h.rabbit.active, false); assert.equal(f.room.handNumber, 1);
+  assert.equal(f.room.nextHandAt, f.time + 5000); f.advance(4999); f.service.tick(f.room); assert.equal(f.room.handNumber, 1);
+  f.advance(1); f.service.tick(f.room); assert.equal(f.room.handNumber, 2);
   assert.notEqual(f.room.hand.id, h.id); assert.equal(f.room.hand.rabbit, undefined); assert.deepEqual(f.room.hand.board, []);
   f.command(0, 'autoDeal', { paused: true }); f.foldFinish();
   for (const user of f.users) f.service.connections.delete(`${f.room.code}:${user.id}`);
@@ -105,7 +114,18 @@ test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE a
   const created = (await api(users[0].token, '/api/rooms', {}, 201)).room, code = created.code;
   for (const u of users.slice(1)) await api(u.token, `/api/rooms/${code}/join`, { invite: created.invite });
   const room = () => app.store.data.rooms[code];
-  const command = (i, type, more = {}) => api(users[i].token, `/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...more });
+  const command = async (i, type, more = {})  => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room().hand?.actingId) readyRoomAction(app.service, room(), value => { timestamp = value; });
+    const result = await api(users[i].token, `/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...more });
+    // Let the app's real timer commit and publish the delayed settlement.
+    for (let guard = 0; action && room().hand?.transition; guard++) {
+      assert.ok(guard < 100, 'live timer must publish the scheduled transition');
+      timestamp = Math.max(timestamp, room().hand.transition.nextAt);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return result;
+  };
   for (let i = 0; i < 2; i++) { await command(i, 'sit', { seat: i, amountBB: 100 }); app.service.connections.set(`${code}:${users[i].user.id}`, 1); }
   const throwBody = { messageId: randomUUID(), kind: 'throw', emote: 'cheers', targetId: users[1].user.id };
   const originalSave = app.store.save.bind(app.store), before = structuredClone(app.store.data);

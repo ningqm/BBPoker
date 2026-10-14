@@ -1,25 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {betPresetOptions,betActionLabel,betAmountBounds,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt} from '../public/table-controls.js';
+import {betPresetOptions,betActionLabel,betAmountBounds,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,betSelection,syncBetControls,betTurnKey,betSliderKeyPosition,betActionEnabled} from '../public/table-controls.js';
 import {setDisplayUnit} from '../public/money.js';
 
 function room(){return {code:'room-a',meId:'hero',status:'waiting',settings:{bigBlind:10},hand:{id:'hand-a',status:'complete',currentBet:50,pot:105},players:[{id:'hero',bet:20,cards:['As','Kh'],shownIndices:[],inHand:true}],actions:{canRaise:true,callAmount:30,minRaiseTo:100,maxRaiseTo:2000},autoDeal:{paused:false,rebuyGrace:{handId:'hand-a',eligibleIds:['hero','peer'],pendingIds:['hero'],startsAt:5000,endsAt:10000,active:false}}};}
 
 test('fraction presets round the total street bet to the nearest BB and remain usable at the legal minimum',()=>{
   const r=room(),before=JSON.stringify(r),rows=betPresetOptions(r);
-  assert.deepEqual(rows.map(({id,amount})=>[id,amount]),[['third',100],['half',120],['two-thirds',140],['pot',190],['over',210],['all',2000]]);
+  assert.deepEqual(rows.map(({id,amount})=>[id,amount]),[['third',100],['half',120],['two-thirds',140],['pot',190]]);
   assert.ok(rows.every(p=>p.available&&Number.isSafeInteger(p.amount)&&p.amount%10===0));
   assert.equal(JSON.stringify(r),before);
   r.hand.currentBet=0;r.hand.pot=101;r.players[0].bet=0;r.actions.callAmount=0;r.actions.minRaiseTo=10;
-  assert.deepEqual(betPresetOptions(r).filter(p=>p.id!=='all').map(p=>p.amount),[30,50,70,100,120]);
+  assert.deepEqual(betPresetOptions(r).map(p=>p.amount),[30,50,70,100]);
   r.hand.pot=1;
-  assert.ok(betPresetOptions(r).filter(p=>p.id!=='all').every(p=>p.available&&p.amount===10));
+  assert.ok(betPresetOptions(r).every(p=>p.available&&p.amount===10));
 });
 
 test('initial half-blind call has an available third-pot shortcut and never changes the call amount',()=>{
   const r=room();r.players[0].bet=5;r.actions.callAmount=5;r.actions.minRaiseTo=20;r.hand.pot=15;r.hand.currentBet=10;
   const before=JSON.stringify(r),rows=betPresetOptions(r);
-  assert.deepEqual(rows.map(p=>p.amount),[20,20,20,30,30,2000]);
+  assert.deepEqual(rows.map(p=>p.amount),[20,20,20,30]);
   assert.ok(rows.every(p=>p.available));assert.equal(JSON.stringify(r),before);
   assert.ok(!rows.some(p=>p.id==='min'));
 });
@@ -27,9 +27,9 @@ test('initial half-blind call has an available third-pot shortcut and never chan
 test('oversize presets become an exact all-in including a fractional BB balance',()=>{
   const r=room();r.actions.maxRaiseTo=155;const rows=betPresetOptions(r);
   assert.ok(rows.every(p=>p.available));
-  assert.deepEqual(rows.map(p=>p.amount),[100,120,140,155,155,155]);
-  assert.equal(betActionLabel(r,155),'全下至');assert.equal(betActionLabel(r,120),'加至');
-  r.hand.currentBet=0;assert.equal(betActionLabel(r,120),'下注');assert.equal(betActionLabel(r,155),'全下至');
+  assert.deepEqual(rows.map(p=>p.amount),[100,120,140,155]);
+  assert.equal(betActionLabel(r,155),'All-in');assert.equal(betActionLabel(r,120),'加至');
+  r.hand.currentBet=0;assert.equal(betActionLabel(r,120),'下注');assert.equal(betActionLabel(r,155),'All-in');
   r.actions.canRaise=false;r.actions.canAllIn=true;assert.deepEqual(betPresetOptions(r),[]);
 });
 
@@ -103,4 +103,65 @@ test('rebuy prompt ignores spectators, replenished stacks, pauses, wrong hands a
     const r=room();mutate(r);assert.equal(rebuyPrompt(r,6000),null);
   }
   assert.equal(rebuyPrompt(null,6000),null);
+});
+
+test('rounded presets remain distinct selections and removed shortcut identities are discarded',()=>{
+  const r=room();r.players[0].bet=5;r.actions.callAmount=5;r.actions.minRaiseTo=20;r.hand.pot=15;
+  const third=betPresetOptions(r).find(p=>p.id==='third'),half=betPresetOptions(r).find(p=>p.id==='half');
+  assert.equal(third.amount,half.amount);
+  assert.deepEqual(betSelection(r,third.amount,'third'),{amount:20,preset:'third'});
+  assert.deepEqual(betSelection(r,half.amount,'half'),{amount:20,preset:'half'});
+  assert.deepEqual(betSelection(r,half.amount),{amount:20,preset:null});
+  r.actions.maxRaiseTo=20;
+  assert.ok(betPresetOptions(r).every(p=>p.amount===20));
+  for(const preset of ['third','half','two-thirds','pot'])assert.equal(betSelection(r,20,preset).preset,preset);
+  for(const preset of ['over','all'])assert.equal(betSelection(r,20,preset).preset,null);
+});
+
+test('a selected preset and slider remain stable through chat/presence updates in the same action',()=>{
+  const r=room();r.hand.status='playing';r.hand.actionSeq=12;r.hand.actingId='hero';r.actions.canAct=true;
+  const first=syncBetControls(r,{});assert.equal(first.amount,100);assert.equal(first.panelOpen,false);
+  const selected={...first,...betSelection(r,190,'pot'),panelOpen:true};
+  r.revision=34;r.chat=[{id:'new-chat'}];r.players.push({id:'observer',seat:null});
+  assert.deepEqual(syncBetControls(r,selected),selected);
+  r.actions.canUseTimeBank=false;r.deadline=20000;
+  assert.deepEqual(syncBetControls(r,selected),selected);
+});
+
+test('stale actor, hand, action or permissions close the amount panel and clear its preset',()=>{
+  for(const mutate of [r=>r.hand.actingId='other',r=>r.hand.actionSeq++,r=>r.hand.id='new',r=>r.code='other',r=>r.actions.canAct=false,r=>r.hand.status='complete',r=>r.hand.runout={active:true}]){
+    const r=room();r.hand.status='playing';r.hand.actionSeq=4;r.hand.actingId='hero';r.actions.canAct=true;
+    const old={key:betTurnKey(r),amount:190,preset:'pot',panelOpen:true};mutate(r);
+    const next=syncBetControls(r,old);assert.equal(next.panelOpen,false);assert.equal(next.preset,null);
+  }
+  const r=room();r.hand.status='playing';r.hand.actingId='hero';r.actions.canAct=true;
+  const old={key:betTurnKey(r),amount:190,preset:'pot',panelOpen:true};r.actions.canRaise=false;
+  const next=syncBetControls(r,old);assert.equal(next.panelOpen,false);assert.equal(next.amount,0);assert.equal(next.preset,null);
+});
+
+test('changed limits invalidate a selected amount without choosing another matching preset',()=>{
+  const r=room();r.hand.status='playing';r.hand.actionSeq=3;r.hand.actingId='hero';r.actions.canAct=true;
+  const old={key:betTurnKey(r),amount:190,preset:'pot',panelOpen:true};
+  r.hand.pot=1;
+  assert.equal(syncBetControls(r,old).preset,null);
+  r.actions.maxRaiseTo=150;
+  const next=syncBetControls(r,old);assert.equal(next.amount,150);assert.equal(next.preset,null);
+});
+
+test('vertical slider keyboard direction and boundaries are explicit and safe',()=>{
+  assert.equal(betSliderKeyPosition('ArrowUp',500),510);assert.equal(betSliderKeyPosition('ArrowDown',500),490);
+  assert.equal(betSliderKeyPosition('ArrowRight',500),510);assert.equal(betSliderKeyPosition('ArrowLeft',500),490);
+  assert.equal(betSliderKeyPosition('PageUp',500),600);assert.equal(betSliderKeyPosition('PageDown',500),400);
+  assert.equal(betSliderKeyPosition('Home',500),0);assert.equal(betSliderKeyPosition('End',500),1000);
+  assert.equal(betSliderKeyPosition('ArrowDown',0),0);assert.equal(betSliderKeyPosition('ArrowUp',1000),1000);
+  assert.equal(betSliderKeyPosition('Tab',500),null);
+});
+
+test('connection refresh cannot enable off-turn or presentation-delayed action buttons',()=>{
+  const r=room();r.hand.status='playing';r.actions={...r.actions,canAct:true,canFold:true,canCheck:false,canAllIn:true,canUseTimeBank:true};
+  for(const action of ['fold','call','raise','allin','timebank','raise-preset','toggle-raise-panel'])assert.equal(betActionEnabled(r,action),true);
+  assert.equal(betActionEnabled(r,'check'),false);
+  r.actions.canAct=false;r.actions.turnAvailable=true;
+  for(const action of ['fold','check','call','raise','allin','timebank','raise-preset','toggle-raise-panel'])assert.equal(betActionEnabled(r,action),false);
+  r.actions.canAct=true;r.status='closed';assert.equal(betActionEnabled(r,'fold'),false);
 });

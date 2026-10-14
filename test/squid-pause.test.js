@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,13 @@ function fixture(t, settings = {}) {
   const data = { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] };
   const service = new RoomService({ data }), room = service.create(users[0], { settings: { squid: true, smallBlind: 1, bigBlind: 2, ...settings } });
   for (const user of users.slice(1)) service.join(user, room.code, room.invite);
-  const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { now = value; });
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { now = value; }));
+    return result;
+  };
   const connect = (i, online) => { service.connections.set(`${room.code}:${users[i].id}`, online ? 1 : 0); service.connectionChanged(room, now, { reconnected: online }); };
   for (let i = 0; i < 4; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); connect(i, true); }
   const start = () => service.start(room, now, { automatic: true });
@@ -85,16 +92,19 @@ test('upgrading a legacy squid hand retains eligibility while a saved explicit o
   f.start(); assert.equal(f.room.hand.squidRound, round);
 });
 
-test('a newcomer waits for the next squid round even when an absent original player reconnects mid-hand', t => {
+test('a newcomer can join the ongoing round while an original reconnect still waits for the next hand', t => {
   const f = fixture(t); f.win(0); f.connect(3, false);
   f.cmd(4, 'sit', { seat: 4, amountBB: 100 }); f.connect(4, true); f.start();
   const hand = structuredClone(f.room.hand); f.connect(3, true);
   let view = f.service.state(f.room, f.users[4].id);
-  assert.equal(view.hand.squidRound, 1); assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, 'squid');
-  assert.equal(view.players.find(p => p.id === f.users[4].id).cards.length, 0); assert.deepEqual(f.room.hand, hand);
+  assert.equal(view.hand.squidRound, 1); assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, null);
+  assert.equal(view.players.find(p => p.id === f.users[4].id).cards.length, 2); assert.deepEqual(f.room.hand, hand);
+  assert.equal(view.players.find(p => p.id === f.users[3].id).waitingFor,'hand');
+  assert.equal(view.players.find(p => p.id === f.users[3].id).cards.length,0);
   f.win(1); view = f.service.state(f.room, f.users[4].id);
-  assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, 'squid');
-  assert.equal(view.players.find(p => p.id === f.users[4].id).squidReserve, 0);
+  assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, null);
+  assert.equal(view.players.find(p => p.id === f.users[4].id).squidReserve, 4*f.room.mini.squid.unit);
+  assert.equal(f.room.mini.squid.tokenBudget,4);assert.equal(f.room.mini.squid.participants.length,5);
 });
 
 test('overtime waiting does not repeatedly write or refresh an already observed deadline', t => {

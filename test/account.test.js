@@ -9,6 +9,7 @@ import { createApp } from '../server.js';
 import { EncryptedStore } from '../src/store.js';
 import { RoomService } from '../src/room.js';
 import { digest, secret, hashPassword, verifyPassword } from '../src/auth.js';
+import { readyRoomAction } from './helpers/room-clock.js';
 
 const PASSWORD = 'test-only-password-1', NEW_PASSWORD = 'test-only-password-2';
 async function setup(t, seed) {
@@ -82,6 +83,8 @@ test('register/login/logout use normalized accounts and private revocable sessio
 });
 
 test('legacy binding keeps exact player, room, hand and ledger ownership while retiring old bearer recovery', async t => {
+  let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
+  const setTime=value=>{timestamp=value;};
   const legacyToken = secret(); let legacy, roomCode;
   const f = await setup(t, store => {
     legacy = { id: 'legacy-owner', name: '原来的朋友', avatar: 2 };
@@ -92,7 +95,9 @@ test('legacy binding keeps exact player, room, hand and ledger ownership while r
     for (const [i, user] of [legacy, peer].entries()) service.command(user, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() });
     for (const user of [legacy, peer]) service.connections.set(`${room.code}:${user.id}`, 1);
     service.command(legacy, room.code, { type: 'start', commandId: randomUUID() });
+    readyRoomAction(service,room,setTime);
     service.command(service.user(room.hand.actingId), room.code, { type: 'fold', handId: room.hand.id, actionSeq: room.hand.log.length, commandId: randomUUID() });
+    readyRoomAction(service,room,setTime);
     // This test isolates account ownership; opening/revoking a stream must not
     // independently start or cancel an automatic-deal countdown during the snapshot.
     service.command(legacy, room.code, { type: 'autoDeal', paused: true, commandId: randomUUID() });

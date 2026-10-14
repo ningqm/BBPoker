@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { RoomService } from '../src/room.js';
 import { createApp } from '../server.js';
+import { readyRoomAction } from './helpers/room-clock.js';
+let timestamp;
+test.beforeEach(t=>{timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);});
+const setTime=value=>{timestamp=value;};
 
 function fixture(count = 4) {
   const store = { data: { version: 1, users: {}, rooms: {}, hands: [], ledger: [] } };
@@ -13,10 +17,10 @@ function fixture(count = 4) {
   for (const user of users) store.data.users[user.id] = user;
   const service = new RoomService(store), room = service.create(users[0], { name: '朋友桌', settings: { approvalRequired: false } });
   users.slice(1, -1).forEach(u => service.join(u, room.code, room.invite));
-  const command = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const command = (i, type, extra = {}) => {const result=service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });if(['start','fold','check','call','raise','allin'].includes(type))readyRoomAction(service,room,setTime);return result;};
   const chat = (i, input = {}, timestamp = 100000) => service.chat(users[i], room.code, { messageId: randomUUID(), kind: 'text', text: '好牌', ...input }, { timestamp, ip: 'shared-wifi' });
   const play = () => {
-    service.start(room);
+    service.start(room);readyRoomAction(service,room,setTime);
     while (room.hand.status === 'playing') command(users.findIndex(u => u.id === room.hand.actingId), 'fold');
     return store.data.hands.at(-1);
   };
@@ -151,7 +155,11 @@ test('HTTP chat/SSE and personal favorites survive encrypted restart without exp
   const update = new TextDecoder().decode((await reader.read()).value);
   assert.deepEqual(JSON.parse(update.split('data: ')[1].split('\n\n')[0]).chat.at(-1), emoji);
   controller.abort(); await reader.cancel().catch(() => {});
-  const command = async (i, type, extra = {}) => api(users[i], `/api/rooms/${room.code}/action`, { type, commandId: randomUUID(), handId: app.store.data.rooms[room.code].hand?.id, actionSeq: app.store.data.rooms[room.code].hand?.log.length, ...extra });
+  const command = async (i, type, extra = {}) => {
+    const result=await api(users[i], `/api/rooms/${room.code}/action`, { type, commandId: randomUUID(), handId: app.store.data.rooms[room.code].hand?.id, actionSeq: app.store.data.rooms[room.code].hand?.log.length, ...extra });
+    if(['start','fold'].includes(type)){readyRoomAction(app.service,app.store.data.rooms[room.code],setTime);app.store.save();}
+    return result;
+  };
   await command(0, 'sit', { seat: 0, amount: 1000 }); await command(1, 'sit', { seat: 1, amount: 1000 });
   for (const user of users.slice(0, 2)) app.service.connections.set(`${room.code}:${user.user.id}`, 1);
   await command(0, 'start');

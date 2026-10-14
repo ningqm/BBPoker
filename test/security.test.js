@@ -8,6 +8,10 @@ import { RoomService, exportText, exportCsv } from '../src/room.js';
 import { EncryptedStore } from '../src/store.js';
 import { verifyProof } from '../src/fairness.js';
 import { createApp } from '../server.js';
+import { readyRoomAction } from './helpers/room-clock.js';
+let timestamp;
+test.beforeEach(t=>{timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);});
+const setTime=value=>{timestamp=value;};
 
 function fixture(settings = {}) {
   const store = { data: { version: 1, users: {}, rooms: {}, hands: [], ledger: [] } };
@@ -30,6 +34,7 @@ function fixture(settings = {}) {
       }
       h.miniBefore = structuredClone(room.mini);
     }
+    if(['start','fold','check','call','raise','allin'].includes(type))readyRoomAction(service,room,setTime);
     return result;
   };
   return { store, users, service, room, command };
@@ -38,12 +43,14 @@ function seat(f, count = 3) { for (let i = 0; i < count; i++) { f.command(i, 'si
 function finishWithFolds(f) {
   for (let i = 0; f.room.hand.status === 'playing'; i++) {
     assert.ok(i < 30);
+    readyRoomAction(f.service,f.room,setTime);if(f.room.hand.status!=='playing')break;
     f.command(f.users.findIndex(u => u.id === f.room.hand.actingId), 'fold');
   }
 }
 function finishByCalling(f) {
   for (let i = 0; f.room.hand.status === 'playing'; i++) {
     assert.ok(i < 100);
+    readyRoomAction(f.service,f.room,setTime);if(f.room.hand.status!=='playing')break;
     const actor = f.users.findIndex(u => u.id === f.room.hand.actingId);
     const a = f.service.state(f.room, f.users[actor].id).actions;
     f.command(actor, a.canCheck ? 'check' : 'call');
@@ -259,7 +266,7 @@ test('regression: career curve applies an earlier room refund before hands from 
     f.service.connections.set(`${second.code}:${f.users[i].id}`, 1);
   }
   command(0, 'start');
-  while (second.hand.status === 'playing') command(f.users.findIndex(u => u.id === second.hand.actingId), 'fold');
+  while (second.hand.status === 'playing') {readyRoomAction(f.service,second,setTime);if(second.hand.status==='playing')command(f.users.findIndex(u => u.id === second.hand.actingId), 'fold');}
   f.store.data.hands[1].at = '2020-01-03T00:00:00.000Z';
   const stats = f.service.stats(f.users[0].id);
   assert.deepEqual(stats.curve.map(p => p.at), ['2020-01-01T00:00:00.000Z', '2020-01-02T00:00:00.000Z', '2020-01-03T00:00:00.000Z']);
@@ -311,7 +318,7 @@ test('security: failed HTTP persistence rolls back the full attempted action and
   const peer = { id: 'rollback-peer', name: '朋友', avatar: 1 };
   app.store.data.users.peer = peer; app.service.join(peer, room.code, room.invite);
   for (const [i, u] of [user, peer].entries()) { app.service.command(u, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() }); app.service.connections.set(`${room.code}:${u.id}`, 1); }
-  app.service.command(user, room.code, { type: 'start', commandId: randomUUID() }); app.store.save();
+  app.service.command(user, room.code, { type: 'start', commandId: randomUUID() });readyRoomAction(app.service,room,setTime); app.store.save();
   const before = structuredClone(app.store.data), disk = readFileSync(app.store.file);
   const endpoint = `http://127.0.0.1:${app.server.address().port}/api/rooms/${room.code}/action`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };

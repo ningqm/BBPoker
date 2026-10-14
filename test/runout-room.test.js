@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -19,12 +20,18 @@ function fixture(t, count = 3, store = { data: { version: 1, users: {}, rooms: {
   for (const user of users) store.data.users[user.id] = user;
   const service = new RoomService(store), room = service.create(users[0], {});
   for (const user of users.slice(1)) service.join(user, room.code, room.invite);
-  const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { timestamp = value; });
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; }));
+    return result;
+  };
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   const act = type => cmd(users.findIndex(u => u.id === room.hand.actingId), type);
   const advance = ms => { timestamp += ms; };
   const nextCard = () => { timestamp = room.hand.runout.nextAt; assert.equal(service.tick(room), true); };
-  const finish = () => { for (let i = 0; room.hand.runout?.active; i++) { assert.ok(i < 5); nextCard(); } };
+  const finish = () => { for (let i = 0; room.hand.runout?.active || room.hand.transition; i++) { assert.ok(i < 8); assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; })); } };
   return { users, store, service, room, cmd, act, advance, nextCard, finish, get time() { return timestamp; } };
 }
 
@@ -54,17 +61,19 @@ test('room only exposes all-in contenders once betting closes; folded cards and 
   assert.equal(h.actingId, null); assert.equal(f.room.deadline, null); assert.equal(h.runout.nextAt, f.time + 1800);
   assert.equal(h.equityFrames.length, 1); assert.deepEqual(h.allInEquity, calculateEquity(anchor));
   assert.equal(h.allInLock.players.some(p => p.id === folder), false);
-  for (let boardCount = 0; boardCount <= 5; boardCount++) {
+  for (const [frameIndex, boardCount] of [0, 3, 4, 5].entries()) {
     if (boardCount) f.nextCard();
     state = f.service.state(f.room, f.users[4].id);
     assert.equal(state.hand.board.length, boardCount);
     assertPrivateState(f, state, f.users[4].id);
     assert.deepEqual(state.players.find(p => p.id === folder).cards, [null, null]);
     assert.equal(state.players.filter(p => p.cards.length === 2 && p.cards.every(Boolean)).length, 3);
-    assert.equal(h.equityFrames.length, boardCount + 1); assert.equal(h.audit.root, root); assert.deepEqual(h.allInLock, anchor);
+    assert.equal(h.equityFrames.length, frameIndex + 1); assert.equal(h.audit.root, root); assert.deepEqual(h.allInLock, anchor);
     assert.deepEqual(state.hand.equity, calculateEquity({ ...anchor, board: h.board }));
     if (boardCount < 5) { assert.equal(f.store.data.hands.length, 0); assert.equal(state.actions.canAct, false); }
   }
+  assert.equal(h.status, 'playing'); assert.equal(h.transition.kind, 'showdown'); assert.equal(h.result, null);
+  f.finish();
   assert.equal(f.store.data.hands.length, 1); assert.equal(f.store.data.ledger.filter(l => l.type === 'holdem').length, 4);
   assert.equal(f.room.nextHandAt, f.time + 5000);
   assert.equal(f.service.tick(f.room), false);
@@ -77,7 +86,7 @@ test('runout clocks wait for each deadline, ignore action/time-card attempts, an
   for (const type of ['call', 'allin', 'check', 'fold', 'timebank']) assert.throws(() => f.cmd(0, type));
   assert.deepEqual(f.room.hand, frozen);
   f.advance(1799); assert.equal(f.service.tick(f.room), false); assert.equal(f.room.hand.board.length, 0);
-  f.advance(1); assert.equal(f.service.tick(f.room), true); assert.equal(f.room.hand.board.length, 1);
+  f.advance(1); assert.equal(f.service.tick(f.room), true); assert.equal(f.room.hand.board.length, 3);
   assert.equal(f.room.hand.runout.nextAt, clock + 1500);
   f.room.endsAt = f.time;
   f.advance(1499); assert.equal(f.service.tick(f.room), false); assert.equal(f.room.status, 'playing');
@@ -133,16 +142,32 @@ test('river all-in shows exact final equity but is excluded from runout-luck sam
   for (const user of f.users.slice(0, 2)) f.service.connections.set(`${next.code}:${user.id}`, 1);
   cmd(0, 'start');
   while (next.hand.status === 'playing') {
+    if (!readyRoomAction(f.service, next, value => f.advance(value - f.time))) break;
     const actor = f.users.findIndex(u => u.id === next.hand.actingId), actions = f.service.state(next, next.hand.actingId).actions;
     cmd(actor, actions.canCheck ? 'check' : 'call');
   }
   assert.equal(next.hand.allInLock, null); assert.equal(f.service.state(next, f.users[0].id).hand.equity, null);
 });
 
-test('encrypted partial-runout restart preserves deck, commitment, equity anchor and timing without inventing an action deadline', async t => {
+for (const resumeAt of [1, 2, 3]) test(`encrypted runout restart after ${resumeAt} flop cards preserves deck, commitment, equity anchor and timing`, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-runout-restart-'));
   const store = new EncryptedStore(dir), f = fixture(t, 2, store);
-  f.cmd(0, 'start'); f.act('allin'); f.act('call'); f.nextCard(); store.save();
+  f.cmd(0, 'start'); f.act('allin'); f.act('call'); f.nextCard();
+  if (resumeAt < 3) {
+    // Construct a legacy persisted prefix. Its flop burn and initial equity
+    // lock already exist; resuming must expose the remainder of that flop only.
+    const h = f.room.hand, flop = [...h.board], prior = h.log.pop();
+    h.equityFrames = h.equityFrames.slice(0, 1);
+    for (let count = 1; count <= resumeAt; count++) {
+      h.board = flop.slice(0, count);
+      h.log.push({ ...prior, type: 'runoutCard', seq: prior.seq + count - 1, board: [...h.board] });
+      f.service.recordEquity(h);
+    }
+    h.boardIndices = h.boardIndices.slice(0, resumeAt);
+    h.deckCursor = h.boardIndices.at(-1) + 1;
+    f.room.presentation.boardCount = resumeAt;
+  }
+  store.save();
   const saved = structuredClone(store.data), raw = readFileSync(store.file);
   assert.equal(raw.includes(Buffer.from(JSON.stringify(f.room.hand.deck))), false);
   const recovered = new EncryptedStore(dir);
@@ -152,14 +177,45 @@ test('encrypted partial-runout restart preserves deck, commitment, equity anchor
   const room = app.store.data.rooms[f.room.code];
   assert.equal(room.deadline, null); assert.deepEqual(room.hand, saved.rooms[f.room.code].hand);
   assert.equal(app.service.tick(room, room.hand.runout.nextAt - 1), false);
-  while (room.hand.runout?.active) assert.equal(app.service.tick(room, room.hand.runout.nextAt), true);
+  if (resumeAt < 3) {
+    const burns = [...room.hand.burnIndices];
+    assert.ok(advanceRoomEvent(app.service, room, value => f.advance(value - f.time)));
+    assert.equal(room.hand.board.length, 3); assert.deepEqual(room.hand.burnIndices, burns);
+  }
+  while (room.hand.runout?.active || room.hand.transition) assert.ok(advanceRoomEvent(app.service, room, value => f.advance(value - f.time)));
   f.finish();
   assert.deepEqual(room.hand.board, f.room.hand.board); assert.deepEqual(room.hand.result, f.room.hand.result);
   assert.deepEqual(room.hand.allInEquity, f.room.hand.allInEquity); assert.deepEqual(room.hand.equityFrames, f.room.hand.equityFrames);
   assert.equal(room.hand.audit.root, f.room.hand.audit.root); assert.equal(app.store.data.hands.length, 1);
 });
 
-test('server persists each runout card before SSE, rolls back failed saves, and resumes without duplicate cards or settlement', async t => {
+test('nine all-in players publish one complete flop and only three street equity updates with side pots', t => {
+  const f = fixture(t, 9);
+  for (let i = 1; i < 9; i++) f.cmd(i, 'buyin', { amountBB: 100 + i * 50 });
+  const total = Object.values(f.room.members).reduce((sum, p) => sum + p.stack, 0);
+  f.cmd(0, 'start');
+  for (let i = 0; f.room.hand.actingId; i++) { assert.ok(i < 12); f.act('allin'); }
+  const h = f.room.hand, anchor = structuredClone(h.allInLock), root = h.audit.root;
+  assert.equal(anchor.players.length, 9); assert.ok(anchor.pots.length > 1);
+  for (const count of [3, 4, 5]) {
+    f.nextCard();
+    const state = f.service.state(f.room, f.users[9].id);
+    assert.equal(state.hand.board.length, count); assert.equal(state.hand.equity.board.length, count);
+    assertPrivateState(f, state, f.users[9].id);
+    assert.deepEqual(h.allInLock, anchor); assert.equal(h.audit.root, root);
+    assert.equal(state.actions.canAct, false); assert.equal(f.store.data.hands.length, 0);
+  }
+  assert.deepEqual(h.equityFrames.map(frame => frame.boardCount), [0, 3, 4, 5]);
+  assert.equal(h.transition.nextAt, f.time + 700);
+  f.finish();
+  assert.equal(h.players.reduce((sum, p) => sum + p.stack, 0), total);
+  assert.equal(f.store.data.hands.length, 1); assert.equal(f.store.data.ledger.filter(l => l.type === 'holdem').length, 9);
+  for (const p of h.equityFrames.at(-1).equity.players) assert.equal(p.expectedPayout, h.result.payouts[p.id]);
+  const settled = structuredClone(f.store.data);
+  assert.equal(f.service.tick(f.room), false); assert.deepEqual(f.store.data, settled);
+});
+
+test('server persists each runout street before SSE, rolls back the entire flop on failed saves, and resumes without duplicate cards or settlement', async t => {
   let timestamp = 1800000000000; t.mock.method(Date, 'now', () => timestamp);
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-runout-sse-'));
   const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 20 });
@@ -176,7 +232,18 @@ test('server persists each runout card before SSE, rolls back failed saves, and 
   const created = (await api('/api/rooms', {}, users[0].token)).room, code = created.code;
   await api(`/api/rooms/${code}/join`, { invite: created.invite }, users[1].token);
   const room = () => app.store.data.rooms[code];
-  const command = (i, type, extra = {}) => api(`/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra }, users[i].token);
+  const command = async (i, type, extra = {})  => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room().hand?.actingId) readyRoomAction(app.service, room(), value => { timestamp = value; });
+    const result = await api(`/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra }, users[i].token);
+    // Let the app's real timer commit and publish the delayed settlement.
+    for (let guard = 0; action && room().hand?.transition; guard++) {
+      assert.ok(guard < 100, 'live timer must publish the scheduled transition');
+      timestamp = Math.max(timestamp, room().hand.transition.nextAt);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return result;
+  };
   for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
   const response = await fetch(`${base}/api/events?room=${code}`, { headers: { Authorization: `Bearer ${users[0].token}` }, signal: controller.signal });
   assert.equal(response.status, 200); const reader = response.body.getReader(); let buffer = '';
@@ -190,6 +257,7 @@ test('server persists each runout card before SSE, rolls back failed saves, and 
           if (event.startsWith('data: ')) {
             const state = JSON.parse(event.slice(6));
             if (state.hand) assert.ok(state.hand.board.length <= app.store.read().rooms[code].hand.board.length, 'SSE cannot reveal an uncommitted card');
+            if (state.hand?.runout?.active) assert.ok([0, 3, 4, 5].includes(state.hand.board.length), 'new runouts never publish an intermediate one- or two-card flop');
             if (predicate(state)) return state;
           }
           continue;
@@ -210,14 +278,17 @@ test('server persists each runout card before SSE, rolls back failed saves, and 
   await Promise.race([failed, new Promise((_, reject) => setTimeout(() => reject(new Error('runout save attempt missing')), 3000))]);
   assert.deepEqual(app.store.data, saved); assert.deepEqual(app.store.read(), saved);
   app.store.save = originalSave;
-  const first = await until(s => s.hand?.board.length === 1);
-  assert.equal(first.hand.equity.board.length, 1); assert.equal(room().hand.equityFrames.length, 2);
-  for (let count = 2; count <= 5; count++) {
+  const first = await until(s => s.hand?.board.length === 3);
+  assert.equal(first.hand.equity.board.length, 3); assert.equal(room().hand.equityFrames.length, 2);
+  for (const count of [4, 5]) {
     timestamp = room().hand.runout.nextAt;
     const state = await until(s => s.hand?.board.length === count);
     assert.equal(state.hand.equity.board.length, count);
-    assert.equal(room().hand.equityFrames.length, count + 1);
+    assert.equal(room().hand.equityFrames.length, count - 1);
   }
+  assert.equal(room().hand.transition.kind, 'showdown'); assert.equal(app.store.data.hands.length, 0);
+  timestamp = room().hand.transition.nextAt;
+  await until(state => state.hand?.status === 'complete');
   assert.equal(app.store.data.hands.length, 1); assert.equal(app.store.data.ledger.filter(row => row.type === 'holdem').length, 2);
   assert.deepEqual(app.store.read(), app.store.data);
 });

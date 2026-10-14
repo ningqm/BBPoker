@@ -1,3 +1,4 @@
+import {updateHandCategoryMotion} from '../public/hand-category.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -7,6 +8,8 @@ import * as money from '../public/money.js';
 import {createRequestGuard} from '../public/platform.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import {createTableFeedback} from '../public/table-feedback.js';
+import * as tableScene from '../public/table-scene.js';
+import * as tableControls from '../public/table-controls.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a,start);return source.slice(a,b);}
@@ -23,7 +26,7 @@ function harness(){
     chatDraft:'',chatBusy:false,chatPending:null,chatOpen:false,chatUnread:0,chatMuted:false,reactionsMuted:false,reactions:{},funEffects:[],animations:true,sound:true,modal:null};
   let serial=0;
   const pending=(path,body)=>new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));
-  const context=vm.createContext({...money,lifecycle,state,requests,Date,URLSearchParams,
+  const context=vm.createContext({updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
     api:pending,fetch:(url,options)=>pending(url,options),apiUrl:path=>path,
     FormData:class{constructor(form){this.values=form.values;}get(name){return this.values[name]??null;}},
     document:{visibilityState:'visible',addEventListener:(type,fn)=>listeners.set(type,fn)},navigator:{onLine:true},
@@ -32,7 +35,7 @@ function harness(){
     openModal(title,body,kind='custom'){state.modal={title,body,kind};},closeModal(){state.modal=null;},
     tableInfoModal(){infoPaint.push(clone(state.room));state.modal={kind:'table-info'};},roomMenu(){state.modal={kind:'room-menu'};},
     connectStream(){state.connected=false;},readSettings:()=>({bigBlind:10}),saveExport:async file=>{saved.push(file);return {canceled:false};},navigate:path=>navigated.push(path),
-    fairnessSourceLinks:()=>'',normalizeBetAmount:(_room,n)=>n,
+    fairnessSourceLinks:()=>'',
   });
   vm.runInContext([
     section('const esc=','const fmtDate='),section('const btn=','const avatar='),
@@ -99,15 +102,15 @@ test('old fairness responses cannot overwrite a reopened explanation or dismiss 
     if(fail)c.calls[0].reject(new Error('offline'));else c.calls[0].resolve({summary:['old result']});await pending;assert.equal(c.state.modal,newer);}
 });
 test('nine-player repeated and out-of-order snapshots never duplicate chat, fish, or action feedback',()=>{
-  const c=harness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
+  const c=renderHarness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
   const updated=nineRoom(2);updated.chat=Array.from({length:9},(_,i)=>({id:`m${i}`,playerId:`p${i}`,kind:'emote',emote:'nice',at:new Date().toISOString()}));
   updated.mini.squid.counts.p1=3;updated.players[1].squidCount=3;updated.hand.actionSeq=1;updated.hand.log=[{seq:1,type:'call',playerId:'p2',amount:10}];
-  c.normalizeState(updated);assert.equal(c.state.chatUnread,8);const feedback=c.sounds.filter(s=>s.speech).length;
+  c.normalizeState(updated);assert.equal(c.state.chatUnread,8);const feedback=c.sounds.filter(s=>s.speech).length;assert.equal(feedback,1,'the first live action is audible only after the real render consumes it');
   c.normalizeState(clone(updated));c.normalizeState(initial);assert.equal(c.state.chatUnread,8);assert.equal(c.state.room.revision,2);
   assert.equal(c.state.room.mini.squid.counts.p1,3);assert.equal(c.sounds.filter(s=>s.speech).length,feedback);assert.equal(c.calls.length,0);
 });
 test('nine-player reconnect consumes past throw and action events silently and never mutates fish counts',()=>{
-  const c=harness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
+  const c=renderHarness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
   const restored=nineRoom(8);restored.chat=[{id:'restore-throw',kind:'throw',emote:'pat',playerId:'p2',targetId:'p3',at:new Date().toISOString()}];
   restored.hand.actionSeq=1;restored.hand.log=[{seq:1,type:'raise',playerId:'p2',to:100}];restored.mini.squid.counts.p1=4;restored.players[1].squidCount=4;
   const before=JSON.stringify(restored);c.state.feedbackResync=true;c.normalizeState(restored);c.normalizeState(clone(restored));
@@ -133,6 +136,7 @@ class ViewNode {
   get innerHTML(){return JSON.stringify({text:this.text,children:this.children.map(c=>c.descriptor())});}
   set innerHTML(value){for(const child of [...this.children])child.remove();this.text='';if(!value)return;let data;try{data=JSON.parse(value);}catch{this.text=value;return;}this.text=data.text||'';for(const child of data.children||[])this.insertBefore(new ViewNode(child),null);}
   get isConnected(){return this.parentElement?.isConnected??Boolean(this.root);}
+  getBoundingClientRect(){return {x:0,y:0,left:0,top:0,right:800,bottom:600,width:800,height:600};}
   contains(node){return this===node||this.children.some(c=>c.contains(node));}
   remove(){if(!this.parentElement)return;const list=this.parentElement.children;list.splice(list.indexOf(this),1);this.parentElement=null;}
   insertBefore(node,anchor){if(node===anchor)return;node.remove();const i=anchor?this.children.indexOf(anchor):this.children.length;assert.ok(i>=0);this.children.splice(i,0,node);node.parentElement=this;}
@@ -209,4 +213,66 @@ test('moving to a different room replaces the old toolbar rather than retaining 
   const c=renderHarness(),old=c.app.querySelector('#chat-toggle');c.state.room.code='654321';c.render();
   assert.notEqual(c.app.querySelector('#chat-toggle'),old);assert.equal(old.isConnected,false);
   assert.equal(c.app.querySelector('.room-shell').dataset.room,'654321');
+});
+
+test('deferred audio is consumed silently if a render happens after disconnect, hiding or leaving the table',()=>{
+  for(const transition of ['disconnect','hidden','resync','leave']){
+    const c=renderHarness();c.state.pendingFeedback={eventId:'123456:p0:h1:4',sound:'chip',speech:'raise'};
+    if(transition==='disconnect')c.state.connected=false;
+    if(transition==='hidden')c.context.document.visibilityState='hidden';
+    if(transition==='resync')c.state.feedbackResync=true;
+    if(transition==='leave')c.state.page='welcome';
+    c.render();assert.equal(c.sounds.length,0,transition);assert.equal(c.state.pendingFeedback,null,transition);
+    c.state.page='room';c.state.connected=true;c.state.feedbackResync=false;c.context.document.visibilityState='visible';
+    c.render();assert.equal(c.sounds.length,0,'returning must not replay the skipped action');
+  }
+});
+
+test('real snapshot integration collects all split/side-pot awards once and clears them for the next hand',()=>{
+  const c=renderHarness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
+  const complete=nineRoom(2);Object.assign(complete.hand,{status:'complete',actingId:null,result:{mainWinnerIds:['p0','p1'],payouts:{p0:150,p1:350,p2:100,p3:0}},log:[{seq:1,type:'payout',playerId:'p0',amount:150},{seq:2,type:'payout',playerId:'p1',amount:350},{seq:3,type:'payout',playerId:'p2',amount:100}],actionSeq:3});
+  c.normalizeState(complete);const first=c.state.potMotion;
+  assert.deepEqual(clone(first.awards),[{playerId:'p0',amount:150},{playerId:'p1',amount:350},{playerId:'p2',amount:100}]);
+  c.normalizeState(clone(complete));assert.equal(c.state.potMotion,first,'duplicate state retains original animation age');
+  c.normalizeState(initial);assert.equal(c.state.potMotion,first,'out-of-order state cannot retrigger settlement');
+  const next=nineRoom(3);next.hand.id='h2';next.hand.number=2;c.normalizeState(next);assert.equal(c.state.potMotion,null);
+});
+
+test('settlement received hidden or reconnecting never becomes a collection replay on return',()=>{
+  for(const mode of ['hidden','reconnected']){
+    const c=renderHarness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
+    if(mode==='hidden')c.context.document.visibilityState='hidden';else c.state.feedbackResync=true;
+    const complete=nineRoom(2);Object.assign(complete.hand,{status:'complete',actingId:null,result:{mainWinnerIds:['p1'],payouts:{p1:600}},log:[{seq:1,type:'payout',playerId:'p1',amount:600}],actionSeq:1});
+    c.normalizeState(complete);assert.equal(c.state.potMotion,null,mode);
+    c.context.document.visibilityState='visible';const restored=clone(complete);restored.revision=3;c.normalizeState(restored);
+    assert.equal(c.state.potMotion,null,`${mode}: restored same-hand result is not a new win`);
+  }
+});
+
+test('real room snapshots keep transition, flip and readiness feedback separate even with chat refreshes',()=>{
+ const c=renderHarness(),now=Date.now(),initial=nineRoom();
+ Object.assign(initial.hand,{board:[],actingId:'p1'});initial.serverTime=now;c.state.room=null;c.normalizeState(initial);
+ const tail=clone(initial);tail.revision=2;tail.serverTime=now+1;Object.assign(tail.hand,{actingId:null,transition:{kind:'street',nextAt:now+901},log:[{seq:1,type:'call',playerId:'p1',amount:10}],actionSeq:1});
+ c.normalizeState(tail);assert.equal(c.sounds.filter(s=>s.speech==='call').length,1);assert.equal(c.state.potMotion,null);
+ const chat=clone(tail);chat.revision=3;chat.serverTime=now+500;chat.chat=[{id:'chat',playerId:'p3',kind:'text',text:'好牌',at:new Date(now+500).toISOString()}];c.normalizeState(chat);
+ const flop=clone(chat);flop.revision=4;flop.serverTime=now+901;Object.assign(flop.hand,{board:['As','Kd','2c'],actingId:'p0',actionReadyAt:now+1801,transition:null,log:[...tail.hand.log,{seq:2,type:'street',street:'flop'}],actionSeq:2});flop.actions={canAct:false};
+ c.normalizeState(flop);assert.equal(c.sounds.filter(s=>s.sound==='board').length,1);assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,0);assert.ok(c.state.boardMotion);assert.equal(c.state.motion.actor,null);
+ const ready=clone(flop);ready.revision=5;ready.serverTime=now+1801;ready.actions.canAct=true;c.normalizeState(ready);
+ assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,1);assert.equal(c.sounds.filter(s=>s.speech==='call').length,1);assert.deepEqual(clone(c.state.motion.actions),[]);
+ const ids=c.sounds.filter(s=>s.eventId).map(s=>s.eventId);assert.equal(new Set(ids).size,ids.length);
+ c.normalizeState(clone(ready));assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,1);
+});
+
+test('expired room delivery suppresses all visual and sound effects together and cannot replay them later',()=>{
+ const c=renderHarness(),initial=nineRoom(),now=Date.now();initial.serverTime=now;c.state.room=null;c.normalizeState(initial);
+ const old=clone(initial);old.revision=2;old.serverTime=now-6000;
+ old.chat=[{id:'old-chat',playerId:'p3',kind:'emote',emote:'nice',at:new Date(now).toISOString()}];
+ old.players[1].shownIndices=[0,1];old.players[1].cards=['As','Ah'];
+ Object.assign(old.hand,{status:'complete',board:[...old.hand.board,'Ks','Kh'],actingId:null,result:{mainWinnerIds:['p1'],payouts:{p1:600}},log:[{seq:1,type:'payout',playerId:'p1',amount:600}],actionSeq:1});
+ c.normalizeState(old);
+ for(const field of ['boardMotion','potMotion','revealMotion','motion'])assert.equal(c.state[field],null,field);
+ assert.equal(Object.keys(c.state.reactions).length,0);assert.deepEqual(clone(c.state.funEffects),[]);assert.equal(c.sounds.filter(s=>s.sound||s.speech).length,0);
+ const restored=clone(old);restored.revision=3;restored.serverTime=now;c.normalizeState(restored);
+ for(const field of ['boardMotion','potMotion','revealMotion','motion'])assert.equal(c.state[field],null,field);
+ assert.equal(c.sounds.filter(s=>s.sound||s.speech).length,0);
 });

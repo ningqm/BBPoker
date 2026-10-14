@@ -7,10 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from '../server.js';
 import { verifyProof } from '../src/fairness.js';
 import { verifyExport } from '../scripts/verify-export.mjs';
+import { readyRoomAction } from './helpers/room-clock.js';
 
 async function setup(t) {
+  let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
+  const setTime=value=>{timestamp=value;};
   const dir = mkdtempSync(join(tmpdir(), 'tongzhuo-test-'));
-  let app = createApp({ dataDir: dir, allowGuestSessions: true });
+  let app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const base = () => `http://127.0.0.1:${app.server.address().port}`;
   async function api(user, path, data, expected = 200) {
@@ -22,7 +25,12 @@ async function setup(t) {
   for (const name of ['雨后','山川','南风','旁观']) users.push(await api(null, '/api/session', { name }, 201));
   const room = (await api(users[0], '/api/rooms', { name: '测试朋友局', settings: {} }, 201)).room;
   for (const u of users.slice(1)) await api(u, `/api/rooms/${room.code}/join`, { invite: room.invite });
-  const cmd = (user, type, body = {}, expected = 200) => api(user, `/api/rooms/${room.code}/action`, { type, commandId: randomUUID(), actionSeq: app.store.data.rooms[room.code].hand?.log.length, ...body }, expected);
+  const ready=()=>{readyRoomAction(app.service,app.store.data.rooms[room.code],setTime);app.store.save();};
+  const cmd = async (user, type, body = {}, expected = 200) => {
+    const result=await api(user, `/api/rooms/${room.code}/action`, { type, commandId: randomUUID(), actionSeq: app.store.data.rooms[room.code].hand?.log.length, ...body }, expected);
+    if(type==='start'&&expected===200)ready();
+    return result;
+  };
   const state = user => api(user, `/api/rooms/${room.code}`);
   async function seat(count = 3, amount = 1000) {
     for (let seat = 0; seat < count; seat++) {
@@ -36,6 +44,7 @@ async function setup(t) {
     let s = await state(users[0]), safety = 0;
     while (s.hand.status === 'playing') {
       assert.ok(++safety < 60);
+      ready();s=await state(users[0]);if(s.hand.status!=='playing')break;
       const actor = users.find(u => u.user.id === s.hand.actingId);
       const self = await state(actor);
       const type = actor.user.id === targetId ? self.actions.canCheck ? 'check' : 'call' : 'fold';
@@ -44,7 +53,7 @@ async function setup(t) {
     return s;
   }
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { api, users, room, cmd, state, seat, win, dir, base, get app() { return app; }, async restart() { await app.close(); app = createApp({ dataDir: dir, allowGuestSessions: true }); await new Promise(r => app.server.listen(0, '127.0.0.1', r)); } };
+  return { api, users, room, cmd, state, seat, win, dir, base, get app() { return app; }, async restart() { await app.close(); app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 }); await new Promise(r => app.server.listen(0, '127.0.0.1', r)); } };
 }
 
 test('invite, instant seating, game, selective proofs, voluntary show and all export formats work end to end', async t => {

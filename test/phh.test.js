@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -52,7 +53,8 @@ function fixtures() {
   return [hu, folded, partial, side, sparse, blindOnly];
 }
 
-async function recoveredHistory() {
+async function recoveredHistory(t) {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const directory = mkdtempSync(join(tmpdir(), 'tongzhuo-phh-recovery-'));
   let app = createApp({ dataDir: directory });
   try {
@@ -75,12 +77,13 @@ async function recoveredHistory() {
     room = app.service.room(code);
     assert.deepEqual(room.hand.log, beforeLog);
     const checkOrCall = () => {
+      if (!readyRoomAction(app.service, room, value => { clock = value; })) return;
       const actor = users.find(u => u.id === room.hand.actingId);
       command(actor, availableActions(room.hand, actor.id).canCheck ? 'check' : 'call');
     };
-    while (room.hand.street === 'preflop') checkOrCall();
-    assert.equal(app.service.timeout(room, room.deadline + 1), true);
-    while (room.hand.status === 'playing') checkOrCall();
+    for (let step = 0; room.hand.street === 'preflop'; step++) { assert.ok(step < 30, JSON.stringify({status:room.hand.status, transition:room.hand.transition,presentation:room.presentation,clock,actor:room.hand.actingId})); checkOrCall(); readyRoomAction(app.service, room, value => { clock = value; }); }
+    clock = room.deadline + 1; assert.equal(app.service.timeout(room, clock), true);
+    for (let step = 0; room.hand.status === 'playing'; step++) { assert.ok(step < 40, JSON.stringify({status:room.hand.status,transition:room.hand.transition,presentation:room.presentation,clock})); checkOrCall(); }
     return app.service.exports(users[0].id, code)[0];
   } finally {
     await app.close();
@@ -88,8 +91,8 @@ async function recoveredHistory() {
   }
 }
 
-test('real server recovery and RoomService timeout markers do not change exported poker actions', async () => {
-  const hand = await recoveredHistory();
+test('real server recovery and RoomService timeout markers do not change exported poker actions', async t => {
+  const hand = await recoveredHistory(t);
   assert.ok(!hand.log.some(a => a.type === 'reconnect'));
   assert.ok(hand.log.some(a => a.type === 'timeout'));
   const plain = structuredClone(hand);
@@ -160,8 +163,8 @@ test('PHH rejects missing positions, ambiguous all-ins, duplicate visible cards 
 
 test('optional independent PokerKit parser replays real examples to identical hold\'em ending stacks', {
   skip: !process.env.POKERKIT_PYTHON && 'Set POKERKIT_PYTHON to an isolated Python interpreter with PokerKit installed.',
-}, async () => {
-  const hands = [...fixtures(), await recoveredHistory()];
+}, async t => {
+  const hands = [...fixtures(), await recoveredHistory(t)];
   hands[0].players[0].name = '名字"\n[9]\nvariant = "PO"\u007f';
   const incomplete = structuredClone(hands[0]); incomplete.id = 'incomplete';
   incomplete.players[0].cards = [incomplete.players[0].cards[0], null];

@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../server.js';
+import { readyRoomAction } from './helpers/room-clock.js';
 
 test('authenticated statistics share a settled cohort across rooms, dates, latest-hand caps and all-in side-pot expectations', async t => {
   const today = Date.parse('2026-10-13T10:00:00.000Z'), day = 86400000;
@@ -26,6 +27,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   for (let i = 1; i <= 3; i++) await ok(`/api/rooms/${code}/join`, users[i].token, { invite: created.invite });
   let roomCode = code;
   const room = () => app.store.data.rooms[roomCode];
+  const ready=()=>{readyRoomAction(app.service,room(),value=>{timestamp=value;});app.store.save();};
   const command = (i, type, extra = {}) => ok(`/api/rooms/${roomCode}/action`, users[i].token, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra });
   for (let i = 0; i < 3; i++) await command(i, 'sit', { seat: i, amountBB: [100, 200, 400][i] });
 
@@ -39,7 +41,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   });
 
   for (const member of Object.values(room().members).filter(m => m.seat !== null)) app.service.connections.set(`${roomCode}:${member.id}`, 1);
-  await command(0, 'start');
+  await command(0, 'start');ready();
   while (room().hand.actingId) {
     const actor = users.findIndex(u => u.user.id === room().hand.actingId);
     const actions = app.service.state(room(), users[actor].user.id).actions;
@@ -48,14 +50,20 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   const lock = structuredClone(room().hand.allInEquity);
   assert.equal(room().hand.allInLock.pots.length, 2);
   await t.test('pending all-in wagers and runout frames do not enter completed statistics early', async () => {
-    for (let board = 0; board < 5; board++) {
+    for (const board of [0, 3, 4, 5]) {
       assert.equal(room().hand.board.length, board);
       const stats = await ok('/api/stats', users[0].token);
       assert.equal(stats.hands, 0); assert.equal(stats.net, 0); assert.equal(stats.allIn.count, 0); assert.equal(stats.allIn.expectedNet, null);
-      timestamp = room().hand.runout.nextAt;
-      assert.equal(app.service.tick(room(), timestamp), true); app.store.save();
+      assert.equal(app.store.data.hands.length, 0, 'public runout cards do not commit a completed statistics record');
+      if (board < 5) {
+        timestamp = room().hand.runout.nextAt;
+        assert.equal(app.service.tick(room(), timestamp), true); app.store.save();
+      }
     }
   });
+  assert.equal(room().hand.transition?.kind,'showdown');
+  assert.equal((await ok('/api/stats',users[0].token)).hands,0,'Final river reveal is not a completed result');
+  ready();
   const oldHand = structuredClone(app.store.data.hands[0]);
   await t.test('settled actual and saved per-side-pot expected profit use the same players and cost basis', async () => {
     const results = [];
@@ -84,7 +92,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   await ok(`/api/rooms/${roomCode}/join`, users[1].token, { invite: fresh.invite });
   for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
   for (const member of Object.values(room().members).filter(m => m.seat !== null)) app.service.connections.set(`${roomCode}:${member.id}`, 1);
-  await command(0, 'start'); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'fold');
+  await command(0, 'start');ready(); await command(users.findIndex(u => u.user.id === room().hand.actingId), 'fold');ready();
   const latest = structuredClone(app.store.data.hands[1]);
   await t.test('periods, custom dates, room scope and latest-hand limits consistently filter profits and all-in coverage', async () => {
     const recent = latest.players.find(p => p.id === me), recentNet = recent.stack - recent.startingStack;

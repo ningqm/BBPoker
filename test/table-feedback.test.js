@@ -73,7 +73,7 @@ test('board and winner cues combine meaningful animations but select only one so
   const log = [...blindLog, { seq: 3, type: 'call', playerId: 'b', amount: 5 }, { seq: 4, type: 'street', street: 'flop' }];
   const board = ['Ac', 'Kd', '2s'];
   const next = tracker.update(room({ revision: 2, log, board, actor: 'a' }));
-  assert.equal(next.sound, 'yourturn');
+  assert.equal(next.sound, 'board');
   assert.deepEqual(next.animations.find(event => event.type === 'board'), { type: 'board', from: 0 });
   const end = tracker.update(room({ revision: 3, log: [...log, { seq: 5, type: 'fold', playerId: 'a' }, { seq: 6, type: 'payout', playerId: 'b', amount: 20 }], board, actor: null, status: 'complete', result: { mainWinnerIds: ['b'] } }));
   assert.equal(end.sound, 'win');
@@ -150,7 +150,8 @@ test('sounds require an explicit gesture unlock and enabled preference; hidden s
   assert.equal(sounds.play('deal'), true);
   assert.equal(sounds.play('win'), false, 'rapid duplicate is not stacked');
   now += 200;
-  assert.equal(sounds.play('chip'), true);
+  assert.equal(sounds.play('chip'), false, 'without a decoded chip asset there is no fabricated fallback sound');
+  assert.equal(sounds.play('check'), true);
   fixture.doc.visibilityState = 'hidden'; fixture.listeners.get('visibilitychange')();
   assert.equal(sounds.play('win'), false);
   assert.ok(fixture.stats.suspended && fixture.stats.disconnected);
@@ -186,4 +187,55 @@ test('unsupported or blocked Web Audio and an interrupted unlock fail quietly', 
   assert.equal(await pending, false);
   assert.equal(delayed.play('deal'), false);
   delayed.dispose();
+});
+
+test('last action, street reveal and readiness are separate once-only feedback phases', () => {
+  const tracker = createTableFeedback(), now = 100000;
+  const base = room({actor:'b'}); base.serverTime = now;
+  tracker.update(base, {now});
+  const tail = room({revision:2,actor:null,log:[...blindLog,{seq:3,type:'call',playerId:'b',amount:5,street:'preflop'}]});
+  tail.serverTime=now+1;tail.hand.transition={kind:'street',nextAt:now+901};tail.deadline=null;tail.actions={canAct:false};
+  const last = tracker.update(tail,{now:now+1});
+  assert.equal(last.sound,'chip');assert.equal(last.speech,'call');
+  assert.deepEqual(last.animations,[{type:'action',playerId:'b',action:'call',seq:3}]);
+  quiet(tracker.update({...tail,revision:3,serverTime:now+500,chat:[{id:'chat'}]},{now:now+500}));
+  const flop=room({revision:4,actor:'a',board:['Ac','Kd','2s'],log:[...tail.hand.log,{seq:4,type:'street',street:'flop'}]});
+  flop.serverTime=now+901;flop.hand.actionReadyAt=now+1801;flop.actions={canAct:false};
+  const flip=tracker.update(flop,{now:now+901});
+  assert.equal(flip.sound,'board');assert.equal(flip.speech,undefined);assert.equal(flip.chips,undefined);
+  assert.deepEqual(flip.animations,[{type:'board',from:0}]);
+  quiet(tracker.update({...flop,revision:5,serverTime:now+1300},{now:now+1300}));
+  const ready={...flop,revision:6,serverTime:now+1801,actions:{canAct:true}};
+  const turn=tracker.update(ready,{now:now+1801});
+  assert.equal(turn.sound,'yourturn');assert.equal(turn.speech,undefined);assert.equal(turn.chips,undefined);
+  assert.deepEqual(turn.animations,[{type:'turn',playerId:'a'}]);
+  assert.notEqual(turn.eventId,flip.eventId,'ready must survive audio event deduplication');
+  quiet(tracker.update(ready,{now:now+1802}));
+  quiet(tracker.update({...ready,revision:7,serverTime:now+2000},{now:now+2000}));
+});
+
+test('reconnected or late readiness states do not replay a prior street, chips, or turn', () => {
+  for(const mode of ['reconnected','hidden','delayed']){
+    const tracker=createTableFeedback(),now=100000;
+    const before=room({actor:null});before.serverTime=now;before.hand.transition={kind:'street',nextAt:now+900};
+    tracker.update(before,{now});
+    const ready=room({revision:2,board:['Ac','Kd','2s'],log:[...blindLog,{seq:3,type:'street',street:'flop'}]});
+    ready.hand.actionReadyAt=now+1800;ready.actions={canAct:true};ready.serverTime=now+1800;
+    const options=mode==='reconnected'?{reconnected:true}:mode==='hidden'?{visible:false}:{};
+    quiet(tracker.update(ready,{now:mode==='delayed'?now+8000:now+1800,...options}));
+    quiet(tracker.update({...ready,revision:3,serverTime:now+8001},{now:now+8001}));
+  }
+});
+
+test('river reveal metadata and chat do not replay tail call or announce a win before payouts', () => {
+  const tracker=createTableFeedback(),board=['Ac','Kd','2s','3h','4c'];
+  const base=room({actor:'b',board});tracker.update(base);
+  const tail=room({revision:2,actor:null,board,log:[...blindLog,{seq:3,type:'call',playerId:'b',amount:10,street:'river'}]});
+  tail.hand.transition={kind:'showdown',nextAt:900,revealed:false};
+  assert.equal(tracker.update(tail).speech,'call');
+  const shown=structuredClone(tail);shown.revision=3;shown.hand.transition={kind:'showdown',nextAt:1600,revealed:true};shown.players=[{id:'a',cards:['As','Ah']}];
+  quiet(tracker.update(shown));quiet(tracker.update({...shown,revision:4,chat:[{id:'x'}]}));
+  const won=room({revision:5,actor:null,board,status:'complete',log:[...tail.hand.log,{seq:4,type:'payout',playerId:'a',amount:30}],result:{mainWinnerIds:['a']}});
+  const result=tracker.update(won);assert.equal(result.sound,'win');assert.equal(result.speech,undefined);assert.equal(result.chips,undefined);
+  assert.deepEqual(result.animations,[{type:'win',playerIds:['a']}]);quiet(tracker.update(won));
 });

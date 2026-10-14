@@ -272,3 +272,12 @@ test('old ordinary history stays readable and missing fish snapshots never inven
   const hand=basic();hand.squidRound=1;let html=renderHandOverview(hand,'a');assert.match(html,/普通鱿鱼 · 第 1 轮/);assert.doesNotMatch(html,/ho-fish-count|ho-fish-summary/);
   hand.squidMode='unlimited';hand.squidTokenBudget=12;hand.squidCounts={a:NaN,b:-1};html=renderHandOverview(hand,'a');assert.doesNotMatch(html,/ho-fish-count|ho-fish-summary|NaN/);
 });
+
+
+test('grouped all-in runout labels distinguish the three-card flop, turn and river',()=>{
+  const hand=basic();hand.board.push('7s','9h');hand.log=[
+    {type:'allInLock',street:'preflop',board:[]},
+    ...['flop','turn','river'].map((street,i)=>({type:'runoutCard',street,board:hand.board.slice(0,i+3)})),
+  ];
+  const html=renderHandOverview(hand,'a');assert.match(html,/跑牌 · 发出翻牌（三张）/);assert.match(html,/跑牌 · 发出转牌/);assert.match(html,/跑牌 · 发出河牌/);assert.doesNotMatch(html,/跑牌 · 发出一张公共牌/);
+});

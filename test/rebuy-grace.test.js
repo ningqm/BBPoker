@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { RoomService, settingsFor } from '../src/room.js';
 import { createHand } from '../src/poker.js';
 import { commitDeck } from '../src/fairness.js';
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 
 function fixture(t, { count = 4, settings = {} } = {}) {
   let time = 1800000000000;
@@ -23,22 +24,23 @@ function fixture(t, { count = 4, settings = {} } = {}) {
     const rest = [...'cdhs'].flatMap(s => [...'23456789TJQKA'].map(r => r + s)).filter(card => !deck.includes(card));
     for (let i = 0; i < deck.length; i++) if (!deck[i]) deck[i] = rest.shift();
     Object.assign(h, createHand({ id: h.id, players: h.players.map(p => ({ id: p.id, name: p.name, seat: p.seat, stack: p.startingStack })),
-      buttonSeat: h.buttonSeat, smallBlind: h.smallBlind, bigBlind: h.bigBlind, deck, deferredRunout: true }));
+      buttonSeat: h.buttonSeat, smallBlind: h.smallBlind, bigBlind: h.bigBlind, deck, deferredRunout: true, deferredTransitions: true }));
     h.audit = commitDeck(h);
   }
   function bust(indices = [1], onRunout = () => {}) {
     start(); let steps = 0, notified = false;
     while (room.hand.status === 'playing') {
       assert.ok(++steps < 30);
-      if (room.hand.runout?.active) { if (!notified) { onRunout(); notified = true; } time = room.hand.runout.nextAt; service.tick(room, time); }
-      else { const i = users.findIndex(u => u.id === room.hand.actingId); command(i, i === 0 || indices.includes(i) ? 'allin' : 'fold'); }
+      if (room.hand.runout?.active) { if (!notified) { onRunout(); notified = true; } advanceRoomEvent(service, room, value => { time = value; }); }
+      else if (room.hand.transition) advanceRoomEvent(service, room, value => { time = value; });
+      else { readyRoomAction(service, room, value => { time = value; }); const i = users.findIndex(u => u.id === room.hand.actingId); command(i, i === 0 || indices.includes(i) ? 'allin' : 'fold'); }
     }
     assert.deepEqual(room.hand.players.filter(p => p.stack === 0).map(p => p.seat), indices);
     return time;
   }
   const connect = (i, online) => { service.connections.set(`${room.code}:${users[i].id}`, online ? 1 : 0); service.connectionChanged(room, time, { reconnected: online }); };
   const state = i => service.state(room, users[i].id);
-  return { users, store, service, room, command, advance, start, bust, connect, state, get time() { return time; } };
+  return { users, store, service, room, command, advance, start, bust, connect, state, ready: () => readyRoomAction(service, room, value => { time = value; }), get time() { return time; } };
 }
 
 test('new and copied table settings use fixed 20-second actions', t => {
@@ -46,7 +48,8 @@ test('new and copied table settings use fixed 20-second actions', t => {
   for (const value of [15, 20, 30, 90, 14, 91, 30.5]) assert.equal(settingsFor({ actionSeconds: value }).actionSeconds, 20);
   assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 30 }).actionSeconds, 20);
   assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 15 }).actionSeconds, 20);
-  const f = fixture(t, { settings: { actionSeconds: 15 } }); f.start(); assert.equal(f.room.deadline, f.time + 20000);
+  const f = fixture(t, { settings: { actionSeconds: 15 } }); f.start(); assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 20000);
+  assert.equal(f.room.presentation.actionReadyAt, f.time + 1100);
 });
 
 test('a freshly busted seated player gets exactly one shared extra five seconds and is skipped after its deadline', t => {
@@ -200,7 +203,7 @@ test('showdown reveals only dealt live contenders and repeated public projection
 test('shownIndices reports only authoritative reveals, never a viewer merely seeing their own cards', t => {
   const f = fixture(t); f.start();
   for (const i of [0, 1]) assert.deepEqual(f.state(i).players.find(p => p.id === f.users[i].id).shownIndices, []);
-  while (f.room.hand.status === 'playing') f.command(f.users.findIndex(u => u.id === f.room.hand.actingId), 'fold');
+  while (f.ready()) f.command(f.users.findIndex(u => u.id === f.room.hand.actingId), 'fold');
   const folder = f.room.hand.players.find(p => p.folded), i = f.users.findIndex(u => u.id === folder.id);
   f.command(i, 'show', { indices: [1] });
   const own = f.state(i).players.find(p => p.id === folder.id), peer = f.state(5).players.find(p => p.id === folder.id);

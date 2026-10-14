@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -23,11 +24,14 @@ function fixture(t, settings = {}, buyins = Array(9).fill(100)) {
   f.id = i => users[i].id;
   f.member = i => f.room.members[f.id(i)];
   f.cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && f.room.hand?.actingId) readyRoomAction(f.service, f.room, value => { time = value; });
     const q = f.room.mini.squid, part = q.active && q.participants.includes(f.id(i));
-    return f.service.command(users[i], f.room.code, { type, commandId: randomUUID(), handId: f.room.hand?.id, actionSeq: f.room.hand?.log.length,
+    const result = f.service.command(users[i], f.room.code, { type, commandId: randomUUID(), handId: f.room.hand?.id, actionSeq: f.room.hand?.log.length,
       ...(['stand', 'sitout'].includes(type) ? { expectedSquidRound: part ? q.round : 0, expectedSquidCost: part && !q.won.includes(f.id(i)) ? (q.mode === 'unlimited' ? q.tokenBudget * q.unit : 160) : 0 } : {}), ...extra });
-  };
-  f.connect = (i, value) => { f.service.connections.set(`${f.room.code}:${f.id(i)}`, value ? 1 : 0); f.service.connectionChanged(f.room, time, { reconnected: value }); };
+    if (action) while (f.room.hand?.transition) assert.ok(advanceRoomEvent(f.service, f.room, value => { time = value; }));
+    return result;
+  };  f.connect = (i, value) => { f.service.connections.set(`${f.room.code}:${f.id(i)}`, value ? 1 : 0); f.service.connectionChanged(f.room, time, { reconnected: value }); };
   f.start = () => { f.service.start(f.room, time, { automatic: true }); return f.room.hand; };
   f.win = i => {
     for (let n = 0; f.room.hand.status === 'playing'; n++) {
@@ -98,7 +102,13 @@ test('nine-player oracle: marked leaver still receives while two absent unmarked
   const f = fixture(t); f.win(0); f.cmd(0, 'stand'); const cash = f.member(0).cashedOut;
   f.connect(7, false); f.connect(8, false);
   const absentBalances = [f.member(7).stack, f.member(8).stack];
-  f.cmd(9, 'sit', { seat: 0, amountBB: 100 }); f.connect(9, true);
+  // Keep the tenth identity observing: this case audits the original nine
+  // participants' absent settlement, not the old assumption that a seated
+  // newcomer can never enter an ongoing round. Mid-round admission is covered
+  // independently in squid-midround-oracle.test.js.
+  f.connect(9, true);
+  assert.equal(f.member(9).seat, null);
+  assert.equal(f.member(9).totalBuyIn, 0);
   for (let i = 1; i < 7; i++) {
     f.start(); assert.ok(f.room.hand.players.every(p => ![f.id(0), f.id(7), f.id(8), f.id(9)].includes(p.id)));
     f.win(i);

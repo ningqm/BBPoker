@@ -33,7 +33,7 @@ test('ordinary-client bot hosts, plays two hands, survives stream loss and close
   const f = await fixture(t), events = [];
   let client;
   client = new PracticeBotClient({ baseUrl: f.baseUrl, token: f.bot.token, roomCode: f.room.code,
-    thinkMs: 15, maxRunMs: 35000, decideAction,
+    thinkMs: 15, maxRunMs: 35000, maxShutdownMs: 1500, decideAction,
     onEvent: event => { events.push(event); if (event.type === 'hand_complete' && events.filter(e => e.type === 'hand_complete').length >= 2) client.stop(); } });
   const running = client.run();
   t.after(() => client.stop());
@@ -50,7 +50,9 @@ test('ordinary-client bot hosts, plays two hands, survives stream loss and close
     if (view.status === 'closed') break;
     if (view.hand?.status === 'playing') {
       const opponent = view.players.find(player => player.id === f.bot.user.id);
-      if (!view.hand.runout?.active) { assert.ok(opponent.cards.every(card => card === null)); hiddenCardsChecked = true; }
+      const publicShowdown=view.hand.transition?.kind==='showdown'&&view.hand.transition.revealed;
+      if (!view.hand.runout?.active&&!publicShowdown) { assert.ok(opponent.cards.every(card => card === null)); hiddenCardsChecked = true; }
+      else if(!opponent.folded)assert.equal(opponent.cards.filter(Boolean).length,2,'A contender is visible only during public runout/showdown');
       if (!broken) {
         // Test transport recovery only, never rewrite game/deck state.
         assert.ok(client.streamController);
@@ -103,4 +105,19 @@ test('persistent network failure has a bounded local shutdown and never claims t
   const result = await client.run();
   assert.equal(result.reason, 'shutdown_timeout'); assert.equal(result.closed, false);
   assert.ok(requests < 10, 'Network errors must not cause a retry flood');
+});
+
+test('the bot waits for transition and authoritative reveal readiness, including when its action sequence is unchanged',()=>{
+ const client=new PracticeBotClient({baseUrl:'http://127.0.0.1',token:'synthetic-test-token',roomCode:'123456',decideAction});
+ const now=Date.now();
+ const room={code:'123456',meId:'bot',hostId:'bot',access:'invite',settings:{maxPlayers:2},players:[{id:'bot',seat:0}],status:'playing',revision:1,serverTime:now,
+  hand:{id:'h1',status:'playing',actingId:'bot',actionSeq:5,actionReadyAt:now+900},deadline:now+20900,actions:{canAct:false}};
+ client.accept(room);const key=client.actionKey();assert.equal(client.canAct(key),false);
+ client.accept({...room,revision:2,actions:{canAct:true}});assert.equal(client.canAct(key),false,'No action while cards are still flipping');
+ const ready={...room,revision:3,serverTime:now+900,actions:{canAct:true}};client.accept(ready);assert.equal(client.canAct(key),true);
+ for(const kind of ['street','showdown','award']){
+  client.accept({...ready,revision:++ready.revision,hand:{...ready.hand,transition:{kind,nextAt:now+1800}}});
+  assert.equal(client.canAct(key),false,'No action in '+kind+' even if an old actor survived');
+ }
+ client.accept({...ready,revision:++ready.revision,hand:{...ready.hand,runout:{active:true}}});assert.equal(client.canAct(key),false);
 });

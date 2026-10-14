@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { RoomService } from '../src/room.js';
@@ -108,14 +109,17 @@ test('all history modules follow the selected unit and preserve counts, threshol
   }
 });
 
-test('legacy replay projection preserves a top-level historical BB without revealing hidden cards or current stakes', () => {
+test('legacy replay projection preserves a top-level historical BB without revealing hidden cards or current stakes', t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const f = fixture();
   for (const [seat, user] of Object.values(f.db.users).entries()) {
     f.service.command(user, f.room.code, { type: 'sit', seat, amount: 1000, commandId: randomUUID() });
     f.service.connections.set(`${f.room.code}:${user.id}`, 1);
   }
   f.service.start(f.room);
+  readyRoomAction(f.service, f.room, value => { clock = value; });
   f.service.command(f.db.users[f.room.hand.actingId], f.room.code, { type: 'fold', commandId: randomUUID(), handId: f.room.hand.id, actionSeq: f.room.hand.log.length });
+  readyRoomAction(f.service, f.room, value => { clock = value; });
   const stored = f.db.hands.at(-1), archivedBB = stored.bigBlind;
   delete stored.settings; f.room.settings.bigBlind = 999;
   setDisplayUnit('bb');

@@ -57,6 +57,23 @@ test('hand evaluator: every category, wheel, two trips, kickers, and board-only 
   assert.throws(() => evaluate(['As', 'As', 'Kh', 'Qh', 'Jh']), /不重复/);
 });
 
+test('royal flush has a distinct display name without changing straight-flush strength', () => {
+  for (const cards of ['As Ks Qs Js Ts', 'Ah Kh Qh Jh Th 2c', 'Ad Kd Qd Jd Td 2c 3s']) {
+    assert.deepEqual(evaluate(cards.split(' ')), { tuple: [8, 14], name: '皇家同花顺' });
+  }
+  assert.deepEqual(evaluate('Ks Qs Js Ts 9s'.split(' ')), { tuple: [8, 13], name: '同花顺' });
+  assert.deepEqual(evaluate('As 2s 3s 4s 5s'.split(' ')), { tuple: [8, 5], name: '同花顺' });
+  assert.equal(evaluate('As Ks Qs Js Th'.split(' ')).name, '顺子');
+  assert.equal(evaluate('As Ks Qs Js 9s'.split(' ')).name, '同花');
+  // A board-only royal still ties and splits the pot equally.
+  const h = hand([100, 100], { deck: deck('2c 3c 4d 5d 6c As Ks Qs 7c Js 8c Ts'.split(' ')) });
+  checkDown(h);
+  assert.equal(h.result.showdown, true);
+  assert.deepEqual(h.result.handNames, { '0': '皇家同花顺', '1': '皇家同花顺' });
+  assert.deepEqual(h.result.payouts, { '0': 10, '1': 10 });
+  conserved(h);
+});
+
 test('shuffle always supplies the entire unique standard deck', () => {
   const outcomes = new Set();
   for (let i = 0; i < 100; i++) {

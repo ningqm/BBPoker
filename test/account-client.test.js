@@ -2,6 +2,8 @@ import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
+import * as tableScene from '../public/table-scene.js';
+import * as tableControls from '../public/table-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -31,7 +33,7 @@ const clientSource = [
 function harness() {
   const calls = [], writes = [], toasts = [], timers = new Map(), modals = [], cleared = [], rendered = [];
   let timerId = 0, client, avatarPatch={};
-  const context = vm.createContext({funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
+  const context = vm.createContext({...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard, AbortController, TextDecoder, Uint8Array, URLSearchParams, avatarMarkup,avatarEditorMarkup,createAvatarCache,
     $:()=>({}),createAvatarEditor:()=>({patch:()=>avatarPatch,setSaving(){},setError(){},destroy(){}}),
     apiUrl: p => `https://poker.test${p}`,

@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +18,13 @@ function fixture(t, settings = {}) {
   f.service = new RoomService(f.store);
   f.room = f.service.create(users[0], { settings: { smallBlind: 1, bigBlind: 2, maxPlayers: 5, squid: true, squidUnitBB: 1, ...settings } });
   for (const user of users.slice(1)) f.service.join(user, f.room.code, f.room.invite);
-  f.cmd = (i, type, extra = {}) => f.service.command(users[i], f.room.code, { type, commandId: randomUUID(), handId: f.room.hand?.id, actionSeq: f.room.hand?.log.length, ...extra });
+  f.cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && f.room.hand?.actingId) readyRoomAction(f.service, f.room, value => { time = value; });
+    const result = f.service.command(users[i], f.room.code, { type, commandId: randomUUID(), handId: f.room.hand?.id, actionSeq: f.room.hand?.log.length, ...extra });
+    if (action) while (f.room.hand?.transition) assert.ok(advanceRoomEvent(f.service, f.room, value => { time = value; }));
+    return result;
+  };
   f.consent = i => ({ expectedSquidRound: f.room.mini.squid.round, expectedSquidCost: f.room.mini.squid.won.includes(users[i].id) ? 0 : 6 });
   f.connect = (i, online) => { f.service.connections.set(`${f.room.code}:${users[i].id}`, online ? 1 : 0); f.service.connectionChanged(f.room, time, { reconnected: online }); };
   f.win = winner => {
@@ -61,7 +68,7 @@ test('pause oracle: a pre-upgrade in-progress squid hand retains its original el
   assert.deepEqual(f.room.mini.squid.won, [f.users[2].id]); assert.equal(rows(f).length, 0); conserved(f);
 });
 
-test('continuity oracle: newcomers wait outside the fixed round while original players continue and reconnect', t => {
+test('continuity oracle: newcomer admission adds responsibility once while originals reconnect', t => {
   const f = fixture(t); f.win(0); f.connect(3, false);
   f.cmd(4, 'sit', { seat: 4, amountBB: 100 }); f.connect(4, true);
   const before = roundSnapshot(f), due = f.room.nextHandAt;
@@ -69,22 +76,25 @@ test('continuity oracle: newcomers wait outside the fixed round while original p
   f.advance(due - f.time); f.service.tick(f.room, f.time);
   assert.equal(f.room.hand.status, 'playing'); assert.equal(f.room.hand.settings.squid, true);
   assert.equal(f.room.hand.squidRound, before.round);
-  assert.deepEqual(f.room.hand.players.map(p => p.id), [0, 1, 2].map(i => f.users[i].id));
+  assert.deepEqual(f.room.hand.players.map(p => p.id), [0, 1, 2, 4].map(i => f.users[i].id));
   const hand = structuredClone(f.room.hand); f.connect(3, true);
   assert.deepEqual(f.room.hand, hand, 'reconnecting cannot join or change the current hand contract');
   f.win(1); assert.deepEqual(f.room.mini.squid.won, [f.users[0].id, f.users[1].id]);
-  assert.deepEqual(f.room.mini.squid.reserves, before.reserves); assert.equal(rows(f).length, 0); conserved(f);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],6);
+  for(const i of [1,2,3,4])assert.equal(f.room.mini.squid.reserves[f.users[i].id],8);
+  assert.equal(rows(f).length, 0); conserved(f);
   assert.equal(aggregateAnalytics(f.store.data, f.users[4].id).miniNet, 0);
-  assert.equal(aggregateAnalytics(f.store.data, f.users[4].id).hands, 0, 'waiting is not a played hand');
+  assert.equal(aggregateAnalytics(f.store.data, f.users[4].id).hands, 1, 'only the actual admission hand counts');
   f.cmd(3, 'entryBlind', { mode: 'post' });
   let returned = false;
   for (let i = 0; i < 6; i++) {
     f.start(); assert.equal(f.room.hand.squidRound, before.round);
-    assert.ok(f.room.hand.players.every(p => before.participants.includes(p.id)));
+    assert.ok(f.room.hand.players.every(p => [...before.participants,f.users[4].id].includes(p.id)));
     if (f.room.hand.players.some(p => p.id === f.users[3].id)) { returned = true; f.win(3); break; }
     f.win(0);
   }
-  assert.equal(returned, true); assert.equal(f.room.mini.squid.active, false); conserved(f);
+  assert.equal(returned, true);assert.equal(f.room.mini.squid.active,true);
+  f.start();f.win(4);assert.equal(f.room.mini.squid.active,false);assert.equal(rows(f).length,5);conserved(f);
 });
 
 test('continuity oracle: an original outside the hand may stand immediately without injecting fish transfers into live stacks', t => {
@@ -123,8 +133,10 @@ test('continuity oracle: insufficient-player grace observes the running hand but
   // Keep the hand legitimately live across the independent 90-second squid
   // grace: three fixed time cards extend this actor's 20-second turn to 110.
   const actor = f.users.findIndex(u => u.id === f.room.hand.actingId);
+  readyRoomAction(f.service, f.room, value => f.advance(value - f.time));
   for (let n = 0; n < 3; n++) f.cmd(actor, 'timebank');
-  assert.equal(f.room.deadline, f.time + 110000);
+  assert.equal(f.room.presentation.actionReadyAt, f.time);
+  assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 110000);
   assert.equal(f.room.members[f.users[actor].id].timeBank.remaining, 3);
   for (const i of [0, 2, 3]) f.connect(i, false);
   const before = roundSnapshot(f), since = f.room.mini.squid.blockerSince;

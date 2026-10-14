@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { RoomService } from '../src/room.js';
 import { availableActions } from '../src/poker.js';
+import { readyRoomAction } from './helpers/room-clock.js';
 
 function fixture(t, { count = 2, settings = {}, stacks = [] } = {}) {
-  const time = 1800000000000; t.mock.method(Date, 'now', () => time);
+  let time = 1800000000000; t.mock.method(Date, 'now', () => time);
   const users = Array.from({ length: count }, (_, i) => ({ id: `bb-player-${i}`, name: `朋友${i}` }));
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store), room = service.create(users[0], { settings });
@@ -17,14 +18,15 @@ function fixture(t, { count = 2, settings = {}, stacks = [] } = {}) {
     service.connections.set(`${room.code}:${user.id}`, 1);
   }
   command(0, 'start');
+  const ready = () => readyRoomAction(service, room, value => { time = value; }); ready();
   const act = (type, extra = {}) => command(users.findIndex(u => u.id === room.hand.actingId), type, extra);
-  return { service, store, room, users, command, act, time };
+  return { service, store, room, users, command, act, ready, get time() { return time; } };
 }
 
 test('new room action clock is fixed at 20 seconds despite obsolete client values', t => {
-  const f = fixture(t); assert.equal(f.room.deadline, f.time + 20000);
-  f.act('call'); assert.equal(f.room.deadline, f.time + 20000);
-  const old = fixture(t, { settings: { actionSeconds: 30 } }); assert.equal(old.room.deadline, old.time + 20000);
+  const f = fixture(t); assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 20000);
+  f.act('call'); assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 20000);
+  const old = fixture(t, { settings: { actionSeconds: 30 } }); assert.equal(old.room.deadline, old.room.presentation.actionReadyAt + 20000);
 });
 
 test('non-integer-BB voluntary raises fail before any hand, stack, command or ledger mutation', t => {
@@ -51,7 +53,7 @@ test('blinds and calls keep exact fractional BB while postflop bets use whole BB
   assert.deepEqual(f.room.hand.players.map(p => p.bet).sort((a, b) => a - b), [5, 10]);
   assert.equal(availableActions(f.room.hand, f.room.hand.actingId).callAmount, 5);
   f.act('call'); assert.equal(f.room.hand.log.at(-1).amount, 5);
-  f.act('check'); assert.equal(f.room.hand.board.length, 3);
+  f.act('check'); f.ready(); assert.equal(f.room.hand.board.length, 3);
   assert.throws(() => f.act('raise', { amount: 15 }), /整数 BB/);
   f.act('raise', { amount: 10 }); assert.equal(f.room.hand.currentBet, 10);
 });
@@ -68,7 +70,7 @@ test('a multiway short all-in can create a fractional minimum, next full raise r
   }
   f.act('raise', { amount: 30 });
   assert.equal(f.room.hand.currentBet, 30);
-  f.act('call'); assert.equal(f.room.hand.board.length, 3);
+  f.act('call'); f.ready(); assert.equal(f.room.hand.board.length, 3);
 });
 
 test('exact remaining-stack raises and short all-in calls keep fractional BB', t => {

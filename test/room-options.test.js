@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -7,12 +8,18 @@ import { createHand, applyAction, availableActions } from '../src/poker.js';
 import { exportPhh } from '../src/phh.js';
 import { verifyProof } from '../src/fairness.js';
 
-function fixture(settings = {}, count = 3) {
+function fixture(settings = {}, count = 3, setTime) {
   const users = Array.from({ length: 4 }, (_, i) => ({ id: `friend-${i}`, name: `朋友${i}`, avatar: i }));
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store), room = service.create(users[0], { settings });
   for (const u of users.slice(1)) service.join(u, room.code, room.invite);
-  const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, setTime);
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, setTime));
+    return result;
+  };
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   return { users, store, service, room, cmd };
 }
@@ -42,8 +49,9 @@ test('BB configuration fixes per-transfer limits and validates timing and cumula
   assert.equal(settingsFor({ minBuyIn: 200, maxBuyIn: 2000, squidUnit: 30 }).minBuyInBB, 100);
 });
 
-test('legacy rooms retain historic squid point amounts while all new transfers use the fixed BB rule', () => {
-  const f = fixture({}, 2);
+test('legacy rooms retain historic squid point amounts while all new transfers use the fixed BB rule', t => {
+  let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
+  const f = fixture({}, 2, value => { timestamp = value; });
   f.room.rulesVersion = 1;
   f.room.settings = { maxPlayers: 9, smallBlind: 5, bigBlind: 10, minBuyIn: 105, maxBuyIn: 1001, actionSeconds: 30,
     approvalRequired: true, squid: false, squidUnit: 5, mushroom: false, mushroomUnit: 1 };
@@ -78,22 +86,25 @@ test('valid instant seating replaces only the caller legacy pending request', ()
   assert.equal(f.store.data.ledger.filter(l => l.type === 'buyin').length, 1);
 });
 
-test('table clock starts on first hand and settings cannot reset it after play', () => {
-  const f = fixture({ durationMinutes: 30 });
+test('table clock starts on first hand and settings cannot reset it after play', t => {
+  let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
+  const f = fixture({ durationMinutes: 30 }, 3, value => { timestamp = value; });
   f.service.connections.set(`${f.room.code}:${f.users[0].id}`, 1); f.service.connectionChanged(f.room);
   assert.equal(f.room.startedAt, null); assert.equal(f.service.needsTick(f.room, Date.now() + 1e9), false);
   const start = Date.now(); f.service.start(f.room, start);
   assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
-  assert.equal(f.room.deadline, start + 20000); finish(f);
+  assert.equal(f.room.presentation.actionReadyAt, start + 1100);
+  assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 20000); finish(f);
   assert.throws(() => f.cmd(0, 'settings', { settings: { durationMinutes: 60 } }), /配置已锁定/);
   f.service.start(f.room, start + 60000); assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
 });
 
 test('time cards extend only a live actor turn and retry is idempotent without altering poker actions', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture(); f.cmd(0, 'start');
+  const f = fixture({}, 3, value => { timestamp = value; }); f.cmd(0, 'start');
   const i = f.users.findIndex(u => u.id === f.room.hand.actingId), commandId = randomUUID(), h = f.room.hand;
   const log = structuredClone(h.log), deadline = f.room.deadline;
+  readyRoomAction(f.service, f.room, value => { timestamp = value; });
   f.cmd(i, 'timebank', { commandId });
   assert.equal(f.room.deadline, deadline + 30000); assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 5);
   f.cmd(i, 'timebank', { commandId });
@@ -108,9 +119,10 @@ test('time cards extend only a live actor turn and retry is idempotent without a
 
 test('time cards grant the whole session once and do not reset on half hours or reseating', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ durationMinutes: 120, timeBankCards: 5, timeBankSeconds: 45 }); f.cmd(0, 'start');
+  const f = fixture({ durationMinutes: 120, timeBankCards: 5, timeBankSeconds: 45 }, 3, value => { timestamp = value; }); f.cmd(0, 'start');
   const i = f.users.findIndex(u => u.id === f.room.hand.actingId), initial = f.room.deadline;
   assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 12);
+  readyRoomAction(f.service, f.room, value => { timestamp = value; });
   for (let n = 0; n < 12; n++) f.cmd(i, 'timebank');
   assert.equal(f.room.deadline, initial + 12 * 30000);
   assert.throws(() => f.cmd(i, 'timebank'), /用完/); finish(f);
@@ -127,7 +139,7 @@ test('time cards grant the whole session once and do not reset on half hours or 
 
 test('last five minutes skip new squid and bomb rounds while an existing squid round may continue', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ squid: true, bombPot: true, bombIntervalMinutes: 1 }); f.cmd(0, 'start');
+  const f = fixture({ squid: true, bombPot: true, bombIntervalMinutes: 1 }, 3, value => { timestamp = value; }); f.cmd(0, 'start');
   const round = f.room.mini.squid.round; assert.equal(f.room.hand.bombPot, false); finish(f);
   timestamp = f.room.endsAt - 300000; f.service.start(f.room);
   assert.equal(f.room.hand.bombPot, false); assert.equal(f.room.mini.squid.round, round);
@@ -143,12 +155,13 @@ test('last five minutes skip new squid and bomb rounds while an existing squid r
 
 test('expiry finishes the original squid round, closes once, and permits a final voluntary reveal', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ squid: true });
+  const f = fixture({ squid: true }, 3, value => { timestamp = value; });
   for (const user of f.users.slice(0, 3)) f.service.connections.set(`${f.room.code}:${user.id}`, 1);
   f.cmd(0, 'start');
   const initialHands = f.store.data.hands.length;
   timestamp = f.room.endsAt; f.room.deadline = timestamp + 15000;
-  assert.equal(f.service.tick(f.room, timestamp), false); assert.equal(f.room.status, 'playing');
+  f.service.tick(f.room, timestamp); // May publish the pending presentation-ready event.
+  assert.equal(f.room.status, 'playing'); assert.equal(f.store.data.hands.length, initialHands);
   finish(f);
   assert.equal(f.room.status, 'waiting'); assert.equal(f.room.mini.squid.active, true);
   assert.equal(f.service.state(f.room, f.users[0].id).expiryMode, 'finish-squid');
@@ -172,14 +185,14 @@ test('expiry finishes the original squid round, closes once, and permits a final
 
 test('expiry between hands prevents a start even before the periodic tick', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture(); f.cmd(0, 'start'); finish(f); const number = f.room.handNumber;
+  const f = fixture({}, 3, value => { timestamp = value; }); f.cmd(0, 'start'); finish(f); const number = f.room.handNumber;
   timestamp = f.room.endsAt; f.cmd(0, 'start');
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.handNumber, number); conserved(f.room);
 });
 
 test('bomb pot starts at flop with only equal antes and every hidden hand stays private', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ bombPot: true, bombIntervalMinutes: 1, bombAnteBB: 2 }); f.cmd(0, 'start'); finish(f);
+  const f = fixture({ bombPot: true, bombIntervalMinutes: 1, bombAnteBB: 2 }, 3, value => { timestamp = value; }); f.cmd(0, 'start'); finish(f);
   timestamp += 60000; f.service.start(f.room);
   const h = f.room.hand; assert.equal(h.street, 'flop'); assert.equal(h.ante, 20);
   assert.equal(h.smallBlindSeat, null); assert.equal(h.bigBlindSeat, null);
@@ -197,7 +210,7 @@ test('bomb pot starts at flop with only equal antes and every hidden hand stays 
 
 test('bomb timing and preflop statistics count the intended opportunities only', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ bombPot: true, bombIntervalMinutes: 1 }); f.cmd(0, 'start');
+  const f = fixture({ bombPot: true, bombIntervalMinutes: 1 }, 3, value => { timestamp = value; }); f.cmd(0, 'start');
   assert.equal(f.room.hand.bombPot, false); finish(f, 'call');
   const before = f.service.stats(f.users[0].id); assert.equal(before.vpip, 100); assert.equal(before.preflopHands, 1);
   timestamp += 60000; f.service.start(f.room); assert.equal(f.room.hand.bombPot, true); finish(f);

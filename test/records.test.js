@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
 const pointTotals = ({ bb, ...points }) => points;
 import { randomUUID } from 'node:crypto';
@@ -9,7 +10,8 @@ import { RoomService } from '../src/room.js';
 import { recordFilters, pageRecords } from '../src/records.js';
 import { createApp } from '../server.js';
 
-function fixture() {
+function fixture(t) {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const store={data:{version:1,users:{},rooms:{},hands:[],ledger:[]}},users=['me','friend','observer','stranger'].map(id=>({id,name:id,avatar:0}));
   for(const user of users)store.data.users[user.id]=user;
   const service=new RoomService(store),room=service.create(users[0],{name:'周五好友局',settings:{}});
@@ -18,7 +20,7 @@ function fixture() {
   command(users[0],'sit',{seat:0,amount:1000});command(users[1],'sit',{seat:1,amount:1000});
   for(const user of users.slice(0,2))service.connections.set(`${room.code}:${user.id}`,1);
   command(users[0],'start');
-  while(room.hand.status==='playing')command(users.find(user=>user.id===room.hand.actingId),'fold');
+  while(room.hand.status==='playing') { if (!readyRoomAction(service, room, value => { clock = value; })) break; command(users.find(user=>user.id===room.hand.actingId),'fold'); }
   const template=structuredClone(store.data.hands[0]);store.data.hands=[];
   function hand(id,{net=0,mini=0,friendMini=-mini,at='2026-10-12T12:00:00.000Z',number=1,bomb=false,status='complete',name=room.name}={}){
     const h=structuredClone(template);Object.assign(h,{id,number,at,bombPot:bomb,status,roomName:name});
@@ -34,8 +36,8 @@ function noSecrets(value){
   visit(value);
 }
 
-test('session totals count settled poker and mini changes plus legacy refunds, not buy-ins or a live hand',()=>{
-  const f=fixture();f.hand('first',{net:-30,mini:50});f.hand('second',{net:20,mini:-10,friendMini:0,number:2});
+test('session totals count settled poker and mini changes plus legacy refunds, not buy-ins or a live hand',t=>{
+  const f=fixture(t);f.hand('first',{net:-30,mini:50});f.hand('second',{net:20,mini:-10,friendMini:0,number:2});
   f.store.data.ledger.push({roomCode:f.room.code,type:'mushroomRefund',playerId:'me',amount:10,at:'2026-10-12T13:00:00.000Z'});
   f.room.members.me.totalBuyIn+=500;f.room.members.me.stack+=500;
   f.store.data.ledger.push({roomCode:f.room.code,type:'buyin',playerId:'me',amount:500});
@@ -47,8 +49,8 @@ test('session totals count settled poker and mini changes plus legacy refunds, n
   assert.equal(session.players.reduce((n,p)=>n+p.net,0),0);assert.equal(session.adjustments,true);noSecrets(session);
 });
 
-test('session details are member-only, include both players for an invited observer, and personal hand pages exclude that observer',()=>{
-  const f=fixture();f.hand('settled',{net:10});
+test('session details are member-only, include both players for an invited observer, and personal hand pages exclude that observer',t=>{
+  const f=fixture(t);f.hand('settled',{net:10});
   assert.throws(()=>f.service.sessionFor('stranger',f.room.code),e=>e.status===403);
   assert.throws(()=>f.service.sessions('stranger',{room:f.room.code}),e=>e.status===403);
   assert.deepEqual(f.service.sessions('stranger').sessions,[]);
@@ -61,23 +63,23 @@ test('session details are member-only, include both players for an invited obser
   assert.throws(()=>f.service.history('stranger',f.room.code,{limit:'20'}),e=>e.status===403);
 });
 
-test('legacy token-keyed users display their current names even before their first completed hand',()=>{
-  const f=fixture();delete f.store.data.users.me;f.users[0].name='已经改过的昵称';f.store.data.users['legacy-token-hash']=f.users[0];
+test('legacy token-keyed users display their current names even before their first completed hand',t=>{
+  const f=fixture(t);delete f.store.data.users.me;f.users[0].name='已经改过的昵称';f.store.data.users['legacy-token-hash']=f.users[0];
   const detail=f.service.sessionFor('me',f.room.code).session;
   assert.equal(detail.players.find(p=>p.id==='me').name,'已经改过的昵称');
   assert.equal(detail.players.find(p=>p.id==='me').hands,0);
   f.hand('old-name');assert.equal(f.service.sessionFor('me',f.room.code).session.players.find(p=>p.id==='me').name,'已经改过的昵称');
 });
 
-test('explicit local-day ISO bounds include midnight and the final millisecond while excluding the adjacent days',()=>{
-  const f=fixture();
+test('explicit local-day ISO bounds include midnight and the final millisecond while excluding the adjacent days',t=>{
+  const f=fixture(t);
   for(const [id,at] of [['before','2026-10-11T15:59:59.999Z'],['midnight','2026-10-11T16:00:00.000Z'],['end','2026-10-12T15:59:59.999Z'],['after','2026-10-12T16:00:00.000Z']])f.hand(id,{at,net:1});
   const result=f.service.handLibrary('me',{from:'2026-10-12T00:00:00.000+08:00',to:'2026-10-12T23:59:59.999+08:00'});
   assert.deepEqual(result.hands.map(h=>h.id),['end','midnight']);assert.equal(result.totals.count,2);
 });
 
-test('hand result/date/type/text filters apply before pagination and totals cover all matching hands',()=>{
-  const f=fixture();
+test('hand result/date/type/text filters apply before pagination and totals cover all matching hands',t=>{
+  const f=fixture(t);
   f.hand('win-a',{net:5,mini:5,number:1,bomb:true});
   f.hand('win-b',{net:-10,mini:30,number:2,bomb:true});
   f.hand('win-c',{net:15,mini:0,number:3,bomb:true});
@@ -99,8 +101,8 @@ test('hand result/date/type/text filters apply before pagination and totals cove
   assert.equal(f.service.handLibrary('me',{q:'WIN-B'}).hands[0].id,'win-b');
 });
 
-test('session lists filter and paginate stable ties, with aggregate totals and no player details on summaries',()=>{
-  const f=fixture();f.hand('session-hand',{net:10,mini:5});f.room.startedAt=Date.parse('2026-10-12T12:00:00.000Z');f.room.status='closed';
+test('session lists filter and paginate stable ties, with aggregate totals and no player details on summaries',t=>{
+  const f=fixture(t);f.hand('session-hand',{net:10,mini:5});f.room.startedAt=Date.parse('2026-10-12T12:00:00.000Z');f.room.status='closed';
   for(const code of ['100001','100002']){
     const room=structuredClone(f.room);room.code=code;f.store.data.rooms[code]=room;
     const hand=structuredClone(f.store.data.hands[0]);hand.id='hand-'+code;hand.roomCode=code;f.store.data.hands.push(hand);
@@ -115,15 +117,16 @@ test('session lists filter and paginate stable ties, with aggregate totals and n
   assert.equal(f.service.sessions('me',{q:'100002'}).sessions[0].code,'100002');
 });
 
-test('invalid record filters and cursor/limit values fail explicitly rather than broadening a search',()=>{
+test('invalid record filters and cursor/limit values fail explicitly rather than broadening a search',t=>{
   for(const query of [{from:'2026-02-30'},{to:'next Monday'},{from:'2026-10-14',to:'2026-10-13'},{from:'2026-13-01'},{result:'all OR 1=1'},{type:'omaha'},{status:'deleted'},{q:'界'.repeat(81)},{q:{}}])assert.throws(()=>recordFilters(query),e=>e.status===400);
   for(const query of [{limit:'0'},{limit:'51'},{limit:'1e1'},{before:'@'},{before:'not-a-cursor'},{before:Buffer.from(JSON.stringify({at:'bad',id:'id'})).toString('base64url')}])assert.throws(()=>pageRecords([],query),e=>e.status===400);
-  const f=fixture();for(const query of [{result:'bad'},{from:'bad'},{q:'x'.repeat(81)},{before:'@'}]){
+  const f=fixture(t);for(const query of [{result:'bad'},{from:'bad'},{q:'x'.repeat(81)},{before:'@'}]){
     assert.throws(()=>f.service.sessions('me',query),e=>e.status===400);assert.throws(()=>f.service.handLibrary('me',query),e=>e.status===400);
   }
 });
 
 test('HTTP records require login and room membership, reject malformed filters, and preserve folded-card privacy',async t=>{
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const directory=mkdtempSync(join(tmpdir(),'bbpoker-records-')),app=createApp({dataDir:directory,allowGuestSessions:true});
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(async()=>{await app.close();rmSync(directory,{recursive:true,force:true});});
   const base=`http://127.0.0.1:${app.server.address().port}`;
@@ -137,7 +140,9 @@ test('HTTP records require login and room membership, reject malformed filters, 
   await command(0,'sit',{seat:0,amount:1000});await command(1,'sit',{seat:1,amount:1000});
   for(const user of users.slice(0,2))app.service.connections.set(`${room.code}:${user.user.id}`,1);
   await command(0,'start');
+  readyRoomAction(app.service, app.store.data.rooms[room.code], value => { clock = value; });
   const foldedId=app.store.data.rooms[room.code].hand.actingId;await command(users.findIndex(u=>u.user.id===foldedId),'fold');
+  readyRoomAction(app.service, app.store.data.rooms[room.code], value => { clock = value; });
   const observer=await api(users[2],`/api/sessions/${room.code}`);assert.equal(observer.session.players.length,2);noSecrets(observer);
   assert.deepEqual((await api(users[2],'/api/hands')).hands,[]);
   assert.deepEqual((await api(users[2],'/api/hands?includeObserved=true')).hands,[]);

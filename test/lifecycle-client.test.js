@@ -1,3 +1,5 @@
+import * as tableControls from '../public/table-controls.js';
+import * as tableScene from '../public/table-scene.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -13,10 +15,10 @@ function harness(){
   const requests=createRequestGuard(),timers=new Map(),pending=[],paths=[],messages=[],commands=[];
   const state={user:{id:'a'},page:'lobby',rooms:[],timeOffset:0,lobby:{rooms:[],filter:'all',loading:false,loaded:false,error:'',request:0,timer:null,controller:null,joining:'',limit:10}};
   let sequence=0,renders=0;
-  const context=vm.createContext({...money,lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
+  const context=vm.createContext({...tableScene,...tableControls,...money,lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
     clearTimeout:id=>timers.delete(id),setTimeout:(fn,ms)=>{timers.set(++sequence,{fn,ms});return sequence;},
     api:(path,body,options={})=>{const result=deferred();pending.push({path,body,options,...result});return result.promise;},
-    navigate:path=>paths.push(path),render:()=>renders++,toast:message=>messages.push(message),
+    navigate:path=>paths.push(path),render:()=>renders++,toast:message=>messages.push(message),rebuyPrompt:()=>null,
     openModal:(title,body,kind)=>{state.modal={title,body,kind};},closeModal:()=>{state.modal=null;},
     command:async(type,payload)=>{commands.push({type,payload});return true;},
   });
@@ -24,8 +26,8 @@ function harness(){
     section('const esc=','const profitClass='),section('const btn=','const avatar='),
     section('function stopLobbyPolling(','async function route('),
     section('function lobbyRoomCard(','function career('),
-    section('function departureModal(','function rulesModal('),
-    'globalThis.client={stopLobbyPolling,loadLobby,joinPublicRoom,joinInviteModal,lobbyRoomCard,departureModal,confirmDeparture,settleSquidModal,participationNotice,entryBlindModal,confirmEntryBlind};',
+    section('function departureModal(','function rulesModal('),section('function buyinModal(','function updateBuyinSummary('),
+    'globalThis.client={stopLobbyPolling,loadLobby,joinPublicRoom,joinInviteModal,lobbyRoomCard,departureModal,confirmDeparture,settleSquidModal,participationNotice,entryBlindModal,confirmEntryBlind,buyinModal,entryModeFields};',
   ].join('\n'),context);
   return {...context.client,state,requests,context,pending,timers,paths,messages,commands,get renders(){return renders;}};
 }
@@ -77,9 +79,10 @@ test('public join submits no invitation, ignores double-clicks, and cannot join 
 
 test('mid-hand seats and squid waiting have distinct guidance, and pending exit is cancellable',()=>{
   const r=squidRoom();
-  assert.match(lifecycle.buyinTiming(r),/下一轮/);delete r.mini;assert.match(lifecycle.buyinTiming(r),/后续符合条件/);
-  r.hand.status='complete';assert.match(lifecycle.buyinTiming(r,false),/补充积分/);
-  assert.equal(lifecycle.participation(r,{seat:1,waitingFor:'squid'}).label,'等待下一轮鱿鱼');
+  assert.match(lifecycle.buyinTiming(r),/下一手以 0 鱼加入.*总鱼数加 1/);delete r.mini;assert.match(lifecycle.buyinTiming(r),/后续符合条件/);
+  r.hand.status='complete';assert.match(lifecycle.buyinTiming(r,false),/立即到账.*下次发牌前可用/);
+  r.mini={squid:{active:true,round:4,participants:['a']}};
+  assert.equal(lifecycle.participation(r,{id:'new',seat:1,waitingFor:'squid'}).label,'等待加入本轮');
   assert.equal(lifecycle.participation(r,{seat:1,pendingDeparture:'stand'}).canCancel,true);
   assert.equal(lifecycle.participation(r,{seat:1,sittingOut:true}).canReturn,true);
 });
@@ -140,8 +143,8 @@ test('only an actual current-hand participant queues departure; squid responsibi
 test('expired squid waits for eligible original players and does not promise newcomer participation',()=>{
   const room=squidRoom();room.expiryMode='wait-squid';room.mini.squid.blockerSince=100;
   assert.match(lifecycle.squidMode(room).label,/已到时.*本手结束后等待原轮/);assert.match(lifecycle.squidMode(room).note,/不足两人/);
-  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/新入座者不参加原轮/);
-  assert.match(lifecycle.buyinTiming(room,true,{id:'a'}),/重新入座不会再收/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/新玩家不能再入座参加本轮/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'a'}),/重新入座不重复增加鱼数/);
   room.hand.status='complete';assert.match(lifecycle.squidMode(room).label,/期间不开新手/);
   assert.equal(lifecycle.lobbyTime(1000,2000),'已到时 · 等待收尾');
 });
@@ -166,12 +169,58 @@ test('server entry quotes distinguish waiting, post-and-wait-for-button, and sam
   player.inHand=false;room.status='closed';assert.equal(lifecycle.entryBlindView(room,player),null);
 });
 
-test('new squid participants wait for the round even if they opted to post; returning originals get their existing reserve explanation',()=>{
-  const room=squidRoom(),player=entryPlayer({waitingFor:'squid'});player.entryBlind.mode='post';
-  assert.equal(lifecycle.participation(room,player).label,'等待下一轮鱿鱼');
-  assert.match(lifecycle.participation(room,player).note,/本轮结束后生效/);
+test('new squid participants follow next-hand admission while returning players retain the original identity',()=>{
+  const room=squidRoom(),player=entryPlayer({id:'new',waitingFor:'squid',squidJoin:{status:'next-hand',round:4,reason:'本手结束后核定入轮，暂不扣预留。',requiredReserve:60,tokenBudgetAfterJoin:3}});player.entryBlind.mode='post';
+  assert.equal(lifecycle.participation(room,player).label,'等待加入本轮');
+  assert.match(lifecycle.participation(room,player).note,/本手结束后核定/);
   assert.match(lifecycle.buyinTiming(room,true,{id:'a'}),/资格.*预留都保留/);
-  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/等下一轮/);
+  assert.match(lifecycle.buyinTiming(room,true,{id:'new'}),/下一手以 0 鱼加入/);
+  room.mini.squid.participants.push('new');
+  assert.equal(lifecycle.squidJoinView(room,player),null);
+  assert.match(lifecycle.buyinTiming(room,true,player),/不重复增加鱼数/);
+});
+
+test('squid admission reports blind waiting and whose reserve is insufficient without changing server amounts',()=>{
+  const room=squidRoom(),player=entryPlayer({id:'new',waitingFor:'squid'});
+  player.squidJoin={status:'entry-blind',round:4,reason:'轮到大盲时再核定入轮。',requiredReserve:60,tokenBudgetAfterJoin:3};
+  assert.equal(lifecycle.participation(room,player).label,'等待大盲加入');
+  assert.equal(lifecycle.squidJoinView(room,player).seatLabel,'等大盲');
+  player.entryBlind.mode='post';player.entryBlind.waitingFor='button';
+  assert.equal(lifecycle.squidJoinView(room,player).seatLabel,'等过庄');
+  player.squidJoin={...player.squidJoin,status:'reserve',reason:'小鱼需补足预留，你先等待，原轮继续。',requiredReserve:80,tokenBudgetAfterJoin:4};
+  const before=JSON.stringify(player),view=lifecycle.participation(room,player);
+  assert.equal(view.label,'等待补足鱿鱼预留');assert.equal(view.requiredReserve,80);assert.equal(view.budget,4);
+  assert.match(view.note,/小鱼需补足预留/);assert.equal(JSON.stringify(player),before);
+  player.squidJoin.reason='你的积分不足以预留并继续发牌。';assert.match(lifecycle.participation(room,player).note,/你的积分不足/);
+});
+
+test('stale or unsupported squid admission quotes never invent charges or overwrite existing participant status',()=>{
+  const room=squidRoom(),player=entryPlayer({id:'new',waitingFor:'squid',squidJoin:{round:3,status:'reserve',reason:'old',requiredReserve:999}});
+  assert.equal(lifecycle.squidJoinView(room,player),null);
+  player.squidJoin={round:4,status:'future-state',requiredReserve:-1,tokenBudgetAfterJoin:NaN};
+  const view=lifecycle.squidJoinView(room,player);assert.equal(view.label,'等待加入本轮');assert.equal(view.requiredReserve,null);assert.equal(view.budget,null);
+  room.mini.squid.participants.push('new');assert.equal(lifecycle.squidJoinView(room,player),null);
+  player.inHand=true;assert.equal(lifecycle.participation(room,player).label,'正在参与本手');
+});
+
+test('expired tables decline newcomer seating but allow original participants to return without adding fish',()=>{
+  const c=harness(),r=squidRoom();r.settings={bigBlind:10};r.endsAt=Date.now()-1000;c.state.room=r;
+  r.players=[{id:'a',seat:null,totalBuyIn:0}];r.mini.squid.participants=['b','c'];
+  c.buyinModal(2);assert.equal(c.state.modal,undefined);assert.match(c.messages.at(-1),/不能再入座/);assert.equal(c.commands.length,0);
+  r.mini.squid.participants.push('a');c.buyinModal(2);assert.equal(c.state.modal.kind,'buyin');assert.match(c.state.modal.body,/不重复增加鱼数/);
+  assert.equal(lifecycle.squidAdmissionClosed(r,{id:'new'},r.endsAt-1),false);
+  assert.equal(lifecycle.squidAdmissionClosed(r,{id:'new'},r.endsAt),true);
+  r.expiryMode='wait-squid';delete r.endsAt;assert.equal(lifecycle.squidAdmissionClosed(r,{id:'new'}),true);
+});
+
+test('newcomer entry dialog and inline queue show escaped server reasons and quote reserve only as an estimate',()=>{
+  const c=harness(),r=squidRoom();r.settings={bigBlind:10};r.meId='new';
+  const player=entryPlayer({id:'new',waitingFor:'squid',squidJoin:{round:4,status:'reserve',reason:'<img src=x onerror=alert(1)>需补足预留',requiredReserve:60,tokenBudgetAfterJoin:3}});r.players=[player];c.state.room=r;
+  c.entryBlindModal();const html=c.state.modal.body;
+  assert.match(html,/&lt;img/);assert.doesNotMatch(html,/<img|名单固定|等待下一轮/);assert.match(html,/预计本人入轮至少预留 60 积分/);assert.match(html,/以实际发牌时为准/);
+  const notice=c.participationNotice(r,player);assert.match(notice,/&lt;img/);assert.doesNotMatch(notice,/<img/);assert.match(notice,/参与方式/);
+  c.buyinModal(1);assert.match(c.state.modal.body,/以 0 鱼加入，总鱼数加 1/);assert.doesNotMatch(c.state.modal.body,/鱿鱼新人仍等下一轮/);
+  assert.equal(c.commands.length,0);
 });
 
 test('entry controls use the server quote and submit mode only, never a client-calculated charge',async()=>{
@@ -260,4 +309,12 @@ test('unlimited departure and premature settlement use the actual budget and fis
   const quote=lifecycle.squidSettlement(r);assert.equal(quote.loserCost,80);assert.equal(quote.winnerGain,20);
   c.settleSquidModal();assert.match(c.state.modal.body,/每位未获标记者支付 80 积分/);assert.match(c.state.modal.body,/有鱼者每条鱼获得 20 积分/);assert.match(c.state.modal.body,/剩余未发出的鱼不计费/);
   r.mini.squid.counts.a=2;r.mini.squid.won.push('a');c.departureModal('stand');assert.match(c.state.modal.body,/本轮 2 条鱼/);assert.equal(c.state.departureConfirmation.cost,0);
+});
+
+
+test('overtime keeps current squid responsibility without advertising new admission during play',()=>{
+  const r=squidRoom();r.expiryMode='continue-squid';r.endsAt=Date.now()-1000;
+  assert.match(lifecycle.squidMode(r).note,/仅已加入本轮的玩家继续或返回/);
+  assert.doesNotMatch(lifecycle.squidMode(r).note,/新人可加入|总鱼数加 1/);
+  r.hand.squidRound=null;assert.match(lifecycle.squidMode(r).note,/不再增加参与者/);
 });

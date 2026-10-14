@@ -29,7 +29,19 @@ async function fixture(t, options = {}) {
     t.after(() => reader.cancel().catch(() => {}));
     return reader;
   }
-  return { api, stream, directory, get app() { return app; }, guest: (name, avatar = 0) => api('/api/session', { name, avatar }, null, 201), async restart() { await app.close(); app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000, ...options }); await listen(); } };
+  async function ready(code) {
+    // These tests exercise the actual server interval/SSE, so keep real time.
+    // Wait through the same published deadlines that a browser must observe.
+    for(let steps=0;steps<16;steps++){
+      const room=app.store.data.rooms[code];if(room.hand?.status!=='playing')return;
+      const due=room.hand.transition?.nextAt??(room.hand.runout?.active?room.hand.runout.nextAt:null)??(!room.presentation?.readyPublished?room.presentation?.actionReadyAt:null);
+      if(!Number.isFinite(due))return;
+      await new Promise(resolve=>setTimeout(resolve,Math.max(0,due-Date.now())+15));
+      if(app.service.tick(room,Date.now()))app.store.save();
+    }
+    assert.fail('profile fixture exceeded bounded presentation steps');
+  }
+  return { api, stream, ready, directory, get app() { return app; }, guest: (name, avatar = 0) => api('/api/session', { name, avatar }, null, 201), async restart() { await app.close(); app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000, ...options }); await listen(); } };
 }
 
 async function event(reader) {
@@ -94,6 +106,7 @@ test('profile changes broadcast to the table while chat and dealt-hand names rem
   for (const [seat, player] of [owner, peer].entries()) { await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token); f.app.service.connections.set(`${room.code}:${player.user.id}`, 1); }
   await f.api(`/api/rooms/${room.code}/chat`, { kind: 'text', text: '旧消息', messageId: randomUUID() }, owner.token);
   await f.api(`/api/rooms/${room.code}/action`, { type: 'start', commandId: randomUUID() }, owner.token);
+  await f.ready(room.code);
   const oldHand = structuredClone(f.app.store.data.rooms[room.code].hand), oldChat = structuredClone(f.app.store.data.rooms[room.code].chat);
   const reader = await f.stream(peer.token, room.code);
   await f.api('/api/profile', { name: '新昵称', avatar: 10 }, owner.token);
@@ -105,6 +118,7 @@ test('profile changes broadcast to the table while chat and dealt-hand names rem
   const active = f.app.store.data.rooms[room.code].hand;
   const actor = [owner, peer].find(user => user.user.id === active.actingId);
   await f.api(`/api/rooms/${room.code}/action`, { type: 'fold', commandId: randomUUID(), handId: active.id, actionSeq: active.log.length }, actor.token);
+  await f.ready(room.code);
   const history = await f.api(`/api/rooms/${room.code}/hands/${active.id}`, undefined, owner.token);
   assert.equal(history.players.find(player => player.id === owner.user.id).name, '旧昵称');
   assert.equal(update.chat[0].name, '旧昵称');
@@ -145,9 +159,12 @@ async function seatedTable(f) {
   await f.api(`/api/rooms/${room.code}/join`, { invite: room.invite }, players[1].token);
   for (const [seat, player] of players.entries()) { await f.api(`/api/rooms/${room.code}/action`, { type: 'sit', seat, amount: 1000, commandId: randomUUID() }, player.token); f.app.service.connections.set(`${room.code}:${player.user.id}`, 1); }
   await f.api(`/api/rooms/${room.code}/action`, { type: 'start', commandId: randomUUID() }, players[0].token);
+  await f.ready(room.code);
   const command = async (user, type) => {
     const hand = f.app.store.data.rooms[room.code].hand;
-    return f.api(`/api/rooms/${room.code}/action`, { type, handId: hand.id, actionSeq: hand.log.length, commandId: randomUUID() }, user.token);
+    const result=await f.api(`/api/rooms/${room.code}/action`, { type, handId: hand.id, actionSeq: hand.log.length, commandId: randomUUID() }, user.token);
+    if(type==='fold')await f.ready(room.code);
+    return result;
   };
   return { players, room, command, actor: () => players.find(player => player.user.id === f.app.store.data.rooms[room.code].hand.actingId) };
 }
@@ -173,7 +190,8 @@ test('startup repairs only a missing action deadline with fixed 20 seconds regar
   room.settings.actionSeconds = 90; room.deadline = null; f.app.store.save();
   const before = Date.now(); await f.restart(); const after = Date.now();
   const restored = f.app.store.data.rooms[table.room.code];
-  assert.ok(restored.deadline >= before + 20000 && restored.deadline <= after + 20000);
+  const readyAt = restored.presentation.actionReadyAt;
+  assert.ok(restored.deadline >= Math.max(before, readyAt) + 20000 && restored.deadline <= Math.max(after, readyAt) + 20000);
   assert.deepEqual(restored.hand.players.map(p => p.cards), cards);
   const expired = Date.now() - 1000; restored.deadline = expired; f.app.store.save();
   await f.restart();
@@ -218,7 +236,8 @@ test('an elapsed action clock resolves normally before automatic table expiry cl
   const room = f.app.store.data.rooms[table.room.code], handId = room.hand.id;
   room.endsAt = Date.now() - 1; room.deadline = Date.now() - 1;
   f.app.store.save();
-  const closed = await event(reader);
+  let closed=await event(reader);
+  if(closed.status!=='closed'){assert.equal(closed.hand.transition?.kind,'award');assert.ok(closed.hand.log.some(action=>action.type==='timeout'));closed=await event(reader);}
   assert.equal(closed.status, 'closed');
   assert.equal(closed.hand.status, 'complete');
   assert.ok(closed.hand.log.some(action => action.type === 'timeout'));

@@ -1,3 +1,5 @@
+import {updateHandCategoryMotion} from '../public/hand-category.js';
+import * as tableScene from '../public/table-scene.js';
 import {THROWABLES,createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import * as records from '../public/records.js';
@@ -12,7 +14,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function harness(){
   const calls=[],toasts=[],draws=[],audioFeedback=[];let client,counter=0;
-  const context=vm.createContext({historyRefresh:{watch(){},stop(){}},THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},playFeedback(value){audioFeedback.push(value);},suspend(){}},createRequestGuard,createReplayPlayback,historyBoard,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
+  const context=vm.createContext({updateHandCategoryMotion,...tableScene,historyRefresh:{watch(){},stop(){}},THROWABLES,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),tableSounds:{play(){},playFeedback(value){audioFeedback.push(value);},suspend(){}},createRequestGuard,createReplayPlayback,historyBoard,URLSearchParams,Date,Set,Map,profileEditor:null,document:{visibilityState:'visible',querySelector:()=>null},
     api(path,body){return new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));},
     render(){draws.push(client?.state.chatDraft);},renderReplay(){draws.push(client.state.replay.hand.id);},playReplay(){},tick(){},
     toast(...args){toasts.push(args);},commandId:()=>`message-${++counter}`,
@@ -30,8 +32,12 @@ function harness(){
     section('function closeModal(','dialog.addEventListener('),
     'globalThis.client={state,requests,captureRoomChanges,sendChat,chatPanel,loadLibrary,handLibrary,favoriteHand,replayModal,closeModal};',
   ].join('\n'),context);
-  client=context.client;client.state.user={id:'me',name:'Me'};client.state.room={code:'123456',meId:'me',chat:[]};client.state.page='room';
-  return {...client,calls,toasts,draws,audioFeedback};
+  client=context.client;client.state.connected=true;client.state.user={id:'me',name:'Me'};client.state.room={code:'123456',meId:'me',chat:[]};client.state.page='room';
+  // A room delivery captures changes and then renders them. Execute the exact
+  // post-render consumer as well: capture alone intentionally never plays audio.
+  // The complete DOM render/identity race is covered in combined-client-events.
+  vm.runInContext('globalThis.consumeRenderedFeedback=()=>{'+section('if(state.pendingFeedback){','mountFunEffects(app.querySelector')+'}',context);
+  return {...client,calls,toasts,draws,audioFeedback,captureRoomChanges(previous,room){client.captureRoomChanges(previous,room);context.consumeRenderedFeedback();}};
 }
 function deferredRoom(chat=[]){return {code:'123456',meId:'me',chat,hand:{id:'hand1',number:1,status:'playing',board:[],actingId:'me',actionSeq:0,log:[]}};}
 
@@ -138,4 +144,20 @@ test('live action feedback forwards speech and chips once, while muting and resy
   c.state.sound=true;c.captureRoomChanges(raised,raised);assert.equal(c.audioFeedback.at(-1).speech,undefined);
   const folded=structuredClone(raised);folded.hand.actionSeq=3;folded.hand.log.push({seq:3,type:'fold',playerId:'friend',street:'preflop'});
   c.state.feedbackResync=true;c.captureRoomChanges(raised,folded);assert.equal(c.audioFeedback.at(-1).speech,undefined);
+});
+
+test('real snapshot capture upgrades own category once and silently resyncs',()=>{
+ const c=harness(),a=deferredRoom();a.players=[{id:'me',handCategory:'高牌'},{id:'friend',handCategory:null}];
+ c.captureRoomChanges(null,a);
+ const b=structuredClone(a);b.hand.board=['Kc','2d','7h'];b.players[0].handCategory='一对';
+ c.captureRoomChanges(a,b);
+ assert.equal(c.state.handCategoryMotion.length,1);
+ assert.equal(c.state.handCategoryMotion[0].playerId,'me');
+ const at=c.state.handCategoryMotion[0].at;
+ c.captureRoomChanges(b,{...b,chat:[{id:'new'}]});assert.equal(c.state.handCategoryMotion[0].at,at);
+ const next=structuredClone(b);next.hand.board.push('Qc');next.players[0].handCategory='两对';
+ c.state.feedbackResync=true;c.captureRoomChanges(b,next);assert.equal(c.state.handCategoryMotion.length,0);
+ c.captureRoomChanges(next,next);assert.equal(c.state.handCategoryMotion.length,0);
+ c.state.animations=false;const final=structuredClone(next);final.hand.board.push('Kd');final.players[0].handCategory='葫芦';
+ c.captureRoomChanges(next,final);assert.equal(c.state.handCategoryMotion.length,0);
 });

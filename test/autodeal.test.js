@@ -1,3 +1,4 @@
+import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +15,13 @@ function fixture(t, settings = {}, count = 3) {
   const store = { data: { users: Object.fromEntries(users.map(u => [u.id, u])), rooms: {}, hands: [], ledger: [] } };
   const service = new RoomService(store), room = service.create(users[0], { settings });
   for (const user of users.slice(1)) service.join(user, room.code, room.invite);
-  const cmd = (i, type, extra = {}) => service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+  const cmd = (i, type, extra = {}) => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room.hand?.actingId) readyRoomAction(service, room, value => { timestamp = value; });
+    const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length, ...extra });
+    if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { timestamp = value; }));
+    return result;
+  };
   for (let i = 0; i < count; i++) { cmd(i, 'sit', { seat: i, amountBB: 100 }); service.connections.set(`${room.code}:${users[i].id}`, 1); }
   // These tests isolate automatic dealing after the optional supplemental-card
   // animation. Its real deadlines, restart and privacy are covered separately.
@@ -95,7 +102,7 @@ test('an unfinished squid continues with two ready players and preserves the bus
   f.advance(5000); f.service.tick(f.room); assert.equal(f.room.handNumber, 2);
   assert.equal(f.room.mini.squid.round, round); assert.deepEqual(f.room.mini.squid.reserves, reserve);
   assert.equal(f.room.hand.players.length, 2); assert.ok(!f.room.hand.players.some(p => p.id === busted));
-  assert.throws(() => f.cmd(0, 'buyin', { amountBB: 20 }), /本手结束/);
+  assert.throws(() => f.cmd(0, 'buyin', { amountBB: 20 }), /单次带入/);
   assert.equal(f.room.hand.players.length, 2, 'top-up cannot insert a player into a live hand');
   assert.equal(f.room.mini.squid.participants.includes(busted), true);
 });
@@ -135,6 +142,7 @@ test('blind-only or bomb all-ins run out before receiving the next-hand decision
     if (settings.bombPot) { f.room.startedAt = f.time - 60000; f.room.endsAt = f.time + 3540000; f.room.nextBombAt = f.time; }
     f.cmd(0, 'start'); assert.equal(f.room.hand.runout.active, true); assert.equal(f.store.data.hands.length, 0);
     while (f.room.hand.runout.active) { f.advance(f.room.hand.runout.nextAt - f.time); assert.equal(f.service.tick(f.room), true); }
+    while (f.room.hand.transition) assert.ok(advanceRoomEvent(f.service, f.room, value => f.advance(value - f.time))); 
     assert.equal(f.room.hand.status, 'complete'); assert.equal(f.store.data.hands.length, 1);
     assert.equal(f.store.data.ledger.filter(row => row.type === 'holdem').length, 2);
     assert.equal(f.room.nextHandAt !== null || f.room.autoWaitReason !== null, true);
@@ -184,7 +192,18 @@ test('real server clock persists before SSE, retries a failed save without dupli
   const created = (await api('/api/rooms', {}, users[0].token)).room, code = created.code;
   await api(`/api/rooms/${code}/join`, { invite: created.invite }, users[1].token);
   const room = () => app.store.data.rooms[code];
-  const command = (i, type, extra = {}) => api(`/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra }, users[i].token);
+  const command = async (i, type, extra = {})  => {
+    const action = ['fold', 'check', 'call', 'raise', 'allin'].includes(type);
+    if (action && room().hand?.actingId) readyRoomAction(app.service, room(), value => { timestamp = value; });
+    const result = await api(`/api/rooms/${code}/action`, { type, commandId: randomUUID(), handId: room().hand?.id, actionSeq: room().hand?.log.length, ...extra }, users[i].token);
+    // Let the app's real timer commit and publish the delayed settlement.
+    for (let guard = 0; action && room().hand?.transition; guard++) {
+      assert.ok(guard < 100, 'live timer must publish the scheduled transition');
+      timestamp = Math.max(timestamp, room().hand.transition.nextAt);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return result;
+  };
   for (let i = 0; i < 2; i++) await command(i, 'sit', { seat: i, amountBB: 100 });
   async function stream(i = 0) {
     const controller = new AbortController(); controllers.push(controller);

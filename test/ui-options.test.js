@@ -1,3 +1,5 @@
+import * as tableControls from '../public/table-controls.js';
+import * as tableScene from '../public/table-scene.js';
 import test from 'node:test';
 import * as lifecycle from '../public/lifecycle.js';
 import assert from 'node:assert/strict';
@@ -15,7 +17,7 @@ function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a
 function harness({unit='points',...overrides}={}){
   money.setDisplayUnit(unit);
   const modals=[],listeners=new Map(),commands=[];
-  const context=vm.createContext({...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+  const context=vm.createContext({...tableScene,...tableControls,...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
     state:{user:{name:'小鱼'},rooms:[],timeOffset:0,connected:true,feedbackResync:false},

@@ -3,16 +3,17 @@
 @media(max-width:760px){.rabbit-note{font-size:9px;padding:2px 4px}.table-toolbar>button{padding-left:5px;padding-right:5px}.throwable-grid{gap:7px}.throwable-option{padding:15px 5px;min-height:87px;border-radius:12px}.throwable-option>span{font-size:30px}.throwable-option b{font-size:12px}.interaction-targets button{font-size:12px;padding:7px 10px}}
 @media(max-height:690px) and (max-width:760px){.rabbit-note{font-size:8px;margin:2px auto}.table-toolbar>button{padding-left:4px;padding-right:4px}}
 
-/* Names and stacks have full rows; the avatar shares the compact status row. */
-.table-stage .seat .seat-main{padding:6px 5px 4px;min-height:65px}
-.table-stage .seat.acting .seat-main{padding:5px 4px 3px}
-.table-stage .seat .seat-identity{display:flex;align-items:center;gap:5px;min-width:0;min-height:20px;margin:1px 0 0}
-.table-stage .seat .seat-identity .seat-avatar-button{position:relative;left:auto;top:auto;flex:0 0 20px;width:20px;height:20px;z-index:1}
+/* Avatar and name share one row; the full-width stack is the visual priority. */
+.table-stage .seat .seat-main{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:4px;row-gap:1px;align-items:center;padding:5px 5px 4px;min-height:56px}
+.table-stage .seat.acting .seat-main{padding:4px 4px 3px}
+.table-stage .seat .seat-identity{display:contents}
+.table-stage .seat .seat-identity .seat-avatar-button{position:relative;left:auto;top:auto;grid-column:1;grid-row:1;width:20px;height:20px;z-index:1}
 .table-stage .seat .seat-identity .seat-avatar-button:after{inset:0}
 .table-stage .seat .seat-identity .seat-avatar-button .avatar{position:relative;inset:auto;width:100%;height:100%;border-width:2px}
-.table-stage .seat .name{min-width:0;max-width:none;margin:0;text-align:center;line-height:1.35;font-size:11px}.table-stage .seat .seat-identity .seat-status{flex:1;min-width:0;margin:0}.table-stage .seat .seat-label{top:-20px}
-.table-stage .seat .stack-value{font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.table-stage .seat .seat-status{margin-top:1px;line-height:14px;height:14px}
+.table-stage .seat .name{min-width:0;max-width:none;grid-column:2;grid-row:1;margin:0;text-align:left;line-height:1.35;font-size:12px;font-weight:600}.table-stage .seat .seat-identity .seat-status{grid-column:1/-1;grid-row:3;min-width:0;margin:1px 0 0}.table-stage .seat .seat-status:empty{display:none}
+.table-stage .seat .stack-value{grid-column:1/-1;grid-row:2;display:flex;align-items:baseline;justify-content:center;gap:2px;font-size:17px;font-weight:800;line-height:1.35;letter-spacing:-.025em;font-variant-numeric:tabular-nums;overflow:visible;text-overflow:clip;white-space:nowrap}
+.table-stage .seat .stack-unit{flex-shrink:0;font-size:10px;font-weight:650;line-height:1;letter-spacing:0;color:#52735f}
+.table-stage .seat .seat-status{font-size:9px;line-height:15px;height:15px}
 .table-stage .seat .fun-mask{font-size:21px}
 .table-stage .seat .seat-interaction-hit{position:absolute;inset:0;z-index:2;display:block;width:100%;height:100%;padding:0;border:0;border-radius:inherit;background:transparent;box-shadow:none;cursor:pointer;touch-action:manipulation}
 .table-stage .seat .seat-interaction-hit:hover{background:#287a6410;box-shadow:inset 0 0 0 1px #38927670}
@@ -40,10 +41,10 @@
 .table-stage .table-center .equity-runout{margin-top:1px;margin-bottom:3px}
 @media(max-width:760px){
  .table-stage .seat[data-side="left"]{--seat-x:4%}.table-stage .seat[data-side="right"]{--seat-x:96%}
- .table-stage .seat .seat-main{padding:4px 3px 3px;min-height:53px}.table-stage .seat.acting .seat-main{padding:3px 2px 2px}
- .table-stage .seat .seat-identity{min-height:16px;gap:3px;margin:1px 0 0}.table-stage .seat .seat-identity .seat-avatar-button{flex-basis:16px;width:16px;height:16px}
- .table-stage .seat .name{font-size:9px}.table-stage .seat .seat-label{top:-17px}.table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:8px;border-width:1px}
- .table-stage .seat .stack-value{font-size:12px;line-height:1.35}.table-stage .seat .seat-status{font-size:8px;line-height:11px;height:11px;margin-top:1px}.table-stage .seat .fun-mask{font-size:17px}
+ .table-stage .seat .seat-main{grid-template-columns:16px minmax(0,1fr);column-gap:3px;padding:4px 3px 3px;min-height:46px}.table-stage .seat.acting .seat-main{padding:3px 2px 2px}
+ .table-stage .seat .seat-identity .seat-avatar-button{width:16px;height:16px}
+ .table-stage .seat .name{font-size:10px}.table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:8px;border-width:1px}
+ .table-stage .seat .stack-value{font-size:14px;line-height:1.3}.table-stage .seat .stack-unit{font-size:9px}.table-stage .seat .seat-status{font-size:8px;line-height:12px;height:12px;margin-top:1px}.table-stage .seat .fun-mask{font-size:17px}
  .table-stage .table-center{width:178px;top:49%}.table-config{max-width:178px;margin-bottom:5px}
  .table-config-primary{padding:3px 4px;gap:1px 6px;line-height:1.35;border-radius:6px}.table-blinds,.table-config .room-countdown{font-size:9px}
  .table-config .game-mode-markers{flex-direction:column;gap:3px;margin-top:3px}.table-config .game-mode{flex:auto;padding:2px 5px;font-size:9px;line-height:1.25;gap:4px}
@@ -52,14 +53,14 @@
  .table-stage .table-center.is-idle .table-config{margin-bottom:13px}
 }
 @media(max-width:360px){
- .table-stage .table-center{width:158px}.table-config{max-width:158px}.table-stage .seat .seat-identity{gap:2px}.table-stage .seat .name{font-size:8px}
- .table-stage .seat .seat-identity .seat-avatar-button{flex-basis:16px;width:16px;height:16px}.table-stage .seat .stack-value{font-size:11px}
+ .table-stage .table-center{width:158px}.table-config{max-width:158px}.table-stage .seat .seat-main{column-gap:2px}.table-stage .seat .name{font-size:9px}
+ .table-stage .seat .seat-identity .seat-avatar-button{width:16px;height:16px}.table-stage .seat .stack-value{font-size:13px}.table-stage .seat .stack-unit{font-size:8px}
  .table-config .game-mode,.table-config .game-mode .mode-stake,.table-blinds,.table-config .room-countdown{font-size:8px}
 }
 @media(max-width:760px) and (max-height:640px){
- .table-stage .seat .seat-main{padding:3px 2px 2px;min-height:45px}.table-stage .seat.acting .seat-main{padding:2px 1px 1px}
- .table-stage .seat .seat-identity{min-height:14px;margin:0;gap:2px}.table-stage .seat .seat-identity .seat-avatar-button{flex-basis:14px;width:14px;height:14px}
- .table-stage .seat .name{font-size:8px}.table-stage .seat .stack-value{font-size:10px;line-height:1.3}.table-stage .seat .seat-status{font-size:7px;line-height:10px;height:10px;margin-top:0}
+ .table-stage .seat .seat-main{grid-template-columns:14px minmax(0,1fr);padding:3px 2px 2px;min-height:41px}.table-stage .seat.acting .seat-main{padding:2px 1px 1px}
+ .table-stage .seat .seat-identity .seat-avatar-button{width:14px;height:14px}
+ .table-stage .seat .name{font-size:9px}.table-stage .seat .stack-value{font-size:13px;line-height:1.3}.table-stage .seat .seat-status{font-size:8px;line-height:11px;height:11px;margin-top:0}
  .table-stage .table-center{top:49%}.table-config{margin-bottom:3px}.table-config-primary{padding:2px 3px}.table-blinds,.table-config .room-countdown{font-size:8px}
  .table-config .game-mode-markers{gap:2px;margin-top:2px}.table-config .game-mode,.table-config .game-mode .mode-stake{font-size:8px}.table-config .game-mode{padding:1px 4px}
  .table-stage .table-center .pot-amount{font-size:19px}.table-stage .table-center .pot-label{font-size:8px}.table-stage .table-center .board{margin:4px 0 3px}
@@ -68,10 +69,12 @@
 }
 
 /* Position badges sit beside the identity card, below the hole cards. */
-.table-stage .seat .seat-label{position:absolute;top:8px;right:-20px;left:auto;bottom:auto;display:flex;flex-direction:column;justify-content:center;gap:3px;margin:0;min-height:0;transform:none}
-.table-stage .seat[data-side="left"] .seat-label{left:-20px;right:auto}
+.table-stage .seat .seat-label{position:absolute;top:6px;right:-28px;left:auto;bottom:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:25px;margin:0;min-height:0;transform:none;pointer-events:none}
+.table-stage .seat[data-side="left"] .seat-label{left:-28px;right:auto}
+ .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-28px;right:auto}
 .table-stage .seat .seat-label:empty{display:none}
 .table-stage .seat .seat-label b{width:17px;height:17px;font-size:9px;line-height:17px;box-shadow:none}
+.table-stage .seat .seat-label b.dealer-button{width:25px;height:25px;font-size:16px;line-height:21px;font-weight:900;color:#573900;background:linear-gradient(145deg,#fff4b9,#f0bc48);border:2px solid #fffdf2;box-shadow:0 0 0 1px #9b6c19,0 2px 5px #77501b38}
 .table-stage .seat .hole-cards{display:flex;gap:3px;align-items:center;justify-content:center;top:auto;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);width:max-content}
 .table-stage .seat .hole-card-wrap{display:inline-flex}
 .table-stage .seat .hole-cards .card{transform:none;margin:0}
@@ -98,7 +101,7 @@
 .table-bottom #raise-range{flex:1;min-width:0;width:auto;min-height:32px}
 .table-bottom #raise-amount{flex:0 0 auto;min-width:88px;text-align:right;font-size:12px;color:#77613b;white-space:nowrap}
 .table-bottom #raise-amount b{font-size:16px;color:#704710}
-.table-bottom .raise-shortcuts{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-top:4px}
+.table-bottom .raise-shortcuts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;margin-top:4px}
 .table-bottom .raise-shortcuts button{min-width:0;padding:7px 2px;font-size:11px;line-height:1.2;min-height:32px;white-space:nowrap}
 .table-bottom .raise-shortcuts button.selected{background:#f9e5ba;border-color:#c68a32;color:#80521e}
 .table-bottom .raise-shortcuts button:disabled{opacity:.4}
@@ -114,9 +117,11 @@
 .no-motion .timeout-warning,.no-motion .card-reveal-pop{animation:none}
 .no-motion .timeout-warning{background:#ffe4b6;outline:2px solid #d27623}
 @media(max-width:760px){
- .table-stage .seat .seat-label{top:5px;right:-13px}.table-stage .seat[data-side="left"] .seat-label{left:-13px;right:auto}
+ .table-stage .seat .seat-label{top:4px;right:-22px;width:21px}.table-stage .seat[data-side="left"] .seat-label{left:-22px;right:auto}
+ .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-22px;right:auto}
  .table-stage .seat:not(.mine) .card.mini.face-down{width:21px;height:28px}
  .table-stage .seat .seat-label b{width:14px;height:14px;font-size:8px;line-height:14px}
+ .table-stage .seat .seat-label b.dealer-button{width:21px;height:21px;font-size:13px;line-height:17px}
  .table-stage .seat.mine .own-cards .card{width:34px;height:48px;font-size:24px;padding:4px}
  .table-stage .seat.mine .own-cards .card>span{font-size:21px}
  .table-stage .seat.mine .own-cards.hand-finished .card{width:40px;height:56px;font-size:27px}
@@ -132,6 +137,9 @@
  .table-bottom .action-buttons button{font-size:12px;min-height:44px}
 }
 @media(max-width:360px){
+ .table-stage .seat .seat-label{right:-15px;width:18px}.table-stage .seat[data-side="left"] .seat-label{left:-15px;right:auto}
+ .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-15px;right:auto}
+ .table-stage .seat .seat-label b.dealer-button{width:18px;height:18px;font-size:12px;line-height:14px}
  .table-bottom .action-area{padding:8px}
  .table-bottom .turn-row{font-size:10px}.table-bottom .timebank-button{font-size:9px}
  .table-bottom .action-buttons{gap:5px}

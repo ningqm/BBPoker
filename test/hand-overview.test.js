@@ -140,15 +140,38 @@ test('partial shown cards remain partial and never derive hidden ranks or privat
   assert.doesNotMatch(html, /隐藏牌型SECRET|黑桃 K|方块 K|黑桃 Q|黑桃 J|黑桃 10/);
 });
 
-test('rabbit board is separate from the actual result and rejects invalid prefixes, duplicates and showdown additions', () => {
+test('rabbit cards fill the final board slots while keeping distinct non-result markings and rejecting invalid additions', () => {
   const hand = basic(); hand.rabbit = { originalCount: 3, board: [...hand.board, '5c', '6s'] };
-  const html = renderHandOverview(hand, 'a'), actual = html.split('<aside class="ho-rabbit">')[0];
+  const before = structuredClone(hand), html = renderHandOverview(hand, 'a');
+  const board = html.split('<div class="ho-mine">')[0];
   assert.match(html, /补看余牌/); assert.match(html, /手牌已结束，不计输赢/); assert.match(html, /aria-label="黑桃 6"/);
-  assert.doesNotMatch(actual, /aria-label="黑桃 6"|aria-label="梅花 5"/);
+  assert.match(board, /aria-label="黑桃 6"/); assert.match(board, /aria-label="梅花 5"/);
+  assert.equal((board.match(/class="ho-supplemental"/g) || []).length, 2);
+  assert.equal((board.match(/aria-label="本手未发出"/g) || []).length, 0);
+  assert.deepEqual(hand, before);
   for (const board of [['Ac', '3d', '4h', '5c', '6s'], [...hand.board, '2c', '6s']]) {
     assert.doesNotMatch(renderHandOverview({ ...hand, rabbit: { originalCount: 3, board } }, 'a'), /ho-rabbit/);
   }
   hand.result.showdown = true; assert.doesNotMatch(renderHandOverview(hand, 'a'), /ho-rabbit/);
+});
+
+test('a just-settled history marks pending public cards and never invents the missing turn or river', () => {
+  const hand = basic(); hand.rabbit = { originalCount: 3, board: [...hand.board], active: true };
+  const html = renderHandOverview(hand, 'a'), board = html.split('<div class="ho-mine">')[0];
+  assert.equal((board.match(/aria-label="等待补看余牌"/g) || []).length, 2);
+  assert.match(html, /余牌稍后自动更新/); assert.doesNotMatch(html, /class="ho-supplemental"/);
+  hand.rabbit.board.push('5c');
+  const partial = renderHandOverview(hand, 'a').split('<div class="ho-mine">')[0];
+  assert.equal((partial.match(/aria-label="等待补看余牌"/g) || []).length, 1);
+  assert.equal((partial.match(/class="ho-supplemental"/g) || []).length, 1);
+});
+
+test('an ordinary river showdown shows all five actual cards without supplemental labels', () => {
+  const h = engine([1000, 1000]); finish(h);
+  const record = filtered(h), html = renderHandOverview(record, 'a').split('<div class="ho-mine">')[0];
+  assert.equal(record.board.length, 5);
+  assert.equal((html.match(/class="ho-card /g) || []).length, 5);
+  assert.doesNotMatch(html, /ho-supplemental|本手未发出|等待补看/);
 });
 
 test('a viewer absent from the dealt players still sees their actual fish payout without invented hole cards', () => {

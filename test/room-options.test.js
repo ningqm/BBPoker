@@ -36,9 +36,9 @@ test('BB configuration fixes per-transfer limits and validates timing and cumula
   assert.equal(s.minBuyIn, 2000); assert.equal(s.maxBuyIn, 20000); assert.equal(s.squidUnit, 60);
   assert.equal(s.maxTotalBuyInBB, null); assert.equal(s.buyInStepBB, 50); assert.equal(s.bombIntervalMinutes, 10);
   assert.equal(s.actionSeconds, 20); assert.equal(s.durationMinutes, 60); assert.equal(s.approvalRequired, false);
-  assert.equal(s.timeBankCards, 3); assert.equal(s.timeBankSeconds, 30);
+  assert.equal(s.timeBankCards, 6); assert.equal(s.timeBankSeconds, 30);
   for (const input of [{ maxTotalBuyInBB: NaN }, { maxTotalBuyInBB: Infinity }, { maxTotalBuyInBB: 50 }, { maxTotalBuyInBB: 125 }, { squidUnitBB: .5 },
-    { bombAnteBB: Infinity }, { bombIntervalMinutes: 0 }, { bombIntervalMinutes: 121 }, { timeBankCards: -1 }, { timeBankSeconds: 0 }, { durationMinutes: NaN }, { mushroom: true }]) assert.throws(() => settingsFor(input));
+    { bombAnteBB: Infinity }, { bombIntervalMinutes: 0 }, { bombIntervalMinutes: 121 }, { durationMinutes: NaN }, { mushroom: true }]) assert.throws(() => settingsFor(input));
   assert.equal(settingsFor({ minBuyIn: 200, maxBuyIn: 2000, squidUnit: 30 }).minBuyInBB, 100);
 });
 
@@ -95,7 +95,7 @@ test('time cards extend only a live actor turn and retry is idempotent without a
   const i = f.users.findIndex(u => u.id === f.room.hand.actingId), commandId = randomUUID(), h = f.room.hand;
   const log = structuredClone(h.log), deadline = f.room.deadline;
   f.cmd(i, 'timebank', { commandId });
-  assert.equal(f.room.deadline, deadline + 30000); assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 2);
+  assert.equal(f.room.deadline, deadline + 30000); assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 5);
   f.cmd(i, 'timebank', { commandId });
   assert.equal(f.room.deadline, deadline + 30000); assert.equal(h.timeBankUses.length, 1); assert.deepEqual(h.log, log);
   assert.throws(() => f.cmd((i + 1) % 3, 'timebank'), /当前行动/);
@@ -106,22 +106,23 @@ test('time cards extend only a live actor turn and retry is idempotent without a
   assert.notEqual(h.actingId, f.users[i].id);
 });
 
-test('time card reset uses fixed room windows, replaces rather than accumulates, and cannot be farmed by reseating', t => {
+test('time cards grant the whole session once and do not reset on half hours or reseating', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
   const f = fixture({ durationMinutes: 120, timeBankCards: 5, timeBankSeconds: 45 }); f.cmd(0, 'start');
-  const i = f.users.findIndex(u => u.id === f.room.hand.actingId);
-  for (let n = 0; n < 5; n++) f.cmd(i, 'timebank');
+  const i = f.users.findIndex(u => u.id === f.room.hand.actingId), initial = f.room.deadline;
+  assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 12);
+  for (let n = 0; n < 12; n++) f.cmd(i, 'timebank');
+  assert.equal(f.room.deadline, initial + 12 * 30000);
   assert.throws(() => f.cmd(i, 'timebank'), /用完/); finish(f);
-  f.cmd(0, 'autoDeal', { paused: true }); // Keep the now-online fixture focused on the half-hour timer.
-  f.service.completeRabbit(f.room, timestamp); // Isolate the half-hour time-bank timer after supplemental cards.
+  f.cmd(0, 'autoDeal', { paused: true });
+  f.service.completeRabbit(f.room, timestamp);
   f.cmd(i, 'stand'); f.cmd(i, 'sit', { seat: i, amountBB: 100 });
   assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 0);
-  assert.equal(f.service.needsTick(f.room, timestamp + 1799999), false);
-  timestamp += 1800000; assert.equal(f.service.tick(f.room, timestamp), true);
-  assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 5);
-  assert.equal(f.service.tick(f.room, timestamp), false);
-  timestamp += 3600000; assert.equal(f.service.tick(f.room, timestamp), true);
-  assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 5);
+  for (const delay of [1799999, 1800000, 5400000]) {
+    assert.equal(f.service.tick(f.room, timestamp + delay), false);
+    assert.equal(f.room.members[f.users[i].id].timeBank.remaining, 0);
+  }
+  assert.equal(f.service.state(f.room, f.users[i].id).timeBankResetAt, null);
 });
 
 test('last five minutes skip new squid and bomb rounds while an existing squid round may continue', t => {

@@ -41,13 +41,12 @@ function fixture(t, { count = 4, settings = {} } = {}) {
   return { users, store, service, room, command, advance, start, bust, connect, state, get time() { return time; } };
 }
 
-test('new rooms default to 20 seconds while explicit 15–90 values and historical room settings stay unchanged', t => {
+test('new and copied table settings use fixed 20-second actions', t => {
   assert.equal(settingsFor().actionSeconds, 20);
-  for (const value of [15, 20, 30, 90]) assert.equal(settingsFor({ actionSeconds: value }).actionSeconds, value);
-  assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 30 }).actionSeconds, 30);
-  assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 15 }).actionSeconds, 15);
-  for (const value of [14, 91, 30.5]) assert.throws(() => settingsFor({ actionSeconds: value }));
-  const f = fixture(t, { settings: { actionSeconds: 15 } }); f.start(); assert.equal(f.room.deadline, f.time + 15000);
+  for (const value of [15, 20, 30, 90, 14, 91, 30.5]) assert.equal(settingsFor({ actionSeconds: value }).actionSeconds, 20);
+  assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 30 }).actionSeconds, 20);
+  assert.equal(settingsFor({}, { ...settingsFor(), actionSeconds: 15 }).actionSeconds, 20);
+  const f = fixture(t, { settings: { actionSeconds: 15 } }); f.start(); assert.equal(f.room.deadline, f.time + 20000);
 });
 
 test('a freshly busted seated player gets exactly one shared extra five seconds and is skipped after its deadline', t => {

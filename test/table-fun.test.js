@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { THROWABLES, createTableFunTracker, renderSeatMask, mountFunEffects } from '../public/table-fun.js';
+import { THROWABLES, createTableFunTracker, mountFunEffects } from '../public/table-fun.js';
 
 const NOW = 1000000;
 const BOARD = ['Ac', '2d', '7h', '9s', 'Jc'];
@@ -45,7 +45,7 @@ test('bursts are bounded and stale snapshots cannot roll back event or mask stat
   const current = room({ revision: 5, values: [95, 5], chat: Array.from({ length: 8 }, (_, i) => message(`fresh-${i}`)) });
   assert.equal(update(tracker, current).effects.length, 4);
   const stale = update(tracker, room({ revision: 2, values: [5, 95], chat: [message('not-new')] }));
-  noEffects(stale); assert.deepEqual(stale.maskIds, ['b']);
+  noEffects(stale); assert.deepEqual(stale.maskIds, []);
   noEffects(update(tracker, current));
 });
 
@@ -122,15 +122,9 @@ test('ties, uncertain samples, low edges and multiple pots stay neutral', () => 
   assert.deepEqual(update(multi, b), { effects: [], maskIds: [] });
 });
 
-test('masks require an active all-in runout, clear single leader and a <=10% trailing share', () => {
+test('even extreme all-in underdogs never receive a clown mask', () => {
   const tracker = createTableFunTracker();
-  assert.deepEqual(update(tracker, room({ values: [85, 10, 5] })).maskIds, ['b', 'c']);
-  assert.deepEqual(update(tracker, room({ revision: 2, values: [85, 10, 5], runout: false })).maskIds, []);
-  assert.equal(renderSeatMask('b', ['b']), '<span class="fun-mask" aria-hidden="true">🤡</span>');
-  assert.equal(renderSeatMask('a', ['b']), '');
-  assert.equal(renderSeatMask('b', ['b'], { enabled: false }), '');
-  const malformed = room({ revision: 3, values: [95, 5] }); malformed.hand.equity.pots[0].players[0].equity = NaN;
-  assert.deepEqual(update(tracker, malformed).maskIds, []);
+  for(const values of [[95,5],[99,1],[85,10,5]])assert.deepEqual(update(tracker,room({values})).maskIds,[]);
 });
 
 // A tiny DOM fixture exercises integration behaviours (not a copy of the renderer).

@@ -9,9 +9,10 @@ import {execFileSync} from 'node:child_process';
 import * as records from '../public/records.js';
 import {formatHandBB} from '../public/hand-overview.js';
 import {createRequestGuard} from '../public/platform.js';
+import {historyBoard} from '../public/replay.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
-function harness({dom=false}={}){
+function harness({dom=false,realCards=false}={}){
   const calls=[],modals=[],toasts=[],events={};let client;
   const documentRef={currentForm:null,activeElement:null,querySelector(selector){return this.currentForm&&selector==='#'+this.currentForm.id?this.currentForm:null;},addEventListener(name,callback){events[name]=callback;}};
   function rebuild(kind){
@@ -19,14 +20,14 @@ function harness({dom=false}={}){
     const list=kind==='hands'?client.state.library:client.state.sessions,fields=['q','from','to'].map(name=>({name,value:list.filters?.[name]||'',type:name==='q'?'search':'date',selectionStart:2,selectionEnd:2,focus(){documentRef.activeElement=this;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}}));fields.namedItem=name=>fields.find(field=>field.name===name);
     const form={id:kind==='hands'?'hand-records-filter-form':'session-records-filter-form',dataset:{recordKind:kind,recordKey:records.recordFilterKey(list)},isConnected:true,elements:fields,contains:field=>fields.includes(field)};for(const field of fields)field.form=form;documentRef.currentForm=form;
   }
-  const context=vm.createContext({statsUI,records,formatHandBB,formatChips,formatAggregate,getDisplayUnit,unitLabel,createRequestGuard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
+  const context=vm.createContext({statsUI,records,formatHandBB,formatChips,formatAggregate,getDisplayUnit,unitLabel,createRequestGuard,historyBoard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
     api(path){return new Promise((resolve,reject)=>calls.push({path,resolve,reject}));},document:dom?documentRef:undefined,app:{contains:()=>client.state.page!=='room'},render(){if(client.state.page==='hands'||client.state.page==='sessions')rebuild(client.state.page);},
     openModal(title,body,kind){client.state.modal={kind,title};modals.push({title,body,kind});if(kind==='hand-library')rebuild('hands');if(kind==='session-list')rebuild('sessions');},closeModal(){client.state.modal=null;},
     toast(message){toasts.push(message);},navigate(){assert.fail('table overlays must not navigate');},
     avatar:()=>'',avatarCache:{hydrate(){}},num:n=>String(n||0),signed:n=>`${n>0?'+':''}${n||0}`,profitClass:()=>'',fmtDate:String,cards:()=>'',card:()=>'',
     btn:(label,action,cls='',attrs='')=>`<button data-action="${action}" class="${cls}" ${attrs}>${label}</button>`,renderReplay(){},
   });
-  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary,handLibraryContent,applyRecordFilters,setRecordPeriod,resetRecordFilters,setLibraryView,setOpponentMode,sortLibraryOpponents,searchLibraryOpponents,clearOpponentSearch,selectLibraryOpponent};'].join('\n'),context);
+  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),...(realCards?[section('const card=','const feedback=')]:[]),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary,handLibraryContent,applyRecordFilters,setRecordPeriod,resetRecordFilters,setLibraryView,setOpponentMode,sortLibraryOpponents,searchLibraryOpponents,clearOpponentSearch,selectLibraryOpponent};'].join('\n'),context);
   client=context.client;client.state.user={id:'me',name:'me'};client.state.page='hands';return {...client,calls,modals,toasts,events,document:documentRef};
 }
 test('custom dates and quick ranges use local day boundaries across timezone and calendar changes',()=>{
@@ -80,6 +81,20 @@ test('static hand cards show net BB and preserve absent-player squid settlements
   const absent=c.handSummary({id:'squid',roomCode:'123456',number:9,bigBlind:2,participated:false,net:0,miniNet:-40,totalNet:-40,pot:20});
   assert.match(absent,/鱿鱼结算/);assert.match(absent,/-20 BB/);assert.doesNotMatch(absent,/观战|data-action="favorite"/);
   const legacy=c.handSummary({id:'legacy',roomCode:'123456',number:1,net:3,pot:10});assert.match(legacy,/— BB/);assert.doesNotMatch(legacy,/NaN|Infinity|undefined BB/);
+});
+
+test('actual history row renders public turn and river previews in their board slots while private holes stay hidden',()=>{
+  const c=harness({realCards:true}),hand={id:'flop-fold',roomCode:'123456',number:9,bigBlind:10,net:20,pot:100,
+    cards:[null,null],board:['2c','3d','4h'],rabbit:{originalCount:3,board:['2c','3d','4h','Js','Qh']}};
+  const before=structuredClone(hand),html=c.handSummary(hand),board=html.split(/<div class="record-board"[^>]*>/)[1].split('</div>')[0];
+  assert.match(board,/aria-label="♠J"/);assert.match(board,/aria-label="♥Q"/);
+  assert.equal((board.match(/rabbit-card/g)||[]).length,2);
+  assert.equal((board.match(/aria-label="尚未发出"/g)||[]).length,0);
+  assert.equal((html.match(/aria-label="未公开的牌"/g)||[]).length,2);
+  assert.match(html,/补看|不计输赢/);assert.deepEqual(hand,before);
+  const old=c.handSummary({...hand,rabbit:null}),oldBoard=old.split(/<div class="record-board"[^>]*>/)[1].split('</div>')[0];
+  assert.equal((oldBoard.match(/aria-label="尚未发出"/g)||[]).length,2);
+  assert.doesNotMatch(oldBoard,/♠J|♥Q/);
 });
 
 test('list refreshes preserve unsubmitted drafts and caret without changing applied filters or restoring a different filter',()=>{

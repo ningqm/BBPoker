@@ -119,7 +119,13 @@ test('continuity oracle: committing every chip is not a new broke-player blocker
 });
 
 test('continuity oracle: insufficient-player grace observes the running hand but permits partial settlement only after it ends', t => {
-  const f = fixture(t, { actionSeconds: 90 }); f.win(0); f.start();
+  const f = fixture(t); f.win(0); f.start();
+  // Keep the hand legitimately live across the independent 90-second squid
+  // grace: three fixed time cards extend this actor's 20-second turn to 110.
+  const actor = f.users.findIndex(u => u.id === f.room.hand.actingId);
+  for (let n = 0; n < 3; n++) f.cmd(actor, 'timebank');
+  assert.equal(f.room.deadline, f.time + 110000);
+  assert.equal(f.room.members[f.users[actor].id].timeBank.remaining, 3);
   for (const i of [0, 2, 3]) f.connect(i, false);
   const before = roundSnapshot(f), since = f.room.mini.squid.blockerSince;
   f.advance(89000);
@@ -127,7 +133,11 @@ test('continuity oracle: insufficient-player grace observes the running hand but
   assert.equal(f.service.canSettleSquid(f.room, f.users[1].id, f.time), false);
   assert.throws(() => f.cmd(1, 'settleSquid'));
   assert.equal(rows(f).length, 0); assert.deepEqual(roundSnapshot(f), before); conserved(f);
-  f.win(0); f.advance(1000); assert.equal(f.service.canSettleSquid(f.room, f.users[1].id, f.time), true);
+  f.advance(1000);
+  assert.equal(f.service.canSettleSquid(f.room, f.users[1].id, f.time), false, 'even elapsed grace cannot settle a live hand');
+  assert.throws(() => f.cmd(1, 'settleSquid'));
+  assert.equal(rows(f).length, 0); assert.deepEqual(roundSnapshot(f), before);
+  f.win(0); assert.equal(f.service.canSettleSquid(f.room, f.users[1].id, f.time), true);
   f.cmd(1, 'settleSquid'); assert.equal(rows(f).length, 4);
   assert.deepEqual(Object.fromEntries(rows(f).map(r => [r.playerId, r.amount])), Object.fromEntries([6, -2, -2, -2].map((amount, i) => [f.users[i].id, amount])));
   assert.ok(rows(f).every(r => r.reason === 'partial')); conserved(f);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHand, applyAction, availableActions } from '../src/poker.js';
-import { replaySnapshot, replayStreets } from '../public/replay.js';
+import { historyBoard, replaySnapshot, replayStreets } from '../public/replay.js';
 
 const deck = [...'cdhs'].flatMap(suit => [...'23456789TJQKA'].map(rank => rank + suit));
 
@@ -73,4 +73,55 @@ test('rabbit metadata on live, showdown, inconsistent and legacy records cannot 
     assert.equal(frame.rabbit, null);
     assert.deepEqual(frame.board, original.board);
   }
+});
+
+test('history list and detail place already public turn and river cards in the same five-card row', () => {
+  for (const count of [0, 3, 4]) {
+    const hand = recordAtFold(count), before = structuredClone(hand);
+    const expected = { board: [...hand.rabbit.board], actualCount: count, rabbitCount: 5 - count, pending: false };
+    assert.deepEqual(historyBoard(hand), expected);
+    const summary = { board: hand.board, rabbit: { board: hand.rabbit.board, originalCount: count } };
+    assert.deepEqual(historyBoard(summary, { summary: true }), expected);
+    assert.deepEqual(historyBoard(summary).board, hand.board, 'only the explicit summary contract may omit showdown metadata');
+    assert.deepEqual(hand, before);
+    const display = historyBoard(hand); display.board[4] = 'As';
+    assert.deepEqual(hand, before, 'a renderer must not mutate stored hand data');
+  }
+});
+
+test('five-card replay display adds supplementary cards only at settlement and hides them when rewinding', () => {
+  const hand = recordAtFold(3);
+  for (let index = 0; index <= hand.log.length; index++) {
+    const frame = replaySnapshot(hand, index, 'a');
+    const display = historyBoard({ ...hand, board: frame.board, rabbit: frame.rabbit });
+    assert.deepEqual(display.board, index === hand.log.length ? hand.rabbit.board : frame.board);
+    assert.equal(display.rabbitCount, index === hand.log.length ? 2 : 0);
+    assert.deepEqual(frame.players[1].cards, [null, null]);
+  }
+  assert.equal(historyBoard({ ...hand, board: [], rabbit: null }).board.length, 0);
+});
+
+test('pending histories expose only delivered supplementary cards and never future card fields', () => {
+  const hand = recordAtFold(3);
+  hand.rabbit.board.length = 3; hand.rabbit.active = true;
+  hand.rabbit.futureCards = ['Ac', 'Ad'];
+  assert.deepEqual(historyBoard(hand), { board: hand.board, actualCount: 3, rabbitCount: 0, pending: true });
+  hand.rabbit.board.push('Qc');
+  assert.deepEqual(historyBoard(hand), { board: [...hand.board, 'Qc'], actualCount: 3, rabbitCount: 1, pending: true });
+});
+
+test('history display rejects raw decks, playing hands, malformed boards and untrusted supplementary prefixes', () => {
+  const hand = recordAtFold(3);
+  for (const key of ['deck', 'audit', 'allInLock']) assert.throws(() => historyBoard({ ...hand, [key]: {} }), /过滤/);
+  for (const patch of [
+    { status: 'playing' }, { result: { showdown: true } },
+    { rabbit: { ...hand.rabbit, originalCount: 0 } },
+    { rabbit: { ...hand.rabbit, board: [...hand.board, hand.board[0], 'Ac'] } },
+    { rabbit: { ...hand.rabbit, board: ['Ac', ...hand.rabbit.board.slice(1)] } },
+  ]) {
+    const view = historyBoard({ ...hand, ...patch });
+    assert.deepEqual(view.board, hand.board); assert.equal(view.rabbitCount, 0); assert.equal(view.pending, false);
+  }
+  assert.deepEqual(historyBoard({ ...hand, board: ['invalid'], rabbit: { originalCount: 0, board: ['As'], active: true } }),
+    { board: [], actualCount: 0, rabbitCount: 0, pending: false });
 });

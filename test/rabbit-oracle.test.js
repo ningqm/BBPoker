@@ -6,7 +6,8 @@ import { availableActions, rabbitRunout } from '../src/poker.js';
 import { verifyProof } from '../src/fairness.js';
 import { aggregateAnalytics } from '../src/analytics.js';
 import { exportPhh } from '../src/phh.js';
-import { replaySnapshot } from '../public/replay.js';
+import { historyBoard, replaySnapshot } from '../public/replay.js';
+import { renderHandOverview } from '../public/hand-overview.js';
 
 function fixture(count, settings = {}) {
   const store = { data: { version: 1, users: {}, rooms: {}, hands: [], ledger: [] } };
@@ -83,6 +84,14 @@ test('independent deal-position oracle covers 2–9 players and all fold streets
       assert.equal(replaySnapshot(history, Math.max(0, history.log.length - 1), f.observer).rabbit, null);
       const result = replaySnapshot(history, history.log.length, f.observer);
       assert.deepEqual(result.board, h.board); assert.deepEqual(result.rabbit, state.hand.rabbit);
+      const display = historyBoard(history), summary = f.service.handLibrary(f.users[0].id).hands[0];
+      assert.deepEqual(display.board, expected.slice(0, exposed));
+      assert.equal(display.actualCount, originalCount); assert.equal(display.rabbitCount, exposed - originalCount);
+      assert.equal(display.pending, exposed < 5);
+      assert.deepEqual(historyBoard(summary, { summary: true }).board, expected.slice(0, exposed));
+      const markup = renderHandOverview(history, f.observer).split('<div class="ho-mine">')[0];
+      assert.equal((markup.match(/class="ho-supplemental"/g) || []).length, exposed - originalCount);
+      assert.equal((markup.match(/aria-label="等待补看余牌"/g) || []).length, exposed < 5 ? 5 - originalCount : 0);
       if (exposed < 5) assert.equal(h.rabbit.active, true);
       else { assert.equal(h.rabbit.active, false); assert.equal(f.room.nextHandAt, timestamp + 4000); }
     }

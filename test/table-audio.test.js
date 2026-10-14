@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES } from '../public/table-feedback.js';
+import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES, chipContactSamples } from '../public/table-feedback.js';
 
 const blinds = [{ seq: 1, type: 'smallBlind', playerId: 'a', amount: 5, street: 'preflop' }, { seq: 2, type: 'bigBlind', playerId: 'b', amount: 10, street: 'preflop' }];
 function frame({ log = blinds, seq = 1, actor = 'a', deadline = 30000, status = 'playing', allIn = [] } = {}) {
@@ -157,7 +157,7 @@ test('new action replaces speech; timer sounds do not cancel voice; voice-off re
   await sounds.unlock(); await sounds.preloadVoices();
   sounds.playFeedback({ sound: 'yourturn', chips: true, speech: 'call' });
   const firstVoice = fixture.stats.sources.find(source => source.buffer.cue === 'call');
-  assert.ok(firstVoice.started); assert.equal(fixture.stats.sources.filter(source => source.buffer.noise).length, 4);
+  assert.ok(firstVoice.started); assert.equal(fixture.stats.sources.filter(source => source.buffer.noise).length, 1);
   now += 1000; sounds.play('countdown'); assert.equal(firstVoice.stopped, undefined, 'timer cue coexists with short speech');
   sounds.speak('raise'); assert.equal(firstVoice.stopped, true);
   const secondVoice = fixture.stats.sources.at(-1); assert.equal(secondVoice.buffer.cue, 'raise');
@@ -192,9 +192,38 @@ test('bundled recorded cues are short mono PCM WAV with real non-silent audio', 
     assert.equal(data.readUInt16LE(20), 1); assert.equal(data.readUInt16LE(22), 1);
     const rate = data.readUInt32LE(24); assert.equal(data.readUInt16LE(34), 16);
     assert.equal(data.toString('ascii', 36, 40), 'data'); const count = data.readUInt32LE(40) / 2;
-    assert.ok(count / rate >= 0.25 && count / rate <= 1, `${type} should be concise`);
+    assert.ok(count / rate >= 0.25 && count / rate <= 1.6, `${type} should be concise`);
     let peak = 0; for (let i = 0; i < count; i++) peak = Math.max(peak, Math.abs(data.readInt16LE(44 + i * 2)));
     assert.ok(peak >= 10000 && peak < 32767, `${type} is audible without clipping`);
   }
-  assert.ok(total < 150000, 'no oversized media payload for mobile players');
+  assert.ok(total < 400000, 'all seven voice files together stay below 400 KB');
+});
+
+test('chip foley has bounded gain, quiet tails and separated contacts at browser sample rates', () => {
+  for (const rate of [22050, 44100, 48000, 96000]) {
+    const samples = chipContactSamples(rate);
+    assert.equal(samples.length, Math.ceil(rate * 0.32));
+    assert.ok(samples.every(Number.isFinite));
+    const peak = samples.reduce((value, sample) => Math.max(value, Math.abs(sample)), 0);
+    assert.ok(peak > 0.1 && peak < 0.75, `unclipped and audible at ${rate}`);
+    const energy = (start, end) => {
+      const range = samples.slice(Math.round(start * rate), Math.round(end * rate));
+      return range.reduce((value, sample) => value + sample * sample, 0) / range.length;
+    };
+    assert.ok(energy(0.012, 0.025) > 20 * energy(0.03, 0.04), 'each contact decays promptly');
+    assert.ok(energy(0.047, 0.06) > 10 * energy(0.075, 0.09), 'irregular second contact is distinct');
+    assert.ok(energy(0.29, 0.32) < 1e-10, 'no sustained ringing or cutoff tail');
+  }
+});
+
+test('chip-only output uses one reusable foley buffer without pitched oscillators', async () => {
+  const fixture = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, voiceEnabled: false, AudioContext: fixture.AudioContext, document: fixture.doc, fetch: fixture.fetcher, now: () => now });
+  await sounds.unlock(); sounds.play('chip');
+  const first = fixture.stats.sources[0];
+  assert.ok(first.started); assert.equal(fixture.stats.oscillators.length, 0);
+  now += 200; sounds.play('chip');
+  assert.equal(fixture.stats.sources[1].buffer, first.buffer, 'reuse without reallocating on every action');
+  assert.equal(first.stopped, true, 'a rapid new action replaces the previous effect');
+  sounds.dispose(); assert.equal(fixture.stats.sources[1].stopped, true);
 });

@@ -69,18 +69,18 @@ function buyinFormFrom(html){
 test('room presets submit BB settings, direct buy-in and defaults without hidden mushroom/approval controls',()=>{
   const c=harness(),html=c.settingFields(c.defaults),form=formFrom(html),s=c.readSettings(form);
   assert.equal(s.smallBlind,5);assert.equal(s.bigBlind,10);assert.equal(s.minBuyInBB,100);assert.equal(s.maxBuyInBB,1000);
-  assert.equal(s.actionSeconds,20);assert.equal(settingsFor({}).actionSeconds,20);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
+  assert.equal(s.actionSeconds,20);assert.equal(settingsFor({}).actionSeconds,20);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,6);assert.equal(s.timeBankSeconds,30);
   assert.equal(s.bombPot,false);assert.equal(s.bombAnteBB,2);assert.equal(s.bombIntervalMinutes,10);
   assert.equal(s.squid,false);assert.equal(s.squidUnitBB,2);
   assert.doesNotThrow(()=>settingsFor(s));
   assert.doesNotMatch(html,/蘑菇|name="(?:approvalRequired|minBuyIn|maxBuyIn)"/);
   c.state.createKeyRequired=true;c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);assert.doesNotMatch(c.modals.at(-1).body,/建房口令|name="createKey"/);
 });
-test('twenty seconds is a new-room default while saved thinking-time choices remain configurable',()=>{
+test('thinking time is fixed at twenty seconds even when reusing legacy choices',()=>{
   const c=harness();
   for(const seconds of [15,20,30,60,90]){
     const s=c.readSettings(formFrom(c.settingFields({...c.defaults,actionSeconds:seconds})));
-    assert.equal(s.actionSeconds,seconds);assert.equal(settingsFor(s).actionSeconds,seconds);
+    assert.equal(s.actionSeconds,20);assert.equal(settingsFor(s).actionSeconds,20);
   }
 });
 test('cumulative caps are optional and blind presets keep fixed transaction BB values',()=>{
@@ -160,7 +160,7 @@ test('creation keeps only name, blinds and duration outside Advanced; expanding 
   const closed=c.settingFields(settings,{roomName:'新桌'}),opened=c.settingFields(settings,{roomName:'新桌',advancedOpen:true});
   assert.match(closed,/<details[^>]*data-advanced-settings\s*>/);assert.match(opened,/<details[^>]*data-advanced-settings open>/);
   const advanced=closed.slice(closed.indexOf('<details'),closed.indexOf('</details>'));
-  for(const key of ['squid','bombPot','maxTotalBuyInBB','maxPlayers','actionSeconds','timeBankCards','timeBankSeconds'])assert.match(advanced,new RegExp('name="'+key+'"'));
+  for(const key of ['squid','bombPot','maxTotalBuyInBB','maxPlayers'])assert.match(advanced,new RegExp('name="'+key+'"'));
   assert.deepEqual(c.readSettings(formFrom(closed)),c.readSettings(formFrom(opened)));
   assert.match(closed,/鱿鱼 7 BB/);assert.match(closed,/炸弹池每 10 分钟 \/ 4 BB/);
 });
@@ -285,4 +285,21 @@ test('sit and rebuy confirmations cannot submit from disconnected or resynchroni
     assert.equal(c.commands.length,1);assert.equal(c.commands[0].type,isSit?'sit':'buyin');
     assert.equal(c.commands[0].amountBB,200);assert.equal(c.state.modal,null);
   }
+});
+
+test('no timing controls are offered; duration immediately determines the one-time grant',()=>{
+ const c=harness();
+ for(const [duration,cards] of [[30,3],[60,6],[90,9],[120,12],[45,6],[720,72]]){
+  const html=c.settingFields({...c.defaults,durationMinutes:duration,timeBankCards:999,actionSeconds:90});
+  assert.doesNotMatch(html,/name="(?:actionSeconds|timeBankCards|timeBankSeconds)"|每半小时重置/);
+  const result=c.readSettings(formFrom(html));assert.equal(result.timeBankCards,cards);assert.equal(result.actionSeconds,20);assert.equal(result.timeBankSeconds,30);
+  assert.match(c.settingsOverview(result),new RegExp('开局 '+cards+' 张时间牌'));
+ }
+});
+test('completed contenders remain visible after leaving their seat and folded cards stay private',()=>{
+ const c=harness({autoDealText:()=>''}),room={status:'waiting',settings:{bigBlind:10},players:[],actions:{},autoDeal:{paused:true},hand:{id:'finished',status:'complete',result:{showdown:true}}};
+ const me={id:'me',seat:0,inHand:true,cards:['As','Kh']};room.meId='me';room.players=[me,{id:'gone',name:'离座朋友',seat:null,inHand:true,cards:['Qs','Qh'],folded:false}];c.state.room=room;
+ let html=c.actionArea(room,me,false);assert.match(html,/离座玩家摊牌/);assert.match(html,/离座朋友/);assert.match(html,/♠Q|Q<span>♠/);assert.match(html,/♥Q|Q<span>♥/);
+ room.players[1].folded=true;room.players[1].cards=[null,null];assert.doesNotMatch(c.actionArea(room,me,false),/离座玩家摊牌|离座朋友/);
+ room.players[1].folded=false;room.players[1].seat=1;assert.doesNotMatch(c.actionArea(room,me,false),/离座玩家摊牌/);
 });

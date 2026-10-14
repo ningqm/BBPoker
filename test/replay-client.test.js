@@ -3,13 +3,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { createReplayPlayback, replaySnapshot, replayStreets, REPLAY_SPEEDS } from '../public/replay.js';
+import { createReplayPlayback, historyBoard, replaySnapshot, replayStreets, REPLAY_SPEEDS } from '../public/replay.js';
 import * as money from '../public/money.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
 function node(){return {value:'',innerHTML:'',textContent:'',dataset:{},disabled:false,attributes:{},setAttribute(name,value){this.attributes[name]=value;},classList:{toggle(){}}};}
-function harness({unit='bb',historicalBlind=10}={}){
+function harness({unit='bb',historicalBlind=10,realCards=false}={}){
   money.setDisplayUnit(unit);
   const hand={id:'replay-a',...(historicalBlind===undefined?{}:{settings:{bigBlind:historicalBlind}}),players:[{id:'me',name:'Me',startingStack:100,cards:['As','Ah']},{id:'friend',name:'Friend',startingStack:100,cards:['Ks','Kh']}],log:[
     {type:'smallBlind',playerId:'me',amount:5},{type:'bigBlind',playerId:'friend',amount:10},
@@ -26,13 +26,14 @@ function harness({unit='bb',historicalBlind=10}={}){
   const dialog={open:true,innerHTML:'initial',scrollTop:23,querySelector:selector=>selectors.get(selector)||null,querySelectorAll:selector=>selector==='.replay-streets button'?steps:logs,close(){this.open=false;}};
   const listeners=new Map(),windowListeners=new Map(),timers=new Map();let next=0;
   const document={visibilityState:'visible',querySelector:selector=>selectors.get(selector)||null,addEventListener(type,fn){const rows=listeners.get(type)||[];rows.push(fn);listeners.set(type,rows);}};
-  const context=vm.createContext({...money,clearTimeout,statsUI,state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
-    replaySnapshot,replayStreets,REPLAY_SPEEDS,createReplayPlayback,
+  const context=vm.createContext({historyRefresh:{watch(){},stop(){}},...money,clearTimeout,statsUI,state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
+    replaySnapshot,replayStreets,REPLAY_SPEEDS,createReplayPlayback,historyBoard,
     num:String,profitClass:()=>'',esc:String,fmtDate:()=>'',render(){},saveTablePreferences(){},
     cards:cards=>cards.join(','),card:card=>card||'?',btn:()=>'',openModal(){throw new Error('Existing playback must not replace the modal');},
     updateSettingConstraints(){},updateBuyinSummary(){},resumeTable(){},$:selector=>selectors.get(selector),
   });
   vm.runInContext([
+    ...(realCards?[section('const card=','const feedback=')]:[]),
     section('const chips=','const profitClass='),
     section('function moneyUnitToggle(', 'function header('),
     section('function eventText(', 'async function historyModal('),
@@ -121,4 +122,21 @@ test('pagehide or an interrupted pointer session leaves replay paused instead of
   assert.equal(c.timers.size,0);assert.equal(c.state.replayPlayback.snapshot().playing,false);
   c.playReplay();c.dispatch('pointerdown',{target:range});c.dispatch('pointercancel');c.dispatch('pointerup');
   assert.equal(c.timers.size,0);
+});
+
+test('completed replay puts turn and river preview in the board row, and rewinding hides them again',()=>{
+  const c=harness({realCards:true}),hand=c.state.replay.hand;
+  hand.board=['2c','3h','4s'];hand.result={showdown:false};hand.players[1].cards=[null,null];
+  hand.rabbit={originalCount:3,board:[...hand.board,'Js','Qh'],active:false};
+  hand.log.push({type:'fold',playerId:'friend',street:'flop'},{type:'payout',playerId:'me',amount:20,street:'flop'});
+  c.state.replay.index=hand.log.length;c.renderReplay();
+  const frame=c.selectors.get('[data-replay-frame]').innerHTML;
+  assert.match(frame,/aria-label="♠J"/);assert.match(frame,/aria-label="♥Q"/);
+  assert.equal((frame.match(/rabbit-card/g)||[]).length,2);
+  assert.doesNotMatch(frame,/aria-label="尚未发出"/);
+  assert.equal((c.selectors.get('[data-replay-players]').innerHTML.match(/aria-label="未公开的牌"/g)||[]).length,2);
+  c.state.replay.index=5;c.renderReplay();
+  const previous=c.selectors.get('[data-replay-frame]').innerHTML;
+  assert.doesNotMatch(previous,/♠J|♥Q|rabbit-card/);
+  assert.equal((previous.match(/aria-label="尚未发出"/g)||[]).length,2);
 });

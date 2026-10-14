@@ -45,7 +45,7 @@ test('every seat count and rotated viewpoint preserves unique seats and names ou
 test('long player names and status descriptions are escaped, with all-in and position markers retained',()=>{
   const c=harness(),r=room(2),p=r.players[1];c.state.room=r;p.name='<img src=x onerror=alert(1)>';p.inHand=true;p.cards=['As','Kd'];p.allIn=true;p.bet=1234;p.squidWon=true;
   r.hand={id:'h',status:'playing',buttonSeat:1,smallBlindSeat:1,bigBlindSeat:0};const html=c.seatView(1,r);
-  assert.doesNotMatch(html,/<img/);assert.match(html,/title="&lt;img/);assert.match(html,/aria-label="与 &lt;img/);assert.match(html,/title="庄家"/);assert.match(html,/title="小盲"/);assert.match(html,/squid-mark/);assert.match(html,/title="ALL IN" data-tone="allin"/);assert.match(html,/1,234 积分/);
+  assert.doesNotMatch(html,/<img/);assert.match(html,/title="&lt;img/);assert.match(html,/aria-label="查看 &lt;img/);assert.match(html,/title="庄家"/);assert.match(html,/title="小盲"/);assert.match(html,/squid-mark/);assert.match(html,/title="ALL IN" data-tone="allin"/);assert.match(html,/1,234 积分/);
 });
 
 test('unit display changes rendered amounts without modifying seat, pot or settings values',()=>{
@@ -82,26 +82,21 @@ test('show-card controls remain visible but disabled while disconnected or anoth
   for(const state of [{connected:false,busy:false},{connected:true,busy:true}]){Object.assign(c.state,state);assert.equal((c.seatHoleCards(me,r).match(/data-action="show-card"[^>]*disabled/g)||[]).length,2);}
 });
 
-test('each opponent seat has one accessible full-seat interaction button without nested buttons',()=>{
+test('avatar opens player data instead of a full-seat interaction target',()=>{
   const c=harness(),r=room(9);c.state.room=r;
-  for(let i=1;i<r.players.length;i++){
+  for(let i=0;i<r.players.length;i++){
     const html=c.seatView(i,r),buttons=html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)||[];
-    assert.equal(buttons.length,1);assert.match(buttons[0],/class="seat-interaction-hit"/);
-    assert.match(buttons[0],new RegExp(`data-player="p${i}"`));assert.match(buttons[0],/aria-label="与 玩家昵称\d 互动"/);assert.match(buttons[0],/aria-haspopup="dialog"/);
-    assert.equal((buttons[0].match(/<button\b/g)||[]).length,1);
-    assert.match(html,/<span class="seat-avatar-button" aria-hidden="true">/);
+    assert.equal(buttons.length,1);assert.match(buttons[0],/class="seat-avatar-button"/);
+    assert.match(buttons[0],new RegExp(`data-player="p${i}"`));assert.match(buttons[0],/aria-label="查看 玩家昵称\d 的数据"/);
+    assert.match(buttons[0],/data-action="player-stats"/);assert.doesNotMatch(html,/seat-interaction-hit|data-action="interact"/);
   }
 });
-
-test('own reveal cards, empty seats, spectators and closed tables are not covered by an interaction hit target',()=>{
+test('avatar data controls do not cover own card reveals or empty seats',()=>{
   const c=harness(),r=room(3);c.state.room=r;
   r.hand={id:'own-hand',status:'complete'};Object.assign(r.players[0],{inHand:true,cards:['As','Kh'],shownIndices:[]});
-  const own=c.seatView(0,r);assert.doesNotMatch(own,/seat-interaction-hit|data-action="interact"/);assert.equal((own.match(/data-action="show-card"/g)||[]).length,2);
-  r.players.pop();const empty=c.seatView(2,r);assert.match(empty,/data-action="sit"/);assert.doesNotMatch(empty,/seat-interaction-hit/);
-  r.players[0].seat=null;assert.doesNotMatch(c.seatView(1,r),/seat-interaction-hit/);
-  r.players[0].seat=0;r.status='closed';assert.doesNotMatch(c.seatView(1,r),/seat-interaction-hit/);
+  const own=c.seatView(0,r);assert.equal((own.match(/data-action="show-card"/g)||[]).length,2);assert.equal((own.match(/data-action="player-stats"/g)||[]).length,1);
+  assert.doesNotMatch(own,/seat-interaction-hit/);r.players.pop();assert.doesNotMatch(c.seatView(2,r),/data-action="player-stats"/);
 });
-
 
 test('blind badges replace duplicate blind status text, while real actions remain visible', () => {
   const c=harness(),r=room(2);c.state.room=r;

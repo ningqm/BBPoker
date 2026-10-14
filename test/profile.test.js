@@ -158,13 +158,26 @@ test('server restart preserves the dealt cards, table deadline and already-spent
   await table.command(actor, 'timebank');
   const beforeRestart = structuredClone(f.app.store.data.rooms[table.room.code]);
   assert.equal(beforeRestart.deadline, beforeUse + 30000);
-  assert.equal(beforeRestart.members[actor.user.id].timeBank.remaining, 2);
+  assert.equal(beforeRestart.members[actor.user.id].timeBank.remaining, 5);
   await f.restart();
   assert.deepEqual(f.app.store.data.rooms[table.room.code], beforeRestart);
   const state = await f.api(`/api/rooms/${table.room.code}`, undefined, actor.token);
   assert.equal(state.deadline, beforeRestart.deadline);
   assert.equal(state.endsAt, beforeRestart.endsAt);
-  assert.equal(state.actions.timeBankCards, 2);
+  assert.equal(state.actions.timeBankCards, 5);
+});
+
+test('startup repairs only a missing action deadline with fixed 20 seconds regardless of legacy configuration', async t => {
+  const f = await fixture(t), table = await seatedTable(f);
+  const room = f.app.store.data.rooms[table.room.code], cards = structuredClone(room.hand.players.map(p => p.cards));
+  room.settings.actionSeconds = 90; room.deadline = null; f.app.store.save();
+  const before = Date.now(); await f.restart(); const after = Date.now();
+  const restored = f.app.store.data.rooms[table.room.code];
+  assert.ok(restored.deadline >= before + 20000 && restored.deadline <= after + 20000);
+  assert.deepEqual(restored.hand.players.map(p => p.cards), cards);
+  const expired = Date.now() - 1000; restored.deadline = expired; f.app.store.save();
+  await f.restart();
+  assert.equal(f.app.store.data.rooms[table.room.code].deadline, expired, 'an already expired saved clock must not receive a new turn');
 });
 
 test('server timer closes an expired waiting table once and broadcasts the persisted result', async t => {
@@ -185,7 +198,7 @@ test('server timer closes an expired waiting table once and broadcasts the persi
   assert.equal(saves, 1, 'idle timer should not repeatedly persist an unchanged table');
 });
 
-test('server timer refreshes time cards from the table clock and persists before broadcasting', async t => {
+test('server timer migrates legacy time cards without replenishing and persists before broadcasting', async t => {
   const f = await fixture(t, { actionTickMs: 40 }), table = await seatedTable(f);
   await table.command(table.actor(), 'fold');
   const reader = await f.stream(table.players[0].token, table.room.code);
@@ -195,8 +208,8 @@ test('server timer refreshes time cards from the table clock and persists before
   for (const member of Object.values(room.members)) member.timeBank = { window: 0, remaining: 1 };
   f.app.store.save();
   const refreshed = await event(reader);
-  assert.equal(refreshed.players.every(player => player.timeBankCardsRemaining === 3), true);
-  for (const member of Object.values(f.app.store.read().rooms[table.room.code].members)) assert.deepEqual(member.timeBank, { window: 1, remaining: 3 });
+  assert.equal(refreshed.players.every(player => player.timeBankCardsRemaining === 1), true);
+  for (const member of Object.values(f.app.store.read().rooms[table.room.code].members)) assert.deepEqual(member.timeBank, { version: 2, granted: 6, remaining: 1, legacyPreserved: true });
 });
 
 test('an elapsed action clock resolves normally before automatic table expiry closes the room', async t => {

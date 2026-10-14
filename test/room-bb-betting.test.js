@@ -21,10 +21,10 @@ function fixture(t, { count = 2, settings = {}, stacks = [] } = {}) {
   return { service, store, room, users, command, act, time };
 }
 
-test('new room action clock is 20 seconds and explicit settings retain their duration', t => {
+test('new room action clock is fixed at 20 seconds despite obsolete client values', t => {
   const f = fixture(t); assert.equal(f.room.deadline, f.time + 20000);
   f.act('call'); assert.equal(f.room.deadline, f.time + 20000);
-  const old = fixture(t, { settings: { actionSeconds: 30 } }); assert.equal(old.room.deadline, old.time + 30000);
+  const old = fixture(t, { settings: { actionSeconds: 30 } }); assert.equal(old.room.deadline, old.time + 20000);
 });
 
 test('non-integer-BB voluntary raises fail before any hand, stack, command or ledger mutation', t => {

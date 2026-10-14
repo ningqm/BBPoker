@@ -400,3 +400,26 @@ test('starting-hand controls use shrinking two-card columns and preserve fixed B
   assert.doesNotMatch(plain,/<select name="hole(?:Rank|Suit)[12]"[^>]*data-record-auto/);
   setDisplayUnit('points');const query=records.recordQuery('hands',{filters:{result:'winOver',minBB:'12.5',holePreset:'pair'}});assert.equal(query.get('minBB'),'12.5');assert.match(records.recordFilters('hands',{filters:{result:'winOver',minBB:'12.5'}}),/固定阈值/);
 });
+
+test('applied hand filter summary names the selected table, date, favorites and every narrowing condition',()=>{
+  const rooms=[{code:'old-table',name:'重复朋友局',startedAt:'2026-10-13T09:00:00Z'}];
+  const state={scope:'personal',room:'old-table',favorites:true,opponentOptions:[{id:'p2',name:'朋友甲'}],filters:{period:'7',result:'winOver',minBB:'25',holePreset:'pairs',type:'bomb',opponent:'p2',position:'BTN',potType:'headsUp',tableSize:'short',maxHands:'100',handNumber:'12'}};
+  // Use an existing recognized preset to avoid relying on a legacy alias.
+  state.filters.holePreset='all';state.filters.holeType='pair';
+  const summary=records.recordFilters('hands',state,rooms).match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];
+  for(const phrase of ['对局：重复朋友局','近 7 天','仅收藏','赢超过 25 BB','口袋对','炸弹池','对手：朋友甲','BTN','翻后单挑','3–6 人发牌','最近 100 手','第 12 手'])assert.ok(summary.includes(phrase),phrase);
+  assert.doesNotMatch(summary,/全部手牌/);
+  const onlyTable=records.recordFilters('hands',{scope:'personal',room:'old-table',filters:{}},rooms).match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];
+  assert.match(onlyTable,/对局：重复朋友局/);assert.doesNotMatch(onlyTable,/全部手牌/);
+});
+
+test('date summaries include open bounds, missing selected tables and escaped names without affecting table history',()=>{
+  for(const [dates,label]of [[{from:'2026-10-01'},'2026-10-01 起'],[{to:'2026-10-14'},'截至 2026-10-14'],[{from:'2026-10-01',to:'2026-10-14'},'2026-10-01 至 2026-10-14']]){
+    const html=records.recordFilters('hands',{scope:'personal',room:'missing',filters:{period:'custom',...dates}});
+    const summary=html.match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];assert.ok(summary.includes(label));assert.match(summary,/已选择的对局/);
+  }
+  const html=records.recordFilters('hands',{scope:'personal',room:'attack',filters:{}},[{code:'attack',name:'<img src=x>'}]);
+  assert.match(html,/对局：&lt;img src=x&gt;/);assert.doesNotMatch(html,/<img/);
+  const table=records.recordFilters('hands',{scope:'table',room:'same',filters:{period:'custom',from:'2026-01-01'}},[{code:'same',name:'当前房间'}]);
+  assert.match(table,/筛选 <span>全部手牌/);assert.doesNotMatch(table.match(/<summary>筛选 <span>([^<]+)<\/span>/)[1],/对局：|2026-01-01/);
+});

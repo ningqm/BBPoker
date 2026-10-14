@@ -140,3 +140,27 @@ test('completed replay puts turn and river preview in the board row, and rewindi
   assert.doesNotMatch(previous,/♠J|♥Q|rabbit-card/);
   assert.equal((previous.match(/aria-label="尚未发出"/g)||[]).length,2);
 });
+
+test('the completed replay displays the distributed pot rather than an empty remainder, excluding side-game amounts',()=>{
+  const c=harness(),hand=c.state.replay.hand;
+  hand.players[0].miniNet=500;hand.players[0].endingStack=900;
+  hand.log.push({type:'raise',playerId:'me',amount:60,to:60},{type:'call',playerId:'friend',amount:60},{type:'payout',playerId:'me',amount:50},{type:'payout',playerId:'friend',amount:90});
+  c.state.replay.index=hand.log.length-1;c.renderReplay();
+  assert.match(c.selectors.get('[data-replay-frame]').innerHTML,/底池<\/div><strong class="pot-amount">9 BB/);
+  c.state.replay.index=hand.log.length;c.renderReplay();
+  const frame=c.selectors.get('[data-replay-frame]').innerHTML;
+  assert.match(frame,/已分配底池<\/div><strong class="pot-amount">14 BB/);
+  assert.doesNotMatch(frame,/已完成结算<\/div><strong class="pot-amount">0 BB|64 BB|90 BB/);
+});
+
+test('distributed replay pot excludes uncalled refunds and hides a missing historical settlement amount',()=>{
+  const c=harness(),hand=c.state.replay.hand;
+  c.state.replay.index=hand.log.length;c.renderReplay();
+  assert.match(c.selectors.get('[data-replay-frame]').innerHTML,/已完成结算/);
+  assert.doesNotMatch(c.selectors.get('[data-replay-frame]').innerHTML,/class="pot-amount"/);
+  hand.log.push({type:'raise',playerId:'me',amount:80,to:80},{type:'fold',playerId:'friend'},{type:'refund',playerId:'me',amount:80},{type:'payout',playerId:'me',amount:20});
+  c.state.replay.index=hand.log.length;c.renderReplay();
+  assert.match(c.selectors.get('[data-replay-frame]').innerHTML,/已分配底池<\/div><strong class="pot-amount">2 BB/);
+  c.changeMoneyUnit('points');
+  assert.match(c.selectors.get('[data-replay-frame]').innerHTML,/已分配底池<\/div><strong class="pot-amount">20 积分/);
+});

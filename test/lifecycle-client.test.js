@@ -210,3 +210,35 @@ test('seat badges stay short on mobile while detailed participation instructions
   player.entryBlind.mode='post';player.entryBlind.waitingFor='button';assert.equal(lifecycle.entryBlindView(room,player).seatLabel,'等过庄');
   player.entryBlind.waitingFor=null;assert.equal(lifecycle.entryBlindView(room,player).seatLabel,'待补盲');assert.match(lifecycle.entryBlindView(room,player).label,/已选补盲/);
 });
+
+test('manual lobby refresh updates newly ended personal tables while automatic polling stays lightweight',async()=>{
+  const c=harness();c.state.rooms=[{code:'old',status:'closed'}];
+  const refresh=c.loadLobby({refreshHistory:true});assert.deepEqual(c.pending.map(call=>call.path),['/api/lobby','/api/me']);
+  c.pending[0].resolve({rooms:[room()],limit:10});c.pending[1].resolve({rooms:[{code:'newly-ended',status:'closed'}]});await refresh;
+  assert.equal(c.state.rooms[0].code,'newly-ended');assert.equal(c.state.lobby.rooms.length,1);
+  const automatic=c.loadLobby({silent:true});assert.equal(c.pending.length,3);assert.equal(c.pending[2].path,'/api/lobby');
+  c.pending[2].resolve({rooms:[]});await automatic;assert.equal(c.state.rooms[0].code,'newly-ended');
+});
+
+test('partial refresh failures preserve the affected list and still apply the successful list',async()=>{
+  for(const failure of ['directory','history']){
+    const c=harness();c.state.rooms=[{code:'past',status:'closed'}];c.state.lobby.rooms=[room({code:'live-old'})];c.state.lobby.loaded=true;
+    const refresh=c.loadLobby({refreshHistory:true});
+    if(failure==='directory'){c.pending[0].reject(new Error('目录离线'));c.pending[1].resolve({rooms:[{code:'past-new',status:'closed'}]});}
+    else{c.pending[0].resolve({rooms:[room({code:'live-new'})]});c.pending[1].reject(new Error('历史离线'));}
+    await refresh;
+    assert.equal(c.state.rooms[0].code,failure==='history'?'past':'past-new');
+    assert.equal(c.state.lobby.rooms[0].code,failure==='directory'?'live-old':'live-new');assert.ok(c.state.lobby.error);
+  }
+});
+
+test('old personal history cannot return after a newer refresh or identity change',async()=>{
+  for(const identityChange of [false,true]){
+    const c=harness();c.state.rooms=[{code:'current',status:'closed'}];
+    const first=c.loadLobby({refreshHistory:true});
+    if(identityChange){c.requests.invalidate();c.stopLobbyPolling();}
+    else{const second=c.loadLobby({refreshHistory:true});assert.equal(c.pending[0].options.signal.aborted,true);assert.equal(c.pending[1].options.signal.aborted,true);c.pending[2].resolve({rooms:[]});c.pending[3].resolve({rooms:[{code:'newest',status:'closed'}]});await second;}
+    c.pending[0].resolve({rooms:[room({code:'stale-live'})]});c.pending[1].resolve({rooms:[{code:'stale-past',status:'closed'}]});await first;
+    assert.equal(c.state.rooms[0].code,identityChange?'current':'newest');assert.equal(c.state.lobby.rooms.length,0);
+  }
+});

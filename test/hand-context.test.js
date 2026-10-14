@@ -80,8 +80,19 @@ test('real deferred preflop all-in runouts count after third card, rabbit runout
 test('bomb pots expose only the real button position and count all players seeing their automatic flop', () => {
   const h = hand([1, 4, 8], { bombPot: true, ante: 20 }); finish(h);
   assert.equal(handContext(h, 'p1').position, 'BTN');
-  for (const id of ['p4', 'p8']) assert.equal(handContext(h, id).position, 'unknown');
+  for (const id of ['p4', 'p8']) assert.equal(handContext(h, id).position, 'bomb');
   for (const p of h.players) assert.equal(handContext(h, p.id).potType, 'multiway');
+});
+
+test('exact dealt counts distinguish four, five and nine-handed positions without guessing a bomb blind', () => {
+  for (const count of [4, 5, 9]) {
+    const h = hand(Array.from({ length: count }, (_, i) => i));
+    const context = handContext(h, 'p0');
+    for (let size = 2; size <= 9; size++) assert.equal(handContextMatches(context, 'p0', recordFilters({ tableSize: String(size) })), size === count);
+  }
+  const bomb = hand([0, 2, 5, 8], { bombPot: true, ante: 20 });
+  assert.equal(handContextMatches(handContext(bomb, 'p2'), 'p2', recordFilters({ position: 'SB' })), false);
+  assert.equal(handContextMatches(handContext(bomb, 'p2'), 'p2', recordFilters({ position: 'bomb' })), true);
 });
 
 test('missing/corrupt historical facts remain unknown without looking at private cards or final fold flags', () => {

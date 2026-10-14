@@ -7,7 +7,7 @@ const combinations = deck.flatMap((card, index) => deck.slice(index + 1).map(oth
 const matches = (cards, filter) => matchesStartingHand(cards, normalize(filter));
 
 test('preset sets cover the independently known counts among all 1326 physical starting hands', () => {
-  const counts = { all: 1326, pair: 78, bigPair: 30, suitedConnector: 48, suitedGapper: 44, suitedAce: 48, broadway: 160, premium: 34 };
+  const counts = { all: 1326, pair: 78, bigPair: 30, suitedConnector: 48, offsuitConnector: 144, suitedGapper: 44, suitedAce: 48, broadway: 160, premium: 34 };
   assert.deepEqual(STARTING_HAND_PRESETS.map(p => p.id), Object.keys(counts));
   for (const { id, label, description } of STARTING_HAND_PRESETS) {
     assert.ok(label && description);
@@ -20,6 +20,9 @@ test('preset sets cover the independently known counts among all 1326 physical s
 test('connector, gapper, broadway and premium boundaries use ace high and explicitly exclude wheel wraps', () => {
   const cases = [
     ['suitedConnector', ['3h', '2h'], true], ['suitedConnector', ['As', 'Ks'], true], ['suitedConnector', ['Ah', '2h'], false],
+    ['suitedConnector', ['Qs', 'Ks'], true], ['offsuitConnector', ['2h', '3d'], true], ['offsuitConnector', ['Qh', 'Kd'], true],
+    ['offsuitConnector', ['Qc', 'Ks'], true], ['offsuitConnector', ['Ah', 'Ks'], true], ['offsuitConnector', ['Ah', '2s'], false],
+    ['offsuitConnector', ['Qs', 'Ks'], false], ['offsuitConnector', ['Ah', 'Ac'], false], ['offsuitConnector', ['Qs', 'Ah'], false],
     ['suitedConnector', ['7h', '6d'], false], ['suitedGapper', ['4c', '2c'], true], ['suitedGapper', ['Ad', 'Qd'], true],
     ['suitedGapper', ['As', '3s'], false], ['suitedGapper', ['As', 'Ks'], false],
     ['bigPair', ['Ts', 'Th'], true], ['bigPair', ['9s', '9d'], false],
@@ -28,6 +31,24 @@ test('connector, gapper, broadway and premium boundaries use ace high and explic
     ['suitedAce', ['2s', 'As'], true], ['suitedAce', ['Ah', 'Ad'], false],
   ];
   for (const [holePreset, cards, expected] of cases) assert.equal(matches(cards, { holePreset }), expected, `${holePreset}: ${cards}`);
+});
+
+test('suited and offsuit connectors partition the 192 adjacent-rank physical hands without confusing red/black with suits', () => {
+  // Twelve adjacent rank pairs × sixteen suit combinations; the wheel is
+  // deliberately separate. This list is independent of the matcher arithmetic.
+  const adjacent = new Set(['23', '34', '45', '56', '67', '78', '89', '9T', 'TJ', 'JQ', 'QK', 'KA']);
+  let count = 0;
+  for (const cards of combinations) {
+    const suited = matches(cards, { holePreset: 'suitedConnector' });
+    const offsuit = matches(cards, { holePreset: 'offsuitConnector' });
+    const ranks = cards.map(card => card[0]).join('');
+    assert.equal(suited && offsuit, false, `disjoint: ${cards}`);
+    assert.equal(suited || offsuit, adjacent.has(ranks), `complete partition: ${cards}`);
+    if (suited || offsuit) count++;
+  }
+  assert.equal(count, 192);
+  assert.equal(matches(['Kh', 'Qd'], { holePreset: 'offsuitConnector' }), true, 'two red suits are still offsuit');
+  assert.equal(matches(['Ks', 'Qc'], { holePreset: 'offsuitConnector' }), true, 'two black suits are still offsuit');
 });
 
 test('each custom card preserves its own rank/suit association and matches either dealt order', () => {

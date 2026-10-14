@@ -13,7 +13,7 @@ import {historyBoard} from '../public/replay.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 function harness({dom=false,realCards=false}={}){
-  const calls=[],modals=[],toasts=[],events={};let client;
+  const calls=[],modals=[],toasts=[],navigations=[],events={};let client;
   const documentRef={currentForm:null,activeElement:null,querySelector(selector){return this.currentForm&&selector==='#'+this.currentForm.id?this.currentForm:null;},addEventListener(name,callback){events[name]=callback;}};
   function rebuild(kind){
     if(!dom)return;if(documentRef.currentForm)documentRef.currentForm.isConnected=false;
@@ -23,12 +23,12 @@ function harness({dom=false,realCards=false}={}){
   const context=vm.createContext({statsUI,records,formatHandBB,formatChips,formatAggregate,getDisplayUnit,unitLabel,createRequestGuard,historyBoard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
     api(path){return new Promise((resolve,reject)=>calls.push({path,resolve,reject}));},document:dom?documentRef:undefined,app:{contains:()=>client.state.page!=='room'},render(){if(client.state.page==='hands'||client.state.page==='sessions')rebuild(client.state.page);},
     openModal(title,body,kind){client.state.modal={kind,title};modals.push({title,body,kind});if(kind==='hand-library')rebuild('hands');if(kind==='session-list')rebuild('sessions');},closeModal(){client.state.modal=null;},
-    toast(message){toasts.push(message);},navigate(){assert.fail('table overlays must not navigate');},
+    toast(message){toasts.push(message);},navigate(path){navigations.push(path);},
     avatar:()=>'',avatarCache:{hydrate(){}},num:n=>String(n||0),signed:n=>`${n>0?'+':''}${n||0}`,profitClass:()=>'',fmtDate:String,cards:()=>'',card:()=>'',
     btn:(label,action,cls='',attrs='')=>`<button data-action="${action}" class="${cls}" ${attrs}>${label}</button>`,renderReplay(){},
   });
-  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),...(realCards?[section('const card=','const feedback=')]:[]),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary,handLibraryContent,applyRecordFilters,setRecordPeriod,resetRecordFilters,setLibraryView,setOpponentMode,sortLibraryOpponents,searchLibraryOpponents,clearOpponentSearch,selectLibraryOpponent};'].join('\n'),context);
-  client=context.client;client.state.user={id:'me',name:'me'};client.state.page='hands';return {...client,calls,modals,toasts,events,document:documentRef};
+  vm.runInContext(['const requests=createRequestGuard();',section('const state=','const num='),...(realCards?[section('const card=','const feedback=')]:[]),section('function renderHandLibrary(','const layouts='),...(dom?[section("document.addEventListener('compositionstart'","document.addEventListener('input'")]:[]),'globalThis.client={state,requests,loadLibrary,handLibrary,loadSessions,sessionLibrary,sessionDetailModal,openHandLibrary,openSessions,handSummary,handLibraryContent,applyRecordFilters,setRecordPeriod,resetRecordFilters,setLibraryView,setOpponentMode,sortLibraryOpponents,searchLibraryOpponents,clearOpponentSearch,selectLibraryOpponent,loadOpponents,opponentLibrary,openOpponentHands,sortDirectOpponents};'].join('\n'),context);
+  client=context.client;client.state.user={id:'me',name:'me'};client.state.page='hands';return {...client,calls,modals,toasts,navigations,events,document:documentRef};
 }
 test('custom dates and quick ranges use local day boundaries across timezone and calendar changes',()=>{
   const moduleUrl=new URL('../public/records.js',import.meta.url).href;
@@ -39,7 +39,7 @@ test('custom dates and quick ranges use local day boundaries across timezone and
 });
 test('query resets discard old cursors while keeping current filters; hand and session options stay separate',()=>{
   const state={filters:{period:'all',result:'loss',q:'  朋友局  ',handNumber:'12',type:'bomb',status:'closed'},favorites:true,room:'123456',nextCursor:'old-page'};
-  const hand=records.recordQuery('hands',state,true);assert.equal(hand.get('before'),null);assert.equal(hand.get('favorites'),'1');assert.equal(hand.get('room'),'123456');assert.equal(hand.get('type'),'bomb');assert.equal(hand.get('result'),'loss');assert.equal(hand.get('q'),null);assert.equal(hand.get('handNumber'),'12');assert.equal(hand.has('status'),false);
+  const hand=records.recordQuery('hands',state,true);assert.equal(hand.get('before'),null);assert.equal(hand.get('favorites'),'1');assert.equal(hand.get('room'),'123456');assert.equal(hand.get('type'),'bomb');assert.equal(hand.get('result'),'loss');assert.equal(hand.get('q'),null);assert.equal(hand.has('handNumber'),false);assert.equal(hand.has('status'),false);
   const sessions=records.recordQuery('sessions',state);assert.equal(sessions.get('before'),'old-page');assert.equal(sessions.get('status'),'closed');assert.equal(sessions.get('q'),'朋友局');assert.equal(sessions.has('handNumber'),false);assert.equal(sessions.has('favorites'),false);assert.equal(sessions.has('type'),false);
 });
 test('record markup escapes names and filters while displaying server totals, separate mini net and no private fields',()=>{
@@ -129,8 +129,8 @@ test('table history ignores every date state and never displays date or room con
     assert.equal(query.has('from'),false);assert.equal(query.has('to'),false);
     const html=records.recordFilters('hands',state,[{code:'123456',name:'这张桌'}]);
     assert.doesNotMatch(html,/name="(?:from|to|room)"|data-action="record-period"|当前牌桌|日期范围/);
-    assert.match(html,/<details class="record-table-options" data-record-disclosure="table" >/);
-    assert.match(html,/找第几手/);assert.match(html,/每场从 1 计数/);assert.doesNotMatch(html,/name="q"/);
+    assert.match(html,/<details class="record-table-options record-main-options" data-record-disclosure="filters">/);
+    assert.doesNotMatch(html,/找第几手|每场从 1 计数|name="(?:q|handNumber)"/);
   }
   const personal=records.recordFilters('hands',{scope:'personal',room:'',filters:{period:'custom',from:'2026-10-01',to:'2026-10-13'}});
   assert.match(personal,/name="from"/);assert.match(personal,/name="to"/);assert.match(personal,/name="room"/);assert.match(personal,/近 3 天/);
@@ -204,7 +204,7 @@ test('personal hand context filters serialize strictly and never leak into sessi
   const filters={opponent:'friend_123-abc',position:'UTG+1',potType:'headsUp',tableSize:'short',maxHands:'500'},query=records.recordQuery('hands',{scope:'personal',filters});
   for(const [key,value]of Object.entries(filters))assert.equal(query.get(key),value);
   assert.equal(records.recordQuery('hands',{filters:{...filters,maxHands:100000}}).get('maxHands'),'100000');
-  for(const [key,values]of Object.entries({opponent:['../me','someone x','<img>',12],position:['button','BTN/SB',5],potType:['flop','',false],tableSize:['9','full-ring'],maxHands:['0','01','1.5','1e3','100001','',null,false]})){
+  for(const [key,values]of Object.entries({opponent:['../me','someone x','<img>',12],position:['button','BTN/SB',5],potType:['flop','',false],tableSize:['1','10','full-ring'],maxHands:['0','01','1.5','1e3','100001','',null,false]})){
     for(const value of values)assert.throws(()=>records.recordQuery('hands',{filters:{...filters,[key]:value}}),undefined,`${key}: ${value}`);
   }
   const all=records.recordQuery('hands',{filters:records.defaultRecordFilters()});
@@ -217,11 +217,11 @@ test('personal hand context filters serialize strictly and never leak into sessi
 
 test('personal advanced options start collapsed, escape opponent names and explain first-flop semantics',()=>{
   const evil='<img src=x onerror=alert(1)>',plain=records.recordFilters('hands',{scope:'personal',filters:{},opponentOptions:[{id:'friend',name:evil}]});
-  assert.match(plain,/<details class="record-personal-options" data-record-disclosure="personal" >/);
+  assert.match(plain,/<details class="record-table-options record-main-options" data-record-disclosure="filters">/);
   assert.match(plain,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.doesNotMatch(plain,/<img/);
-  assert.match(plain,/本人未进入翻牌/);assert.match(plain,/3 人池后续变成 2 人/);assert.match(plain,/先匹配全部条件，再取最近手数/);assert.match(plain,/我的整手盈亏/);assert.match(plain,/含本手小游戏/);
+  assert.match(plain,/本人未进入翻牌/);assert.match(plain,/翻后人数按翻牌发出时计算/);assert.match(plain,/实际获牌人数|实际发牌人数/);assert.match(plain,/我的整手盈亏/);assert.match(plain,/含本手小游戏/);
   const active=records.recordFilters('hands',{scope:'personal',filters:{opponent:'friend',position:'BTN',maxHands:'100'},opponentOptions:[{id:'friend',name:'牌友'}]});
-  assert.match(active,/data-record-disclosure="personal" open/);assert.match(active,/value="friend" selected/);assert.match(active,/对手：牌友/);assert.match(active,/最近 100 手/);
+  assert.match(active,/data-record-disclosure="filters"/);assert.match(active,/value="friend" selected/);assert.match(active,/对手：牌友/);assert.match(active,/最近 100 手/);
   const draft=records.filterValues(new URLSearchParams({opponent:'friend',position:'CO',potType:'multiway',tableSize:'full',maxHands:'1000'}),{period:'7',holeRanks:'AK'});
   for(const [key,value]of Object.entries({opponent:'friend',position:'CO',potType:'multiway',tableSize:'full',maxHands:'1000',holeRanks:'AK',period:'7'}))assert.equal(draft[key],value);assert.equal(records.recordQuery('hands',{filters:draft}).get('holeRank2'),'K');
 });
@@ -246,45 +246,43 @@ test('opponent totals and options ignore stale responses and paginating hands ca
   assert.equal(c.state.library.opponents.uniqueHands,25);assert.equal(c.state.library.opponentOptions[0].id,'new');assert.match(c.calls[1].path,/opponent=new/);assert.match(c.calls[1].path,/maxHands=100/);
   const next=c.loadLibrary();c.calls[2].resolve({hands:[{id:'h1'},{id:'h2'},{id:'h2'}],totals:{count:25},opponents,opponentOptions:[{id:'new',name:'新对手'}]});await next;
   assert.equal(c.state.library.hands.length,2);assert.equal(c.state.library.opponents.uniqueHands,25);assert.equal(c.state.library.opponents.rows.length,1);
-  assert.match(c.handSummary(c.state.library.hands[0]),/context-position">BTN/);assert.match(c.handSummary(c.state.library.hands[0]),/翻后单挑/);
-  const overview=c.setLibraryView('opponents');c.calls[3].resolve({hands:[],opponents,opponentOptions:[]});await overview;assert.match(c.handLibraryContent(),/我的对手战绩/);assert.doesNotMatch(c.handLibraryContent(),/data-action="library-more"/);
+  assert.match(c.handSummary(c.state.library.hands[0]),/context-position">庄位 BTN/);assert.match(c.handSummary(c.state.library.hands[0]),/翻后单挑/);
+  assert.doesNotMatch(c.handLibraryContent(),/牌谱视图|data-action="library-view"|同桌手牌/);
 });
 
-test('opponent overview keeps independent filters, drilldown matches its scope and returning restores both views',async()=>{
-  const c=harness();c.state.library.filters={...records.defaultRecordFilters(),period:'7',result:'loss',holePreset:'premium',position:'BB',potType:'multiway',tableSize:'full',maxHands:'500',handNumber:'8'};c.state.library.room='123456';c.state.library.favorites=true;
-  const toOverview=c.setLibraryView('opponents'),q=new URL('https://local'+c.calls[0].path).searchParams;
-  assert.equal(q.get('room'),'123456');assert.ok(q.get('from'));for(const key of ['result','holePreset','position','potType','tableSize','maxHands','handNumber','favorites'])assert.equal(q.has(key),false,key);
-  c.calls[0].resolve({hands:[],opponents:{rows:[{id:'two',name:'朋友二',hands:2}]},opponentOptions:[]});await toOverview;
-  c.state.library.filters.position='CO';c.state.library.filters.type='bomb';c.sortLibraryOpponents('loss');c.searchLibraryOpponents('朋友');
-  const mode=c.setOpponentMode('headsUp');assert.match(c.calls[1].path,/potType=headsUp/);c.calls[1].resolve({hands:[],opponents:{rows:[{id:'two',name:'朋友二',hands:2}]}});await mode;
-  const selection=c.selectLibraryOpponent('two'),selected=new URL('https://local'+c.calls[2].path).searchParams;
-  for(const [key,value]of Object.entries({opponent:'two',position:'CO',potType:'headsUp',type:'bomb',room:'123456'}))assert.equal(selected.get(key),value);
-  assert.equal(selected.has('maxHands'),false);assert.equal(selected.has('favorites'),false);assert.equal(c.state.library.view,'hands');assert.match(c.handLibraryContent(),/返回对手战绩/);
-  c.calls[2].resolve({hands:[],opponents:{rows:[]},opponentOptions:[]});await selection;
-  await c.selectLibraryOpponent('unknown');assert.equal(c.calls.length,3);
-  const back=c.setLibraryView('opponents');c.calls[3].resolve({hands:[],opponents:{rows:[{id:'two',name:'朋友二',hands:2}]}});await back;
-  assert.equal(c.state.library.filters.potType,'headsUp');assert.equal(c.state.library.filters.position,'CO');assert.equal(c.state.library.opponentSearch,'朋友');assert.equal(c.state.library.opponentSort,'loss');
-  const oldHands=c.setLibraryView('hands');assert.match(c.calls[4].path,/holePreset=premium/);assert.match(c.calls[4].path,/handNumber=8/);assert.match(c.calls[4].path,/favorites=1/);c.calls[4].resolve({hands:[]});await oldHands;
-  assert.equal(c.state.library.filters.maxHands,'500');assert.equal(c.state.library.filters.position,'BB');assert.equal(c.state.library.opponentDrilldown,null);
+test('independent opponent route never inherits hand-only filters and shared-hand drilldown is explicit',async()=>{
+  const c=harness();c.state.library.filters={period:'7',result:'loss',holePreset:'premium',position:'BB',type:'bomb',squid:'unlimited',maxHands:'500'};c.state.library.favorites=true;
+  c.state.page='opponents';c.state.opponents.filters={period:'3'};c.state.opponents.room='123456';
+  const pending=c.loadOpponents(),query=new URL('https://local'+c.calls[0].path).searchParams;
+  assert.match(c.calls[0].path,/^\/api\/opponents\?/);assert.equal(query.get('room'),'123456');assert.ok(query.get('from'));
+  for(const key of ['result','holePreset','position','type','squid','maxHands','favorites'])assert.equal(query.has(key),false,key);
+  c.calls[0].resolve({opponents:{rows:[{id:'friend',name:'朋友甲',hands:2}],summary:{}},opponentOptions:[{id:'friend',name:'朋友甲'}]});await pending;
+  assert.equal(c.state.library.filters.position,'BB');assert.equal(c.state.library.favorites,true);
+  const saved=c.state.opponents.filters;c.openOpponentHands('friend');assert.equal(c.navigations.at(-1),'/hands');
+  assert.equal(c.state.opponents.filters,saved);assert.equal(c.state.library.filters.opponent,'friend');assert.equal(c.state.library.filters.period,'3');assert.equal(c.state.library.room,'123456');assert.equal(c.state.library.filters.position,'all');assert.equal(c.state.library.favorites,false);
+  assert.match(c.handLibraryContent(),/与 朋友甲 的共同牌谱/);assert.match(c.handLibraryContent(),/两人直接输赢请看对手页/);
 });
 
 test('changing the opponent after drilling in never leaves another friend in the heading',()=>{
   const c=harness();c.state.library.opponentDrilldown={id:'a',name:'朋友甲'};c.state.library.opponentOptions=[{id:'b',name:'朋友乙'}];c.state.library.filters.opponent='b';
-  let html=c.handLibraryContent();assert.match(html,/与 朋友乙 的牌谱/);assert.doesNotMatch(html,/与 朋友甲 的牌谱/);assert.match(html,/返回对手战绩/);
-  c.state.library.filters.opponent='';html=c.handLibraryContent();assert.match(html,/当前条件的牌谱/);assert.doesNotMatch(html,/与 朋友甲 的牌谱/);
+  let html=c.handLibraryContent();assert.match(html,/与 朋友乙 的共同牌谱/);assert.doesNotMatch(html,/与 朋友甲 的共同牌谱/);assert.match(html,/返回对手/);
+  c.state.library.filters.opponent='';html=c.handLibraryContent();assert.match(html,/当前条件的牌谱/);assert.doesNotMatch(html,/与 朋友甲 的共同牌谱/);
 });
 
-test('switching opponent modes rejects slow old requests and reset clears only that view',async()=>{
-  const c=harness(),old=c.loadLibrary(true),overview=c.setLibraryView('opponents'),headsUp=c.setOpponentMode('headsUp');
-  c.calls[2].resolve({hands:[],opponents:{rows:[{id:'new',name:'新朋友'}],uniqueHands:1}});await headsUp;
-  c.calls[1].reject(new Error('旧错误'));await overview;c.calls[0].resolve({hands:[{id:'old'}],opponents:{rows:[{id:'old',name:'旧朋友'}]}});await old;
-  assert.equal(c.state.library.view,'opponents');assert.equal(c.state.library.opponents.rows[0].id,'new');assert.equal(c.state.library.error,'');assert.equal(c.state.library.loading,false);
-  c.searchLibraryOpponents('新');const reset=c.resetRecordFilters('hands');assert.equal(c.state.library.opponentSearch,'');assert.equal(c.state.library.view,'opponents');
-  const q=new URL('https://local'+c.calls[3].path).searchParams;assert.equal(q.size,1);c.calls[3].resolve({hands:[],opponents:{rows:[]}});await reset;
+test('opponent requests reject slow results and resetting only clears opponent filters',async()=>{
+  const c=harness();c.state.page='opponents';c.state.library.filters={position:'BB',holePreset:'pair'};
+  const old=c.loadOpponents();c.state.opponents.filters={period:'7',opponent:'new'};const fresh=c.loadOpponents();
+  c.calls[1].resolve({opponents:{rows:[{id:'new',name:'新朋友'}],summary:{}},opponentOptions:[{id:'new',name:'新朋友'}]});await fresh;
+  c.calls[0].resolve({opponents:{rows:[{id:'old',name:'旧朋友'}]},opponentOptions:[{id:'old',name:'旧朋友'}]});await old;
+  assert.equal(c.state.opponents.data.rows[0].id,'new');assert.equal(c.state.opponents.opponentOptions[0].id,'new');assert.equal(c.state.opponents.loading,false);
+  const reset=c.resetRecordFilters('opponents');assert.equal(new URL('https://local'+c.calls[2].path).searchParams.size,0);c.calls[2].resolve({opponents:{rows:[],summary:{}},opponentOptions:[]});await reset;
+  assert.equal(c.state.library.filters.position,'BB');assert.equal(c.state.library.filters.holePreset,'pair');
+  const late=c.loadOpponents();c.requests.invalidate();c.calls[3].resolve({opponents:{rows:[{name:'private'}]},opponentOptions:[{name:'private'}]});await late;
+  assert.equal(c.state.opponents.data,null);assert.equal(c.state.opponents.opponentOptions.length,0);
 });
 
 test('context chips distinguish combined heads-up positions and never describe a spectator as a participant',()=>{
-  const chips=records.handContextChips({position:'BTN/SB',potType:'multiway',flopPlayers:3,tableSize:9});assert.match(chips,/BTN\/SB/);assert.match(chips,/翻后 3 人池/);assert.match(chips,/9 人发牌/);
+  const chips=records.handContextChips({position:'BTN/SB',potType:'multiway',flopPlayers:3,tableSize:9});assert.match(chips,/庄位兼小盲/);assert.match(chips,/翻后 3 人池/);assert.match(chips,/9 人发牌/);
   assert.equal(records.handContextChips({participated:false,position:'BB',potType:'headsUp'}),'');
   const unknown=records.handContextChips({position:'unknown',potType:'unknown',flopPlayers:null,tableSize:null});assert.match(unknown,/位置未记录/);assert.match(unknown,/翻后人数未记录/);assert.doesNotMatch(unknown,/null|NaN/);
   const css=readFileSync(new URL('../public/hand-records.css',import.meta.url),'utf8');assert.match(css,/\.record-personal-fields\{grid-template-columns:minmax\(0,1fr\)/);assert.match(css,/\.opponent-list\{[^}]*display:grid/);assert.match(css,/\.opponent-identity strong\{[^}]*text-overflow:ellipsis/);
@@ -365,17 +363,15 @@ test('restoring a starting-hand draft refreshes preview and pressed buttons with
   assert.match(fresh.nodes.preview.textContent,/黑色 任意点数/);assert.equal(fresh.elements.namedItem('holePreset').value,'all');assert.ok(fresh.presets.every(p=>p['aria-pressed']==='false'));assert.equal(fresh.disclosures[1].open,true);assert.equal(state.filters.holeSuit1,'');
 });
 
-test('hand numbers are exact positive integers and hand history never keeps an invisible legacy search',()=>{
-  for(const handNumber of ['12','0012',12,' 12 '])assert.equal(records.recordQuery('hands',{filters:{handNumber,q:'stale table query'}}).get('handNumber'),'12');
-  for(const handNumber of ['',null,undefined])assert.equal(records.recordQuery('hands',{filters:{handNumber}}).has('handNumber'),false);
-  for(const handNumber of ['0','-1','1.5','1e3','12abc','9007199254740992',true,{},[]])assert.throws(()=>records.recordQuery('hands',{filters:{handNumber}}),/有效的手数/);
-  const html=records.recordFilters('hands',{filters:{q:'old hidden search',handNumber:'12'}});
-  assert.doesNotMatch(html,/name="q"|搜索牌桌|含搜索词/);assert.match(html,/找第几手/);assert.match(html,/每场从 1 计数/);assert.match(html,/第 12 手/);
-  const sessions=records.recordFilters('sessions',{filters:{q:'朋友'}});assert.match(sessions,/搜索对局名称/);assert.match(sessions,/name="q"/);assert.doesNotMatch(sessions,/name="handNumber"/);
+test('removed hand-number and even filters never silently narrow old saved views',()=>{
+  for(const handNumber of ['12','1e3',{},null]){const query=records.recordQuery('hands',{filters:{handNumber,result:'even',q:'old'}});assert.equal(query.has('handNumber'),false);assert.equal(query.has('q'),false);assert.equal(query.has('result'),false);}
+  const html=records.recordFilters('hands',{filters:{q:'old hidden search',handNumber:'12',result:'even'}});assert.doesNotMatch(html,/name="(?:q|handNumber)"|找第几手|第 12 手|value="even"|含搜索词/);assert.match(html,/全部手牌/);
+  const sessions=records.recordFilters('sessions',{filters:{q:'朋友'}});assert.match(sessions,/搜索对局名称/);assert.match(sessions,/name="q"/);assert.doesNotMatch(sessions,/name="handNumber"|value="even"/);
+  const values=records.filterValues(new URLSearchParams(),{handNumber:'99',result:'even'});assert.equal(values.handNumber,undefined);assert.equal(values.result,'all');
 });
 
-test('invalid card or hand-number drafts cannot replace applied filters through submit or date buttons',async()=>{
-  for(const values of [{handNumber:'1e3'},{holeRank1:'A',holeSuit1:'h',holeRank2:'A',holeSuit2:'h'}]){
+test('invalid card drafts cannot replace applied filters through submit or date buttons',async()=>{
+  for(const values of [{holeRank1:'A',holeSuit1:'h',holeRank2:'A',holeSuit2:'h'}]){
     const c=harness(),applied={...records.defaultRecordFilters(),period:'7',holePreset:'pair'};c.state.library.filters=applied;c.state.library.room='123456';
     const form=startingHandForm(c.state.library,values);form.elements.push({name:'room',value:'654321'});
     await c.applyRecordFilters(form);assert.equal(c.state.library.filters,applied);assert.equal(c.state.library.room,'123456');assert.equal(c.calls.length,0);assert.equal(c.toasts.length,1);
@@ -407,7 +403,7 @@ test('applied hand filter summary names the selected table, date, favorites and 
   // Use an existing recognized preset to avoid relying on a legacy alias.
   state.filters.holePreset='all';state.filters.holeType='pair';
   const summary=records.recordFilters('hands',state,rooms).match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];
-  for(const phrase of ['对局：重复朋友局','近 7 天','仅收藏','赢超过 25 BB','口袋对','炸弹池','对手：朋友甲','BTN','翻后单挑','3–6 人发牌','最近 100 手','第 12 手'])assert.ok(summary.includes(phrase),phrase);
+  for(const phrase of ['对局：重复朋友局','近 7 天','仅收藏','赢超过 25 BB','口袋对','炸弹池','对手：朋友甲','BTN','翻后单挑','3–6 人发牌','最近 100 手'])assert.ok(summary.includes(phrase),phrase);
   assert.doesNotMatch(summary,/全部手牌/);
   const onlyTable=records.recordFilters('hands',{scope:'personal',room:'old-table',filters:{}},rooms).match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];
   assert.match(onlyTable,/对局：重复朋友局/);assert.doesNotMatch(onlyTable,/全部手牌/);
@@ -421,5 +417,72 @@ test('date summaries include open bounds, missing selected tables and escaped na
   const html=records.recordFilters('hands',{scope:'personal',room:'attack',filters:{}},[{code:'attack',name:'<img src=x>'}]);
   assert.match(html,/对局：&lt;img src=x&gt;/);assert.doesNotMatch(html,/<img/);
   const table=records.recordFilters('hands',{scope:'table',room:'same',filters:{period:'custom',from:'2026-01-01'}},[{code:'same',name:'当前房间'}]);
-  assert.match(table,/筛选 <span>全部手牌/);assert.doesNotMatch(table.match(/<summary>筛选 <span>([^<]+)<\/span>/)[1],/对局：|2026-01-01/);
+  assert.match(table,/当前筛选条件">全部手牌/);assert.doesNotMatch(table.match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1],/对局：|2026-01-01/);
+});
+
+test('record destinations are peers and neither opponent page nor table history exposes hand-only opponent filters',()=>{
+  const nav=records.recordNavigation('opponents');
+  assert.equal((nav.match(/data-action=/g)||[]).length,4);for(const label of ['概览','对局','牌谱','对手'])assert.ok(nav.includes(label));assert.match(nav,/data-action="opponents" aria-current="page"/);
+  const html=records.opponentFilters({filters:{period:'all',position:'BB',maxHands:'100',type:'bomb',squid:'unlimited'}});
+  assert.match(html,/data-record-kind="opponents"/);assert.doesNotMatch(html,/name="(?:position|type|squid|potType|holePreset|maxHands|result|handNumber)"/);
+  assert.doesNotMatch(html,/同桌手牌|翻后单挑/);
+});
+test('direct opponent queries only carry explicit date room opponent scope and ignore stale hand-only fields',()=>{
+  const query=records.opponentQuery({room:'room-1',filters:{period:'7',opponent:'friend',position:'BB',type:'bomb',squid:'unlimited',result:'loss',handNumber:'3',maxHands:'100',holePreset:'pair'}});
+  assert.deepEqual([...query.keys()].sort(),['from','opponent','room','to']);assert.equal(query.get('opponent'),'friend');
+  assert.throws(()=>records.opponentQuery({filters:{opponent:'../other'}}),/有效的对手/);
+  const filters=records.opponentFilterValues(new URLSearchParams({room:'ignored',opponent:'friend',holePreset:'pair'}),{period:'3',position:'BB',type:'bomb'});
+  assert.deepEqual(filters,{period:'3',from:'',to:'',opponent:'friend'});
+});
+const bucket=(won,lost,extra={})=>({events:2,coveredEvents:2,unknownEvents:0,bbEvents:2,complete:true,bbComplete:true,won,lost,net:won-lost,wonBB:won/10,lostBB:lost/10,netBB:(won-lost)/10,...extra});
+test('direct opponent cards use direct buckets, split poker and fish, escape data and explain allocation',()=>{
+  const total=bucket(150,50),holdem=bucket(120,50),squid=bucket(30,0),data={rows:[{id:'friend',name:'<img src=x>',hands:10,transferHands:4,allocatedHands:2,total,holdem,squid,net:999999,cards:['As','Ah']}],summary:{hands:10,total,holdem,squid},excludedMiniEvents:3};
+  let html=records.directOpponentRecords(data);assert.match(html,/合计 · 德州＋鱿鱼/);assert.match(html,/从对方赢得/);assert.match(html,/输给对方/);assert.match(html,/\+100/);assert.match(html,/\+70/);assert.match(html,/\+30/);assert.match(html,/3 笔旧小游戏/);assert.match(html,/各赢家净盈利比例/);assert.match(html,/共同牌谱显示整手结果/);
+  assert.match(html,/&lt;img src=x&gt;/);assert.doesNotMatch(html,/<img|999999|As|Ah|NaN|Infinity/);
+  setDisplayUnit('bb');html=records.directOpponentRecords(data);assert.match(html,/\+10 BB/);assert.match(html,/\+7 BB/);assert.match(html,/\+3 BB/);
+});
+test('unknown attribution never falls back to covered partial totals and stays below measured ranks',()=>{
+  setDisplayUnit('bb');const known=bucket(0,100),unknown=bucket(null,null,{net:null,wonBB:null,lostBB:null,netBB:null,complete:false,bbComplete:false,unknownEvents:1,covered:{net:9999,netBB:9999}});
+  const data={rows:[{id:'unknown',name:'未知',total:unknown},{id:'known',name:'已核对',total:known}],summary:{total:unknown,holdem:unknown,squid:bucket(0,0)}};
+  for(const sort of ['profit','loss']){const html=records.directOpponentRecords(data,sort);assert.ok(html.indexOf('opponent-known')<html.indexOf('opponent-unknown'));assert.match(html,/无法完整计算/);assert.match(html,/历史记录无法完整归属/);assert.doesNotMatch(html,/9,999|9999/);}
+  const zero=records.directOpponentRecords({rows:[{id:'zero',name:'零',total:bucket(0,0)}],summary:{total:bucket(0,0),holdem:bucket(0,0),squid:bucket(0,0)}});assert.match(zero,/0 BB/);assert.match(zero,/暂无净输赢/);
+});
+test('hand game filters combine bomb pots with either squid mode without filtering the opponent report',()=>{
+  for(const type of ['holdem','bomb'])for(const squid of ['none','normal','unlimited']){
+    const query=records.recordQuery('hands',{filters:{type,squid}});assert.equal(query.get('type'),type);assert.equal(query.get('squid'),squid);
+    const html=records.recordFilters('hands',{filters:{type,squid}}),summary=html.match(/aria-label="当前筛选条件">([^<]+)/)[1];assert.ok(summary.includes(type==='bomb'?'炸弹池':'普通发牌'));assert.ok(summary.includes({none:'无鱿鱼',normal:'普通鱿鱼',unlimited:'无限鱿鱼'}[squid]));
+  }
+  assert.throws(()=>records.recordQuery('hands',{filters:{squid:'invalid'}}));
+  const html=records.recordFilters('hands',{filters:{}});assert.match(html,/杂色连张/);
+});
+test('actual dealt size controls positions, discards impossible drafts and labels bomb pots without imaginary blinds',()=>{
+  for(let size=2;size<=9;size++)assert.equal(records.recordQuery('hands',{filters:{tableSize:String(size)}}).get('tableSize'),String(size));
+  const make=(size,position,type='all')=>{const values={tableSize:{value:size},position:{value:position,innerHTML:''},type:{value:type},result:{value:'all'}};return {elements:{namedItem:name=>values[name]},querySelector:()=>null,values};};
+  const short=make('4','UTG');records.updateRecordFields(short,{name:'tableSize'});assert.equal(short.values.position.value,'all');assert.doesNotMatch(short.values.position.innerHTML,/value="UTG"/);assert.match(short.values.position.innerHTML,/庄前一位 CO/);
+  const bomb=make('9','BB','bomb');records.updateRecordFields(bomb,{name:'type'});assert.equal(bomb.values.position.value,'all');assert.doesNotMatch(bomb.values.position.innerHTML,/value="(?:SB|BB|UTG)"/);assert.match(bomb.values.position.innerHTML,/炸弹池无盲位/);
+  const valid=make('4','CO');records.updateRecordFields(valid,{name:'tableSize'});assert.equal(valid.values.position.value,'CO');
+  const chips=records.handContextChips({position:'bomb',bombPot:true,tableSize:4});assert.match(chips,/炸弹池无盲位/);assert.match(chips,/4 人发牌/);assert.doesNotMatch(chips,/位置未记录/);
+});
+
+test('custom dates have a visible apply action outside collapsed advanced filters and submit as one draft',async()=>{
+  for(const kind of ['hands','sessions','opponents']){
+    const c=harness(),list=kind==='hands'?c.state.library:kind==='sessions'?c.state.sessions:c.state.opponents;
+    list.filters={period:'custom',from:'2026-10-01',to:'2026-10-14'};
+    const html=kind==='opponents'?records.opponentFilters(list):records.recordFilters(kind,list);
+    const dateSection=html.match(/<section class="record-date-group"[\s\S]*?<\/section>/)[0];
+    assert.match(dateSection,/<button type="submit" class="outline small">应用日期<\/button>/);assert.doesNotMatch(dateSection,/<details|data-record-auto/);
+    assert.ok(html.indexOf('应用日期')<html.indexOf('data-record-disclosure="filters"'));
+    const elements=[{name:'from',value:'2026-10-03'},{name:'to',value:'2026-10-12'}],form={dataset:{recordKind:kind},elements};
+    assert.equal(list.filters.from,'2026-10-01');assert.equal(c.calls.length,0);
+    const pending=c.applyRecordFilters(form);assert.equal(c.calls.length,1);const query=new URL('https://local'+c.calls[0].path).searchParams;
+    assert.equal(query.get('from'),records.recordDateRange({period:'custom',from:'2026-10-03',to:'2026-10-12'}).from);
+    assert.equal(query.get('to'),records.recordDateRange({period:'custom',from:'2026-10-03',to:'2026-10-12'}).to);
+    c.calls[0].resolve(kind==='hands'?{hands:[]}:kind==='sessions'?{sessions:[]}:{opponents:{rows:[],summary:{}},opponentOptions:[]});await pending;
+    assert.equal(list.filters.from,'2026-10-03');assert.equal(list.filters.to,'2026-10-12');
+  }
+});
+test('opponent component counts distinguish attributable and unknown events',()=>{
+  const partial=bucket(null,null,{events:5,coveredEvents:3,unknownEvents:2,net:null,netBB:null,complete:false,bbComplete:false});
+  const html=records.directOpponentRecords({rows:[{id:'friend',name:'朋友',holdem:partial,squid:partial,total:partial}],summary:{}});
+  assert.match(html,/3 手可核对 · 2 手待核对/);assert.match(html,/3 轮可核对 · 2 轮待核对/);assert.doesNotMatch(html,/5 手有归属记录|5 轮结算/);
 });

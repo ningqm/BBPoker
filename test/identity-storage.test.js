@@ -1,3 +1,4 @@
+import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
@@ -37,7 +38,7 @@ function browserStorage(t) {
 }
 function tab() {
   const calls = [];
-  const context = vm.createContext({clearTimeout,statsUI,funTracker:createTableFunTracker(),
+  const context = vm.createContext({clearTimeout,statsUI,records,funTracker:createTableFunTracker(),
     feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },

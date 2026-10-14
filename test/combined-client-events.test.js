@@ -187,9 +187,9 @@ function roomScene(state){return JSON.stringify({children:[{className:'topbar'},
 function renderHarness(){
   const c=harness(),app=new ViewNode();app.root=true;app.innerHTML=roomScene(c.state);
   Object.assign(c.context,{app,header:()=>'',roomView:()=>roomScene(c.state),statsUI:{captureStatsDraft(){},restoreStatsDraft(){}},records:{captureRecordDraft(){},restoreRecordDraft(){}},
-    avatarCache:{hydrate(){}},mountFunEffects(){},tick(){},welcome(){},recoveryPage(){},errorPage(){},lobby(){},career(){},handLibrary(){},sessionLibrary(){},$:selector=>app.querySelector(selector)});
+    avatarCache:{hydrate(){}},mountFunEffects(){},tick(){},welcome(){},recoveryPage(){},errorPage(){},lobby(){},career(){},handLibrary(){},sessionLibrary(){},opponentLibrary(){},$:selector=>app.querySelector(selector)});
   Object.assign(c.context.document,{activeElement:null,createElement:()=>new ViewNode(),querySelector:selector=>app.querySelector(selector),getElementById:id=>app.querySelector('#'+id),body:{classList:{toggle(){}}}});
-  vm.runInContext(section('function patchRoomToolbar(','function usernameField('),c.context);
+  vm.runInContext(section('function recordFormSelector(','function recordState(')+section('function patchRoomToolbar(','function usernameField('),c.context);
   return {...c,app,render:()=>c.context.render()};
 }
 test('same-table updates keep the pressed chat and history buttons attached while updating their labels',()=>{

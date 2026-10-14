@@ -119,7 +119,7 @@ test('legacy unknown context can be filtered explicitly without guessing final s
 test('advanced filters reject malformed inputs rather than silently widening their scope', () => {
   for (const query of [
     { opponent: {} }, { opponent: ['alice'] }, { opponent: true }, { opponent: ' alice ' }, { opponent: 'a'.repeat(129) },
-    { position: 'BTN/SB' }, { position: 'btn' }, { potType: 'multi' }, { tableSize: '9' },
+    { position: 'BTN/SB' }, { position: 'btn' }, { potType: 'multi' }, { tableSize: '10' },
     ...['0', '-1', '1.2', '1e3', ' 100 ', '100001', {}, [], true, Infinity].map(maxHands => ({ maxHands })),
   ]) assert.throws(() => recordFilters(query), error => error.status === 400, JSON.stringify(query));
   for (const maxHands of ['all', '1', '100000', 7]) assert.ok(recordFilters({ maxHands }));

@@ -133,16 +133,16 @@ test('legacy replay projection preserves a top-level historical BB without revea
   assert.deepEqual(unknown.players.find(p => p.id === 'friend').cards, [null, null]);
 });
 
-test('opponent overview has its own compact filter form without hidden hand filters or hand limits', () => {
+test('opponent report has an independent compact date room and opponent form, without hand-only fields', () => {
   const state={room:'room2',filters:{period:'7',position:'CO',type:'bomb',tableSize:'full',result:'win',holePreset:'premium',handNumber:'12',opponent:'friend',maxHands:'100',potType:'headsUp'},favorites:true};
   const html=opponentFilters(state,[{code:'room2',name:'<script>同名局</script>',createdAt:'2026-10-14T12:00:00Z'}]);
-  assert.match(html,/id="hand-records-filter-form"/);assert.match(html,/data-record-kind="hands"/);assert.ok(html.includes(recordFilterKey(state).replaceAll('"','&quot;')));
-  for(const name of ['room','position','type','tableSize'])assert.match(html,new RegExp(`name="${name}"`));
-  assert.doesNotMatch(html,/name="(?:result|minBB|hole\w*|handNumber|opponent|maxHands|potType|favorites)"|起手牌|找第几手|我的盈亏/);
-  assert.match(html,/选择对局/);assert.match(html,/全部对局/);assert.match(html,/更多条件/);assert.match(html,/&lt;script&gt;同名局&lt;\/script&gt;/);assert.doesNotMatch(html,/<script>/);
-  assert.match(html,/data-record-disclosure="opponent-options" open/);assert.match(html,/value="CO" selected/);
-  const plain=opponentFilters({filters:{}});assert.match(plain,/data-record-disclosure="opponent-options" >/);assert.doesNotMatch(plain,/name="(?:from|to)"/);
-  const custom=opponentFilters({filters:{period:'custom',from:'2026-10-01',to:'2026-10-14'}});assert.match(custom,/name="from" value="2026-10-01"/);assert.match(custom,/name="to" value="2026-10-14"/);
+  assert.match(html,/id="opponent-records-filter-form"/);assert.match(html,/data-record-kind="opponents"/);assert.ok(html.includes(recordFilterKey(state).replaceAll('"','&quot;')));
+  for(const name of ['room','opponent'])assert.match(html,new RegExp(`name="${name}"`));
+  assert.doesNotMatch(html,/name="(?:result|minBB|hole\w*|handNumber|position|type|squid|tableSize|maxHands|potType|favorites)"|起手牌|找第几手|我的盈亏/);
+  assert.match(html,/选择对局/);assert.match(html,/全部对局/);assert.match(html,/筛选条件/);assert.match(html,/&lt;script&gt;同名局&lt;\/script&gt;/);assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/data-record-disclosure="filters">/);assert.match(html,/value="friend" selected/);
+  const plain=opponentFilters({filters:{}});assert.match(plain,/data-record-disclosure="filters">/);assert.doesNotMatch(plain,/name="(?:from|to)"/);
+  const custom=opponentFilters({filters:{period:'custom',from:'2026-10-01',to:'2026-10-14'}});assert.match(custom,/name="from" value="2026-10-01"/);assert.match(custom,/name="to" value="2026-10-14"/);assert.match(custom,/应用日期/);
 });
 
 const opponentFixture=()=>({uniqueHands:12,net:9999,netBB:777,bbHands:12,rows:[

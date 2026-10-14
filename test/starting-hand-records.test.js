@@ -71,6 +71,25 @@ test('legacy rank clients remain compatible while new custom fields replace stal
   assert.throws(() => f.service.handLibrary('me', { holeRank1: 'A', holeSuit1: 'h', holeRank2: 'A', holeSuit2: 'h' }), e => e.status === 400);
 });
 
+test('offsuit connector preset filters own records and totals, while custom A2 and suit selections remain available', () => {
+  const f = fixture();
+  f.add('kq-red', { cards: ['Kh', 'Qd'], net: 60 });
+  f.add('ak-black', { cards: ['Ac', 'Ks'], net: -20, bb: 20 });
+  f.add('32', { cards: ['3h', '2s'], net: 10 });
+  f.add('kqs', { cards: ['Ks', 'Qs'], net: 500 });
+  f.add('a2', { cards: ['Ah', '2s'], net: 900 });
+  f.add('pair', { cards: ['Kh', 'Ks'], net: 700 });
+  const result = f.service.handLibrary('me', { holePreset: 'offsuitConnector' });
+  assert.deepEqual(ids(result), ['32', 'ak-black', 'kq-red']);
+  assert.equal(result.totals.count, 3); assert.equal(result.totals.net, 50); assert.equal(result.totals.bb.net, 6);
+  assert.equal(result.opponents.uniqueHands, 3); assert.equal(result.opponents.net, 50);
+  assert.deepEqual(ids(f.service.handLibrary('me', { holePreset: 'offsuitConnector', holeRank1: 'A', holeRank2: '2' })), ['a2'], 'custom ranks replace the preset');
+  assert.deepEqual(ids(f.service.handLibrary('me', { holePreset: 'offsuitConnector', holeSuit1: 's', holeSuit2: 's' })), ['kqs'], 'custom suits replace the preset');
+  assert.deepEqual(ids(f.service.history('observer', f.rooms[0].code, { holePreset: 'offsuitConnector' })), []);
+  for (const hand of f.db.hands) Object.defineProperty(hand.players.find(player => player.id === 'a'), 'cards', { get() { throw new Error('peer cards must remain unread'); } });
+  assert.deepEqual(ids(f.service.handLibrary('me', { holePreset: 'offsuitConnector' })), ['32', 'ak-black', 'kq-red']);
+});
+
 test('private peer cards are never read and observer records only survive unrestricted starting-hand queries', () => {
   const f = fixture();
   const h = f.add('own-low', { cards: ['2s', '3d'] });

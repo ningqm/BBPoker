@@ -1,3 +1,4 @@
+import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
 import {createTableFeedback,createTurnCountdown} from '../public/table-feedback.js';
@@ -55,7 +56,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({...money,funTracker:createTableFunTracker(),statsUI,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
+  const context = vm.createContext({...money,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {

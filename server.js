@@ -305,6 +305,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
         if (path === '/api/me' && req.method === 'GET') return send(res, 200, { user: publicUser(user), createKeyRequired: false, stats: service.stats(user.id), rooms: Object.values(store.data.rooms).filter(r => r.members[user.id]).map(r => ({ code: r.code, name: r.name, status: r.status, startedAt: r.startedAt ?? null, createdAt: r.createdAt })) });
         if (path === '/api/lobby' && req.method === 'GET') return send(res, 200, lobbyDirectory(store.data, user.id));
         if (path === '/api/stats' && req.method === 'GET') return send(res, 200, service.stats(user.id, Object.fromEntries(url.searchParams)));
+        if (path === '/api/opponents' && req.method === 'GET') return send(res, 200, service.opponents(user.id, Object.fromEntries(url.searchParams)));
         if (path === '/api/sessions' && req.method === 'GET') return send(res, 200, service.sessions(user.id, Object.fromEntries(url.searchParams)));
         const sessionMatch = /^\/api\/sessions\/([0-9]{6})$/.exec(path);
         if (sessionMatch && req.method === 'GET') return send(res, 200, service.sessionFor(user.id, sessionMatch[1]));

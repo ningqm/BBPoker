@@ -72,7 +72,8 @@ export function decideAction(room, { random = Math.random } = {}) {
   if ((strong && random() < 0.65 || bluff) && actions.canRaise &&
       Number.isSafeInteger(actions.minRaiseTo) && Number.isSafeInteger(actions.maxRaiseTo) && actions.maxRaiseTo >= actions.minRaiseTo) {
     const increment = hand.street === 'preflop' ? Math.max(bigBlind, 2.5 * bigBlind - hand.currentBet) : Math.max(bigBlind, pot * 0.6);
-    const amount = Math.min(actions.maxRaiseTo, Math.max(actions.minRaiseTo, Math.round(hand.currentBet + increment)));
+    const minimum = Math.ceil(actions.minRaiseTo / bigBlind) * bigBlind;
+    const amount = Math.min(actions.maxRaiseTo, Math.max(minimum, Math.round((hand.currentBet + increment) / bigBlind) * bigBlind));
     return { action: 'raise', amount };
   }
   // A short stack may legally increase the wager without meeting minRaiseTo.

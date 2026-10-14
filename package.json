@@ -1,6 +1,6 @@
 {
   "name": "bbpoker",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
   "description": "Points-only Texas Hold'em for friends with public or invited tables",

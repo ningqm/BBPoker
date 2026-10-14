@@ -31,12 +31,9 @@
 .hand-overview .ho-mine>strong.ho-positive,.hand-overview .ho-player-result>strong.ho-positive{background:var(--action-win-bg,#e5f5ed);border-color:var(--action-win-line,#91cbb1)}
 .hand-overview .ho-mine>strong.ho-negative,.hand-overview .ho-player-result>strong.ho-negative{background:#fff0f2;border-color:#e7b3be}
 .hand-overview .ho-neutral{color:var(--ho-muted)}
-.hand-overview .ho-rabbit{margin:12px 0 0;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff9e9;border:1px dashed #ddc790;border-radius:10px}
-.hand-overview .ho-rabbit>div{display:flex;flex-direction:column;gap:5px}
-.hand-overview .ho-rabbit small{color:#816e45;font-size:12px}
-.hand-overview .ho-rabbit .ho-card{width:28px;min-width:28px;height:39px}
-.hand-overview .ho-rabbit .ho-card b{font-size:17px}
-.hand-overview .ho-rabbit .ho-card>span{font-size:13px}
+.hand-overview .ho-supplemental{display:inline-flex;flex:none}
+.hand-overview .ho-supplemental .ho-card{border:2px dashed #b58223;background:#fff8e8}
+.hand-overview .ho-rabbit-note{margin:9px 0 0;color:#816e45;font-size:12px;line-height:1.6}
 .hand-overview .ho-route-title{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:22px 0 10px}
 .hand-overview .ho-route-title h3{font-size:16px;margin:0}
 .hand-overview .ho-route-title small{color:var(--ho-muted);font-size:11px}
@@ -124,5 +121,4 @@
   .hand-overview .ho-mine{margin-top:13px;max-width:none;align-items:flex-start;text-align:left;border-top:1px solid var(--ho-line);padding-top:10px}
   .hand-overview .ho-mine>span br{display:none}
   .hand-overview .ho-mine>span{word-spacing:5px}
-  .hand-overview .ho-rabbit{align-items:flex-start;flex-direction:column}
 }

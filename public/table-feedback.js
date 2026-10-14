@@ -171,7 +171,7 @@ export function createTurnCountdown() {
 const tones = {
   deal: [[660, 360, 0, 0.055, 0.025], [760, 440, 0.065, 0.055, 0.02]],
   board: [[520, 820, 0, 0.075, 0.022]],
-  chip: [[2500, 1700, 0, 0.065, 0.035], [3400, 2600, 0.027, 0.05, 0.026], [2850, 1800, 0.061, 0.075, 0.034], [3900, 3100, 0.103, 0.055, 0.018]],
+  chip: [], // A short, dry material collision below; no pitched electronic sweep.
   fold: [[260, 130, 0, 0.06, 0.015]],
   check: [[480, 340, 0, 0.035, 0.022]],
   yourturn: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.09, 0.075, 0.025]],
@@ -182,12 +182,40 @@ const tones = {
 
 export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'check', 'fold', 'allin']);
 
+/** Original procedural foley: irregular chip contacts against each other and felt.
+ * The seeded noise is presentation only and has no connection to shuffled cards.
+ */
+export function chipContactSamples(sampleRate = 44100) {
+  const rate = clamp(Math.round(finite(sampleRate, 44100)), 8000, 192000);
+  const samples = new Float32Array(Math.ceil(rate * 0.32));
+  const contacts = [[0.012, 1], [0.047, 0.7], [0.098, 0.58], [0.139, 0.38], [0.21, 0.22]];
+  let seed = 739;
+  for (const [at, strength] of contacts) {
+    const offset = Math.round(at * rate); let smoothed = 0;
+    for (let i = 0; i < Math.ceil(rate * 0.075); i++) {
+      const t = i / rate;
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const noise = seed / 2147483648 - 1;
+      smoothed += (noise - smoothed) * (1 - Math.exp(-2 * Math.PI * 3600 / rate));
+      const attack = Math.min(1, t / 0.0008);
+      const body = Math.sin(2 * Math.PI * 790 * t) * Math.exp(-t / 0.007) * 0.24 +
+        Math.sin(2 * Math.PI * 1543 * t) * Math.exp(-t / 0.0048) * 0.18 +
+        Math.sin(2 * Math.PI * 2690 * t) * Math.exp(-t / 0.0032) * 0.08;
+      const contact = smoothed * Math.exp(-t / 0.0035) * 0.7;
+      const felt = smoothed * Math.exp(-t / 0.018) * 0.065;
+      if (offset + i < samples.length) samples[offset + i] += strength * attack * (body + contact + felt);
+    }
+  }
+  // The entire cue stays well below full scale, even if a notification overlaps it.
+  return samples;
+}
+
 /** Same-origin recorded cues and synthesized effects; never a delayed action queue. */
 export function createTableSounds({ enabled = false, voiceEnabled = true,
   AudioContext: AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext,
   document: doc = globalThis.document, now = () => Date.now(), fetch: fetcher = globalThis.fetch } = {}) {
   let context = null, unlocked = false, disposed = false, lastPlayed = -Infinity, generation = 0;
-  let voiceSource = null, loadingVoices = null, loadController = null, chipNoise = null;
+  let voiceSource = null, loadingVoices = null, loadController = null, chipBuffer = null;
   const voices = new Map(), active = new Set();
   const visible = () => doc?.visibilityState !== 'hidden';
   const ready = () => !disposed && enabled && unlocked && visible() && context?.state === 'running';
@@ -246,7 +274,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     const start = context.currentTime + offset;
     for (const [from, to, delay, duration, volume] of tones[type]) {
       const oscillator = context.createOscillator(), gain = context.createGain();
-      register(oscillator, gain); oscillator.type = type === 'chip' ? 'triangle' : 'sine';
+      register(oscillator, gain); oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(from, start + delay);
       oscillator.frequency.exponentialRampToValueAtTime(to, start + delay + duration);
       gain.gain.setValueAtTime(0.0001, start + delay);
@@ -254,20 +282,16 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       gain.gain.exponentialRampToValueAtTime(0.0001, start + delay + duration);
       oscillator.start(start + delay); oscillator.stop(start + delay + duration + 0.01);
     }
-    // Four dry impact transients over the resonances make chips distinct from
-    // the turn notification. Pseudorandom presentation noise is unrelated to cards.
     if (type === 'chip' && context.createBuffer && context.createBufferSource) {
-      if (!chipNoise) {
+      if (!chipBuffer) {
         const rate = context.sampleRate || 44100;
-        chipNoise = context.createBuffer(1, Math.ceil(rate * 0.025), rate);
-        const channel = chipNoise.getChannelData(0); let seed = 739;
-        for (let i = 0; i < channel.length; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; channel[i] = (seed / 2147483648 - 1) * (1 - i / channel.length); }
+        const samples = chipContactSamples(rate);
+        chipBuffer = context.createBuffer(1, samples.length, rate);
+        chipBuffer.getChannelData(0).set(samples);
       }
-      for (const delay of [0, 0.027, 0.061, 0.103]) {
-        const source = context.createBufferSource(), gain = context.createGain(); source.buffer = chipNoise;
-        register(source, gain); gain.gain.setValueAtTime(0.065, start + delay);
-        source.start(start + delay); source.stop(start + delay + 0.03);
-      }
+      const source = context.createBufferSource(), gain = context.createGain(); source.buffer = chipBuffer;
+      register(source, gain); gain.gain.setValueAtTime(0.42, start);
+      source.start(start); source.stop(start + chipBuffer.duration + 0.01);
     }
   }
   function play(type, { chips = false } = {}) {
@@ -287,7 +311,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     if (!ready() || !voiceEnabled || !voices.has(type) || !context.createBufferSource) return false;
     try {
       const node = context.createBufferSource(), gain = context.createGain();
-      node.buffer = voices.get(type); gain.gain.setValueAtTime(0.7, context.currentTime);
+      node.buffer = voices.get(type); gain.gain.setValueAtTime(0.56, context.currentTime);
       node.connect(gain); gain.connect(context.destination); const entry = { node, gain }; voiceSource = entry;
       node.onended = () => { if (voiceSource === entry) voiceSource = null; try { node.disconnect(); gain.disconnect(); } catch {} };
       node.start(context.currentTime + 0.025); return true;
@@ -303,7 +327,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       if (disposed || !enabled || !visible() || !AudioContextClass) return false;
       const attempt = generation;
       try {
-        if (!context || context.state === 'closed') { context = new AudioContextClass(); voices.clear(); chipNoise = null; }
+        if (!context || context.state === 'closed') { context = new AudioContextClass(); voices.clear(); chipBuffer = null; }
         if (context.state !== 'running') await context.resume();
         unlocked = !disposed && enabled && visible() && attempt === generation && context.state === 'running';
         if (unlocked) ignoreRejection(preloadVoices());
@@ -321,7 +345,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       disposed = true; generation++; unlocked = false; stop(); stopVoice(); loadController?.abort();
       doc?.removeEventListener?.('visibilitychange', visibilityChanged);
       try { if (context && context.state !== 'closed') ignoreRejection(context.close()); } catch {}
-      context = null; voices.clear(); chipNoise = null;
+      context = null; voices.clear(); chipBuffer = null;
     },
   };
 }

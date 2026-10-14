@@ -1,5 +1,5 @@
 /* Table-only decoration: never intercept a bet, a card, or a chat control. */
-.fun-layer,.fun-layer *,.fun-mask{pointer-events:none!important;user-select:none}
+.fun-layer,.fun-layer *{pointer-events:none!important;user-select:none}
 .fun-layer{position:absolute;inset:0;z-index:4;overflow:visible;contain:layout style}
 .fun-effect{position:absolute;inset:0;animation:fun-lifetime 2s linear both;animation-delay:calc(0ms - var(--fun-age,0ms))}
 .fun-projectile,.fun-impact{position:absolute;display:block;line-height:1;font-size:31px;filter:drop-shadow(0 2px 2px #213d3520);transform-origin:center;will-change:transform,opacity}
@@ -16,7 +16,7 @@
 .seat .seat-avatar-button:disabled{opacity:1;cursor:default;filter:none}
 .seat .seat-avatar-button:focus-visible{outline:2px solid var(--mint,#146a58);outline-offset:3px}
 .seat .seat-avatar-button .avatar{position:relative;inset:auto;width:100%;height:100%;font-size:12px}
-.fun-mask{position:absolute;inset:0;display:grid;place-items:center;font-size:28px;line-height:1;filter:drop-shadow(0 1px 1px #273f3328)}
+
 .board-slot{position:relative;display:inline-grid;flex-shrink:0;perspective:600px}
 .board-slot>.card{grid-area:1/1;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform-style:preserve-3d}
 .board-slot>.board-face{visibility:hidden;transform:rotateY(-180deg)}
@@ -32,8 +32,8 @@
 @keyframes fun-pat{0%{opacity:0;transform:translate(-42%,-75%) rotate(-12deg)}15%,50%,80%{opacity:1;transform:translate(-42%,-60%) rotate(8deg)}30%,65%{opacity:1;transform:translate(-42%,-80%) rotate(-12deg)}100%{opacity:0;transform:translate(-42%,-65%) rotate(0deg)}}
 @keyframes board-back-flip{from{transform:rotateY(0)}to{transform:rotateY(180deg)}}
 @keyframes board-face-flip{from{transform:rotateY(-180deg)}to{transform:rotateY(0)}}
-@media(max-width:760px){.fun-projectile,.fun-impact{font-size:26px}.seat .seat-avatar-button{left:-7px;top:-11px;width:25px;height:25px}.seat .seat-avatar-button:after{inset:-8px}.fun-mask{font-size:24px}.seat .seat-avatar-button .avatar{font-size:10px}}
-@media(max-width:360px){.seat .seat-avatar-button{width:23px;height:23px}.fun-mask{font-size:22px}}
+@media(max-width:760px){.fun-projectile,.fun-impact{font-size:26px}.seat .seat-avatar-button{left:-7px;top:-11px;width:25px;height:25px}.seat .seat-avatar-button:after{inset:-8px}.seat .seat-avatar-button .avatar{font-size:10px}}
+@media(max-width:360px){.seat .seat-avatar-button{width:23px;height:23px}}
 .no-motion .board-slot>.card{animation:none!important}.no-motion .fun-layer{display:none}
 @media(prefers-reduced-motion:reduce){
   .board-slot>.card{animation:none!important}

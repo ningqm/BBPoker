@@ -113,3 +113,5 @@
 }
 
 @media(max-width:380px){.opponent-meta>span{display:none}}
+
+.hand-record-result .record-rabbit-note{display:block;flex-basis:100%;font-size:10px;line-height:1.5;color:#846528;white-space:normal}

@@ -14,12 +14,12 @@
 .table-stage .seat .stack-value{grid-column:1/-1;grid-row:2;display:flex;align-items:baseline;justify-content:center;gap:2px;font-size:17px;font-weight:800;line-height:1.35;letter-spacing:-.025em;font-variant-numeric:tabular-nums;overflow:visible;text-overflow:clip;white-space:nowrap}
 .table-stage .seat .stack-unit{flex-shrink:0;font-size:10px;font-weight:650;line-height:1;letter-spacing:0;color:#52735f}
 .table-stage .seat .seat-status{font-size:9px;line-height:15px;height:15px}
-.table-stage .seat .fun-mask{font-size:21px}
-.table-stage .seat .seat-interaction-hit{position:absolute;inset:0;z-index:2;display:block;width:100%;height:100%;padding:0;border:0;border-radius:inherit;background:transparent;box-shadow:none;cursor:pointer;touch-action:manipulation}
-.table-stage .seat .seat-interaction-hit:hover{background:#287a6410;box-shadow:inset 0 0 0 1px #38927670}
-.table-stage .seat .seat-interaction-hit:active{background:#287a6425}
-.table-stage .seat .seat-interaction-hit:focus-visible{outline:3px solid #467bce;outline-offset:2px}
-.table-stage .seat .seat-identity .seat-avatar-button{cursor:inherit;pointer-events:none;display:inline-flex;align-items:center;justify-content:center}
+
+
+
+
+
+.table-stage .seat .seat-identity .seat-avatar-button{cursor:pointer;pointer-events:auto;display:inline-flex;align-items:center;justify-content:center}
 .interaction-recipient{display:flex;align-items:center;gap:10px;margin:0 0 16px;min-width:0}.interaction-recipient>.avatar{flex:0 0 38px;width:38px;height:38px}.interaction-recipient .interaction-caption{flex:1;min-width:0;margin:0;overflow-wrap:anywhere}.interaction-recipient>button{flex-shrink:0}
 
 /* Table details form a compact block; the board and pot retain their own space. */
@@ -44,7 +44,7 @@
  .table-stage .seat .seat-main{grid-template-columns:16px minmax(0,1fr);column-gap:3px;padding:4px 3px 3px;min-height:46px}.table-stage .seat.acting .seat-main{padding:3px 2px 2px}
  .table-stage .seat .seat-identity .seat-avatar-button{width:16px;height:16px}
  .table-stage .seat .name{font-size:10px}.table-stage .seat .seat-identity .seat-avatar-button .avatar{font-size:8px;border-width:1px}
- .table-stage .seat .stack-value{font-size:14px;line-height:1.3}.table-stage .seat .stack-unit{font-size:9px}.table-stage .seat .seat-status{font-size:8px;line-height:12px;height:12px;margin-top:1px}.table-stage .seat .fun-mask{font-size:17px}
+ .table-stage .seat .stack-value{font-size:14px;line-height:1.3}.table-stage .seat .stack-unit{font-size:9px}.table-stage .seat .seat-status{font-size:8px;line-height:12px;height:12px;margin-top:1px}
  .table-stage .table-center{width:178px;top:49%}.table-config{max-width:178px;margin-bottom:5px}
  .table-config-primary{padding:3px 4px;gap:1px 6px;line-height:1.35;border-radius:6px}.table-blinds,.table-config .room-countdown{font-size:9px}
  .table-config .game-mode-markers{flex-direction:column;gap:3px;margin-top:3px}.table-config .game-mode{flex:auto;padding:2px 5px;font-size:9px;line-height:1.25;gap:4px}
@@ -65,7 +65,7 @@
  .table-config .game-mode-markers{gap:2px;margin-top:2px}.table-config .game-mode,.table-config .game-mode .mode-stake{font-size:8px}.table-config .game-mode{padding:1px 4px}
  .table-stage .table-center .pot-amount{font-size:19px}.table-stage .table-center .pot-label{font-size:8px}.table-stage .table-center .board{margin:4px 0 3px}
  .table-stage .table-center .equity-runout{font-size:8px;padding:2px 5px;line-height:1.2}.table-config .squid-mode-note{-webkit-line-clamp:1}
- .table-stage .seat .fun-mask{font-size:17px}
+
 }
 
 /* Position badges sit beside the identity card, below the hole cards. */
@@ -153,3 +153,25 @@
  .table-stage:is([data-seat-count="5"],[data-seat-count="6"],[data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"]){min-height:390px}
 }
 @media(prefers-reduced-motion:reduce){.timeout-warning,.card-reveal-pop{animation:none!important}.timeout-warning{background:#ffe4b6!important;outline:2px solid #d27623}.hole-card-button{transition:none}}
+
+/* Avatar opens a compact player data card; it never sends an emote. */
+.table-stage .seat .seat-identity .seat-avatar-button{cursor:pointer;pointer-events:auto}
+.table-stage .seat .seat-identity .seat-avatar-button:after{inset:-5px}
+.player-stats-profile{display:flex;align-items:center;gap:12px;margin-bottom:18px;min-width:0}.player-stats-profile>.avatar{position:relative;inset:auto;flex:0 0 46px;width:46px;height:46px}.player-stats-profile>div{min-width:0;display:grid;gap:5px}.player-stats-profile strong{font-size:20px;overflow-wrap:anywhere}.player-stats-profile small{font-size:12px;color:#607568}
+.player-stats-scopes{display:flex;gap:8px;margin-bottom:14px}.player-stats-scopes>button{flex:1;min-height:40px}.player-stats-scopes>button.selected{background:#e2f2ea;color:#145e46;border-color:#6fae92}
+.player-stats-sample{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:12px 0}.player-stats-sample>strong{font-size:27px}.player-stats-sample small,.player-stats-sample>span{font-size:12px;color:#617568}
+.player-stats-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.player-stat{min-width:0;border:1px solid #dce6dd;border-radius:12px;background:#f7faf7;padding:13px}.player-stat>summary{display:grid;gap:7px;list-style:none;cursor:pointer}.player-stat>summary::-webkit-details-marker{display:none}.player-stat>summary>span{font-size:13px;color:#415a4a}.player-stat>summary>strong{font-size:27px;color:#196850;line-height:1.15}.player-stat>summary>small{font-size:11px;color:#667969}.player-stat>p{font-size:12px;line-height:1.6;margin:12px 0 0}.player-stat>summary>span>small{font-size:10px}.player-stats-more{margin:16px 0}.player-stats-more>summary{cursor:pointer;font-size:12px;padding:6px 0}.player-stats-more>.player-stats-grid{margin-top:10px}.player-stats-empty{padding:25px 0;text-align:center}
+.chat-emote{display:inline-block;font-size:28px;line-height:1.3}.seat-reaction .chat-emote{font-size:25px}
+.detached-showdown{display:flex;gap:10px;overflow-x:auto;margin:0 0 10px;padding:5px 0}.detached-showdown-player{display:flex;flex:0 0 auto;align-items:center;gap:7px;border:1px solid #d3e4d9;border-radius:9px;padding:7px;background:#f3faf5}.detached-showdown-player>b{max-width:110px;font-size:12px;overflow-wrap:anywhere}.detached-showdown-player small{display:block;color:#60766a;font-weight:400;margin-top:3px}.detached-showdown-player .hole-cards{display:flex;gap:3px}
+
+/* Opponent comparisons follow the player card's table / career scope. */
+.versus-stats{border-top:1px solid #dce6dd;margin-top:22px;padding-top:18px;min-width:0}
+.versus-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:7px 12px}.versus-heading h3{font-size:17px;margin:0}.versus-heading>span{font-size:11px;color:#607568;background:#edf4ef;border-radius:20px;padding:5px 9px}
+.versus-note{font-size:11px;line-height:1.75;color:#647769;margin:8px 0;overflow-wrap:anywhere}.versus-sample-note{color:#806b39}.versus-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:13px 0 9px}
+.versus-summary-item{display:grid;align-content:start;gap:7px;min-width:0;padding:13px;background:#f3f8f4;border:1px solid #dce7de;border-radius:12px}.versus-summary-item>span{font-size:12px;color:#425e4c}.versus-summary-item>strong{font-size:24px;line-height:1.25;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.versus-summary-item>strong>small{font-size:12px;font-weight:500}.versus-summary-item>small{font-size:10px;line-height:1.6;color:#687b6b}
+.versus-showdown{grid-column:1/-1}.versus-showdown>strong{display:flex;align-items:center;gap:14px}.versus-showdown b{font:inherit;font-weight:650}.versus-showdown i{font-size:17px;color:#a3b0a6;font-style:normal}
+.versus-more{margin-top:12px}.versus-more>summary{padding:8px 0;font-size:12px;font-weight:550;line-height:1.7;color:#3d614d}.versus-section{margin:17px 0 0}.versus-section h4{font-size:13px;margin:0 0 10px}.versus-responses{padding:11px;background:#f9fbf8;border:1px solid #e3eae2;border-radius:10px;margin:8px 0}.versus-responses h5{font-size:12px;color:#47614e;font-weight:550;margin:0 0 11px}
+.versus-response-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.versus-response-grid>div{display:grid;gap:5px;min-width:0}.versus-response-grid span{font-size:11px;color:#637668}.versus-response-grid strong{font-size:20px;color:#245e48;line-height:1.3;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.versus-response-grid small{font-size:10px;line-height:1.6;color:#697d6e;overflow-wrap:anywhere}
+.versus-threebet-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.versus-threebet{display:grid;gap:7px;min-width:0;padding:12px;border-radius:10px;background:#f5f6fc;border:1px solid #e0e3f0}.versus-threebet>span{font-size:11px;line-height:1.6;color:#626486}.versus-threebet>strong{font-size:23px;font-variant-numeric:tabular-nums;color:#585b8a}.versus-threebet>small{font-size:10px;color:#707487}
+.versus-allin-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.versus-allin-grid>div{display:grid;align-content:start;gap:8px;min-width:0;padding:12px;background:#fbf8f0;border:1px solid #ece4d2;border-radius:10px}.versus-allin-grid>div>span{font-size:11px;color:#796843}.versus-allin-grid strong{font-size:20px;line-height:1.4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.versus-allin-grid strong>small{font-size:10px;font-weight:500}.versus-definition,.versus-coverage{margin-top:13px;padding:10px 12px;border-radius:8px;background:#f6f8f4}.versus-coverage{background:#fbf7ed;color:#7d6a41}
+@media(max-width:390px){.versus-summary-item{padding:11px}.versus-summary-item>strong{font-size:22px}.versus-allin-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.versus-allin-grid>div:last-child{grid-column:1/-1}.versus-response-grid{gap:5px}.versus-response-grid strong{font-size:18px}}

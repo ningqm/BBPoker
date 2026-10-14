@@ -1,6 +1,7 @@
 // Read only a completed handFor response. Never evaluate cards or unpack a
 // stored hand: visibility remains the server's decision for this viewer.
 import { formatChips, unitLabel } from './money.js';
+import { historyBoard } from './replay.js';
 const streets = ['preflop', 'flop', 'turn', 'river'];
 const streetNames = { preflop: '翻前', flop: '翻牌', turn: '转牌', river: '河牌' };
 const suits = { c: ['♣', '梅花'], d: ['♦', '方块'], h: ['♥', '红桃'], s: ['♠', '黑桃'] };
@@ -131,13 +132,12 @@ function visibleEventBoard(hand, event) {
     || event.board.length > hand.board.length || event.board.some((card, index) => card !== hand.board[index])) return '';
   return event.board.length ? cardRow(event.board, event.board.length) : '';
 }
-function safeRabbit(hand) {
-  const rabbit = hand.rabbit;
-  if (hand.result?.showdown !== false || !rabbit || ![0, 3, 4].includes(hand.board.length)
-    || rabbit.originalCount !== hand.board.length || !Array.isArray(rabbit.board) || rabbit.board.length <= hand.board.length
-    || rabbit.board.length > 5 || rabbit.board.some((card, index) => !validCard(card) || index < hand.board.length && card !== hand.board[index])
-    || new Set(rabbit.board).size !== rabbit.board.length) return null;
-  return rabbit.board.slice(hand.board.length);
+function boardMarkup(view) {
+  return `<span class="ho-cards ho-board-cards">${Array.from({ length: 5 }, (_, index) => {
+    const supplementary = index >= view.actualCount && index < view.board.length;
+    const face = cardMarkup(view.board[index], view.pending ? '等待补看余牌' : '本手未发出');
+    return supplementary ? `<span class="ho-supplemental" aria-label="结算后补看，不计输赢">${face}</span>` : face;
+  }).join('')}</span>`;
 }
 function potBreakdown(hand, bb, names) {
   const pots = Array.isArray(hand.result?.pots) ? hand.result.pots : [];
@@ -173,10 +173,10 @@ export function renderHandOverview(hand, viewerId) {
   const myPoker = mine && Number.isSafeInteger(mine.net) ? mine.net : 0, myMini = miniNet(hand, viewerId, mine), myNet = myPoker + myMini;
   const names = new Map(hand.players.map(p => [p.id, p.name || '牌友'])), lines = actions(hand, bb);
   const pot = (Array.isArray(hand.result?.pots) ? hand.result.pots : []).reduce((sum, p) => sum + (Number.isSafeInteger(p?.amount) && p.amount >= 0 ? p.amount : 0), 0);
-  const rabbit = safeRabbit(hand);
+  const board = historyBoard(hand);
   const players = [...hand.players].sort((a, b) => a.seat - b.seat);
   const heading = hand.bombPot ? '<span class="ho-mode ho-mode-bomb">炸弹池 · 直接从翻牌开始</span>' : '<span>德州扑克</span>';
-  return `<section class="hand-overview" aria-label="静态牌谱概览"><div class="ho-summary"><div class="ho-board"><p class="ho-kicker">${heading}${hand.squidRound ? `<span class="ho-mode ho-mode-squid">第 ${points(hand.squidRound)} 轮鱿鱼</span>` : ''}</p>${cardRow(hand.board, 5, '本手未发出')}<p class="ho-board-caption">实际公共牌 · 底池 <strong title="${esc(chipText(pot, bb))}">${esc(chipText(pot, bb))}</strong></p></div><div class="ho-mine"><small>${mine ? '我的净盈亏' : myMini !== 0 ? '未参与发牌 · 鱿鱼结算' : '本手未参与'}</small><strong class="${tone(myNet)}" title="${esc(chipText(myNet, bb, true))}">${mine || myMini !== 0 ? esc(chipText(myNet, bb, true)) : '—'}</strong>${mine || myMini !== 0 ? `<span>德州 ${esc(chipText(myPoker, bb, true))}<br>小游戏 ${esc(chipText(myMini, bb, true))}</span>` : ''}</div></div>${rabbit ? `<aside class="ho-rabbit"><div><strong>🐇 补看余牌</strong><small>手牌已结束，不计输赢</small></div>${cardRow(rabbit, rabbit.length)}</aside>` : ''}<div class="ho-route-title"><h3>全桌操作路线</h3><small>数字表示全桌先后顺序 · 单位 ${unitLabel()}</small></div><div class="ho-route"><div class="ho-route-header" aria-hidden="true"><span>玩家 / 净盈亏</span>${streets.map(street => `<span>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</span>`).join('')}</div>${players.map(player => {
+  return `<section class="hand-overview" aria-label="静态牌谱概览"><div class="ho-summary"><div class="ho-board"><p class="ho-kicker">${heading}${hand.squidRound ? `<span class="ho-mode ho-mode-squid">第 ${points(hand.squidRound)} 轮鱿鱼</span>` : ''}</p>${boardMarkup(board)}<p class="ho-board-caption">${board.rabbitCount ? '公共牌与补看余牌' : '实际公共牌'} · 底池 <strong title="${esc(chipText(pot, bb))}">${esc(chipText(pot, bb))}</strong></p></div><div class="ho-mine"><small>${mine ? '我的净盈亏' : myMini !== 0 ? '未参与发牌 · 鱿鱼结算' : '本手未参与'}</small><strong class="${tone(myNet)}" title="${esc(chipText(myNet, bb, true))}">${mine || myMini !== 0 ? esc(chipText(myNet, bb, true)) : '—'}</strong>${mine || myMini !== 0 ? `<span>德州 ${esc(chipText(myPoker, bb, true))}<br>小游戏 ${esc(chipText(myMini, bb, true))}</span>` : ''}</div></div>${board.rabbitCount || board.pending ? `<p class="ho-rabbit-note">${board.rabbitCount ? '虚线牌为补看余牌；手牌已结束，不计输赢。' : ''}${board.pending ? ' 余牌稍后自动更新。' : ''}</p>` : ''}<div class="ho-route-title"><h3>全桌操作路线</h3><small>数字表示全桌先后顺序 · 单位 ${unitLabel()}</small></div><div class="ho-route"><div class="ho-route-header" aria-hidden="true"><span>玩家 / 净盈亏</span>${streets.map(street => `<span>${street === 'preflop' && hand.bombPot ? '前注' : streetNames[street]}</span>`).join('')}</div>${players.map(player => {
     const poker = Number.isSafeInteger(player.net) ? player.net : 0, mini = miniNet(hand, player.id, player), net = poker + mini;
     return `<article class="ho-player ${player.id === viewerId ? 'ho-player-me' : ''}" aria-label="${esc(player.name || '牌友')}的操作路线"><div class="ho-player-heading"><div class="ho-player-name"><strong>${esc(player.name || '牌友')}</strong>${player.id === viewerId ? '<span class="ho-you">我</span>' : ''}</div>${position(hand, player)}<div class="ho-player-result">${cardRow(player.cards, 2)}<strong class="${tone(net)}" title="${esc(chipText(net, bb, true))}">${esc(chipText(net, bb, true))}</strong></div>${mini ? `<small class="ho-mini-breakdown">含小游戏 ${esc(chipText(mini, bb, true))}</small>` : ''}</div><div class="ho-player-streets">${streets.map(street => {
       const route = lines.filter(line => line.event.playerId === player.id && line.event.street === street && !['payout', 'timeout'].includes(line.event.type));

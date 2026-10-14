@@ -1,6 +1,7 @@
 // Replay only a server-filtered completed hand. Never evaluate or infer cards.
 const paid = new Set(['ante', 'smallBlind', 'bigBlind', 'entryBlind', 'deadBlind', 'call', 'raise', 'allin']);
 const streets = new Set(['preflop', 'flop', 'turn', 'river']);
+const validCard = card => typeof card === 'string' && /^[2-9TJQKA][cdhs]$/.test(card);
 function validHand(hand) {
   if (!hand || 'deck' in hand || 'audit' in hand || !Array.isArray(hand.players) || !Array.isArray(hand.log)) throw new Error('只支持已过滤的历史牌谱');
 }
@@ -8,16 +9,32 @@ function amount(value) {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('牌谱积分记录无效');
   return value;
 }
-function rabbitAtResult(hand, complete, board) {
+function visibleRabbit(hand, board, summary = false) {
   const rabbit = hand.rabbit;
-  // This is post-settlement entertainment, never an extra poker street. A
-  // history opened while the preview is running contains only cards that the
-  // server has already revealed; seeking backwards must hide even those.
-  if (!complete || hand.status === 'playing' || hand.result?.showdown !== false || !rabbit ||
+  if (hand.status === 'playing' || (!summary || 'result' in hand) && hand.result?.showdown !== false || !rabbit ||
       ![0, 3, 4].includes(board.length) || rabbit.originalCount !== board.length ||
       !Array.isArray(rabbit.board) || rabbit.board.length < board.length || rabbit.board.length > 5 ||
-      rabbit.board.some((card, i) => !/^[2-9TJQKA][cdhs]$/.test(card) || (i < board.length && card !== board[i])) ||
+      rabbit.board.some((card, i) => !validCard(card) || (i < board.length && card !== board[i])) ||
       new Set(rabbit.board).size !== rabbit.board.length) return null;
+  return rabbit;
+}
+// One five-card row for history lists, overviews and completed replay frames.
+// Supplementary cards remain marked separately and never change hand.board,
+// action streets, payouts or equities. Only server-projected cards are accepted.
+export function historyBoard(hand, { summary = false } = {}) {
+  if (!hand || 'deck' in hand || 'audit' in hand || 'allInLock' in hand) throw new Error('只支持已过滤的历史牌谱');
+  const validBoard = Array.isArray(hand.board) && hand.board.length <= 5 && hand.board.every(validCard)
+    && new Set(hand.board).size === hand.board.length;
+  const board = validBoard ? [...hand.board] : [];
+  const rabbit = validBoard ? visibleRabbit(hand, board, summary) : null;
+  return { board: [...(rabbit?.board ?? board)], actualCount: board.length,
+    rabbitCount: rabbit ? rabbit.board.length - board.length : 0, pending: Boolean(rabbit?.active) };
+}
+function rabbitAtResult(hand, complete, board) {
+  // A history opened during the preview contains only already revealed cards;
+  // seeking backwards must hide even those.
+  const rabbit = complete ? visibleRabbit(hand, board) : null;
+  if (!rabbit) return null;
   return { board: [...rabbit.board], originalCount: rabbit.originalCount,
     active: Boolean(rabbit.active), nextAt: rabbit.nextAt ?? null, finishedAt: rabbit.finishedAt ?? null,
     proofs: structuredClone(rabbit.proofs ?? []) };

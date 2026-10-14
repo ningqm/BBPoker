@@ -58,12 +58,6 @@ function stale(current, previous) {
     (current.hand.seq < previous.hand.seq || current.hand.board.length < previous.hand.board.length));
 }
 
-function masks(current, visible, live) {
-  const hand = current?.hand, equity = hand?.equity;
-  if (!visible || !live || !hand?.runout || hand.status !== 'playing' || !equity?.leader) return [];
-  return equity.players.filter(p => p.id !== equity.leader && p.equity + equity.error <= 10).map(p => p.id);
-}
-
 /** Always feed current snapshots, including while entertainment is disabled.
  * Effects are NEW events, not an active queue. Retain them in the caller for at
  * most 2 s so full-page rerenders can resume at the same animation timestamp.
@@ -79,7 +73,7 @@ export function createTableFunTracker() {
       if (!current) { reset(); return empty(); }
       if (stale(current, previous)) {
         if (!visible || !live || reconnected) needsBaseline = true;
-        return { effects: [], maskIds: masks(previous, visible, live) };
+        return { effects: [], maskIds: [] };
       }
       const sameRoom = previous?.code === current.code && previous?.meId === current.meId;
       if (!sameRoom) { seenChat.clear(); patted.clear(); strongLeader = null; }
@@ -112,15 +106,9 @@ export function createTableFunTracker() {
       previous = current; needsBaseline = !visible || !live;
       // A burst is deliberately bounded: visual decoration must not cover the
       // table with a backlog after a delayed network delivery.
-      return { effects: effects.slice(-4), maskIds: masks(current, visible, live) };
+      return { effects: effects.slice(-4), maskIds: [] };
     },
   };
-}
-
-/** Put inside the avatar button. This never modifies profile data or images. */
-export function renderSeatMask(playerId, maskIds = [], { enabled = true } = {}) {
-  return enabled && Array.isArray(maskIds) && maskIds.includes(playerId)
-    ? '<span class="fun-mask" aria-hidden="true">🤡</span>' : '';
 }
 
 /** Mount only inside .table-stage. CSS lifetime + animationend removes nodes;

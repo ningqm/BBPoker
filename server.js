@@ -4,7 +4,7 @@ import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomInt } from 'node:crypto';
 import { EncryptedStore } from './src/store.js';
-import { RoomService, DEFAULTS, fail, exportText, exportCsv, now } from './src/room.js';
+import { RoomService, DEFAULTS, transitionDelay, fail, exportText, exportCsv, now } from './src/room.js';
 import { fairnessInfo } from './src/fairness.js';
 import { originPolicy } from './src/origins.js';
 import { exportPhh } from './src/phh.js';
@@ -32,12 +32,20 @@ export function createApp({ dataDir = process.env.DATA_DIR || join(ROOT, 'data')
       if (archived) archived.rabbit = structuredClone(r.hand.rabbit);
     }
     if (r.hand?.status !== 'playing') continue;
+    if (r.hand.transition) {
+      r.deadline = null;
+      if (!Number.isFinite(r.hand.transition.nextAt)) r.hand.transition.nextAt = Date.now() + transitionDelay(r.hand);
+      continue;
+    }
     if (r.hand.runout?.active) {
       r.deadline = null;
       if (!Number.isFinite(r.hand.runout.nextAt)) r.hand.runout.nextAt = Date.now() + 1800;
       continue;
     }
-    if (!Number.isFinite(r.deadline) || r.deadline <= 0) r.deadline = Date.now() + DEFAULTS.actionSeconds * 1000;
+    if (!Number.isFinite(r.deadline) || r.deadline <= 0) {
+      const readyAt = r.presentation?.handId === r.hand.id && Number.isFinite(r.presentation.actionReadyAt) ? r.presentation.actionReadyAt : 0;
+      r.deadline = Math.max(Date.now(), readyAt) + DEFAULTS.actionSeconds * 1000;
+    }
   }
   store.save();
 

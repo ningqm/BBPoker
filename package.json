@@ -1,6 +1,6 @@
 {
   "name": "bbpoker",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "description": "Points-only Texas Hold'em for friends with public or invited tables",
@@ -11,7 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js && node --check src/records.js && node --check src/hand-context.js && node --check public/room-config.js && node --check public/records.js && node --check public/hand-overview.js && node --check src/equity.js && node --check src/analytics.js && node --check public/stats.js && node --check public/table-fun.js && node --check src/lobby.js && node --check public/lifecycle.js && node --check src/entry-blinds.js && node --check public/money.js && node --check public/starting-hands.js && node --check public/table-controls.js && node --check src/player-stats.js && node --check src/versus-stats.js && node --check public/player-stats.js && node --check public/versus-stats.js && node --check public/history-refresh.js && node --check public/lobby-view.js && node --check src/opponent-transfers.js && node --check src/direct-records.js && node --check src/record-games.js && node --check public/hand-position.js"
+    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js && node --check src/records.js && node --check src/hand-context.js && node --check public/room-config.js && node --check public/records.js && node --check public/hand-overview.js && node --check src/equity.js && node --check src/analytics.js && node --check public/stats.js && node --check public/table-fun.js && node --check src/lobby.js && node --check public/lifecycle.js && node --check src/entry-blinds.js && node --check public/money.js && node --check public/starting-hands.js && node --check public/table-controls.js && node --check src/player-stats.js && node --check src/versus-stats.js && node --check public/player-stats.js && node --check public/versus-stats.js && node --check public/history-refresh.js && node --check public/lobby-view.js && node --check src/opponent-transfers.js && node --check src/direct-records.js && node --check src/record-games.js && node --check public/hand-position.js && node --check public/table-scene.js && node --check public/hand-category.js"
   },
   "license": "UNLICENSED"
 }

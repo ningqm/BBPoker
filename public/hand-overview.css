@@ -122,3 +122,7 @@
   .hand-overview .ho-mine>span br{display:none}
   .hand-overview .ho-mine>span{word-spacing:5px}
 }
+.ho-fish-count{display:inline-block;flex-shrink:0;max-width:100%;padding:2px 5px;border-radius:5px;background:#f0e4fa;color:#70449b;font-size:10px;font-weight:600;white-space:nowrap;grid-column:1/-1;justify-self:start}
+.ho-fish-count.no-fish{background:#f0f3f1;color:#7b847f}
+.ho-fish-summary{padding:9px 11px;border:1px solid #e7d7f3;border-radius:8px;background:#faf6fd;color:#715287;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.replay-fish-count{display:block;margin-top:5px;color:#78519a;font-size:11px}

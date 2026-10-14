@@ -21,6 +21,33 @@ export function lobbyTime(endsAt, now = Date.now()) {
   return minutes ? `剩余 ${minutes} 分钟` : '已到时 · 等待收尾';
 }
 
+export function squidName(mode) { return mode === 'unlimited' ? '无限鱿鱼' : '普通鱿鱼'; }
+
+// Read only the public round snapshot. Legacy rounds have one mark per winner;
+// a new room's settings must never relabel an already-running legacy round.
+export function squidProgress(room) {
+  const squid = room.mini?.squid, active = Boolean(squid?.active);
+  const mode = (active ? squid.mode : room.settings?.squidMode) === 'unlimited' ? 'unlimited' : 'normal';
+  const participants = Array.isArray(squid?.participants) ? squid.participants : [];
+  const winners = Array.isArray(squid?.won) ? squid.won : Object.keys(squid?.won || {}).filter(id => squid.won[id]);
+  const counts = Object.fromEntries(participants.map(id => {
+    const value = squid?.counts?.[id];
+    const count = Number.isSafeInteger(value) && value >= 0 ? value : Number(winners.includes(id));
+    return [id, mode === 'unlimited' ? count : Math.min(count, 1)];
+  }));
+  const awarded = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const holders = Object.values(counts).filter(count => count > 0).length;
+  const budget = Number.isSafeInteger(squid?.tokenBudget) && squid.tokenBudget > 0 ? squid.tokenBudget : null;
+  return { mode, name: squidName(mode), active, counts, awarded, holders, participants: participants.length,
+    missing: participants.length - holders, budget, remaining: budget === null ? null : Math.max(0, budget - awarded) };
+}
+
+export function playerSquidCount(room, player) {
+  const value = player?.squidCount;
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  return squidProgress(room).counts[player?.id] ?? Number(Boolean(player?.squidWon));
+}
+
 // A hand keeps its entry-time squid round, including an older ordinary hand
 // restored during a version upgrade. Display never changes settlement eligibility.
 export function squidMode(room) {
@@ -85,12 +112,14 @@ export function buyinTiming(room, isSit = true, player = null) {
 
 export function departurePlan(room, player, type) {
   const squid = room.mini?.squid, participant = Boolean(squid?.active && squid.participants?.includes(player?.id));
-  const won = participant && Boolean(squid.won?.includes(player.id));
-  const cost = participant && !won ? Math.max(0, (squid.participants.length - 1) * Number(squid.unit || 0)) : 0;
+  const progress = squidProgress(room), fishCount = participant ? progress.counts[player.id] || 0 : 0, won = fishCount > 0;
+  const maxFish = progress.mode === 'unlimited' ? progress.budget ?? progress.participants + Number(room.settings?.squidExtraTokens ?? 3) : progress.participants - 1;
+  const cost = participant && !won ? Number.isSafeInteger(player?.squidMaxLoss) && player.squidMaxLoss >= 0
+    ? player.squidMaxLoss : Math.max(0, maxFish * Number(squid.unit || 0)) : 0;
   const reserve = participant ? Math.max(0, Number(player?.squidReserve) || cost) : 0;
   const queued = room.hand?.status === 'playing' && Boolean(player?.inHand);
   return {
-    type, queued, cost, reserve, participant, round: participant ? Number(squid.round) || 0 : 0, won,
+    type, queued, cost, reserve, participant, round: participant ? Number(squid.round) || 0 : 0, won, fishCount,
     canEarnMark: queued && Boolean(squidMode(room)?.countsForSquid),
     title: type === 'stand' ? '离开座位' : '暂离牌桌',
     label: queued ? type === 'stand' ? '本手后离座' : '本手后暂离' : type === 'stand' ? '确认离座' : '确认暂离',
@@ -101,9 +130,10 @@ export function departurePlan(room, player, type) {
 export function squidSettlement(room) {
   const squid = room.mini?.squid;
   if (!squid?.active) return null;
-  const participants = squid.participants ?? [], winners = squid.won ?? [];
+  const progress = squidProgress(room);
   return { canSettle: Boolean(squid.canSettle), blocked: Boolean(squid.blockerSince),
     waitSeconds: Number(squid.settleAfterSeconds) || 90,
-    loserCost: winners.length * Number(squid.unit || 0), winnerGain: (participants.length - winners.length) * Number(squid.unit || 0),
-    winnerCount: winners.length, loserCount: participants.length - winners.length };
+    mode: progress.mode, awarded: progress.awarded,
+    loserCost: progress.awarded * Number(squid.unit || 0), winnerGain: progress.missing * Number(squid.unit || 0),
+    winnerCount: progress.holders, loserCount: progress.missing };
 }

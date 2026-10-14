@@ -34,6 +34,8 @@
 .table-config .game-mode{display:flex;flex:1 1 0;align-items:center;gap:4px;padding:3px 5px;border-radius:6px;font-size:9px;line-height:1.4;min-width:0;text-align:left}
 .table-config .game-mode .mode-stake{font-size:9px;font-weight:650;white-space:nowrap;flex-shrink:0}
 .table-config .game-mode .mode-state{display:block;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.table-config .game-mode.unlimited .mode-state{white-space:normal;overflow:visible;text-overflow:clip}
+.squid-result-note{padding:10px 12px;background:#f7f1fc;border:1px solid #e6d5f6;border-radius:9px;color:#6a498b;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 .table-config .squid-mode-note{margin:3px auto 0;padding:0;font-size:9px;line-height:1.4;text-align:center;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .table-hand-center{min-width:0}.table-stage .table-center .pot-label{font-size:10px}.table-stage .table-center .pot-amount{font-size:25px}
 .table-stage .table-center.is-idle .table-config{margin-bottom:18px}
@@ -74,6 +76,11 @@
  .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-28px;right:auto}
 .table-stage .seat .seat-label:empty{display:none}
 .table-stage .seat .seat-label b{width:17px;height:17px;font-size:9px;line-height:17px;box-shadow:none}
+.table-stage .seat .seat-label b.squid-count{width:32px;height:17px;line-height:17px;border-radius:6px;font-size:9px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.squid-player-counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:10px 0}
+.squid-player-counts>span{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;padding:7px;border-radius:7px;background:#f2eafb;color:#68439a;font-size:11px}
+.squid-player-counts b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.squid-player-counts strong{white-space:nowrap;flex-shrink:0}
+.squid-player-counts .no-fish{background:#f3f5f4;color:#77827b}
 .table-stage .seat .seat-label b.dealer-button{width:25px;height:25px;font-size:16px;line-height:21px;font-weight:900;color:#573900;background:linear-gradient(145deg,#fff4b9,#f0bc48);border:2px solid #fffdf2;box-shadow:0 0 0 1px #9b6c19,0 2px 5px #77501b38}
 .table-stage .seat .hole-cards{display:flex;gap:3px;align-items:center;justify-content:center;top:auto;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);width:max-content}
 .table-stage .seat .hole-card-wrap{display:inline-flex}
@@ -121,6 +128,8 @@
  .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-22px;right:auto}
  .table-stage .seat:not(.mine) .card.mini.face-down{width:21px;height:28px}
  .table-stage .seat .seat-label b{width:14px;height:14px;font-size:8px;line-height:14px}
+ .table-stage .seat .seat-label b.squid-count{width:28px;height:15px;line-height:15px;font-size:8px}
+ .squid-player-counts{grid-template-columns:repeat(2,minmax(0,1fr))}
  .table-stage .seat .seat-label b.dealer-button{width:21px;height:21px;font-size:13px;line-height:17px}
  .table-stage .seat.mine .own-cards .card{width:34px;height:48px;font-size:24px;padding:4px}
  .table-stage .seat.mine .own-cards .card>span{font-size:21px}
@@ -140,6 +149,7 @@
  .table-stage .seat .seat-label{right:-15px;width:18px}.table-stage .seat[data-side="left"] .seat-label{left:-15px;right:auto}
  .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-15px;right:auto}
  .table-stage .seat .seat-label b.dealer-button{width:18px;height:18px;font-size:12px;line-height:14px}
+ .table-stage .seat .seat-label b.squid-count{width:25px;font-size:7px}
  .table-bottom .action-area{padding:8px}
  .table-bottom .turn-row{font-size:10px}.table-bottom .timebank-button{font-size:9px}
  .table-bottom .action-buttons{gap:5px}

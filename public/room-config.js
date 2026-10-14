@@ -9,7 +9,11 @@ export function reusableRoomSettings(input, defaults) {
     // the same per-transaction increments, irrespective of a legacy room.
     if (['minBuyInBB', 'maxBuyInBB', 'actionSeconds', 'timeBankCards', 'timeBankSeconds'].includes(key) || !own(key)) continue;
     const value = input[key];
-    if (key === 'maxTotalBuyInBB' && value === null) result[key] = null;
+    if (key === 'squidMode') {
+      if (!['normal', 'unlimited'].includes(value)) throw new Error('这个牌桌的鱿鱼玩法无法读取，请选择其他牌桌');
+      result[key] = value;
+    }
+    else if (key === 'maxTotalBuyInBB' && value === null) result[key] = null;
     else if (typeof defaults[key] === 'boolean' ? typeof value === 'boolean' : typeof value === 'number' && Number.isFinite(value)) result[key] = value;
     else throw new Error('这个牌桌的配置无法读取，请选择其他牌桌');
   }
@@ -28,7 +32,7 @@ export function reusableRoomSettings(input, defaults) {
   const ranges = {
     maxPlayers: [2, 9], smallBlind: [1, 1000], bigBlind: [result.smallBlind * 2, 2000],
     maxTotalBuyInBB: [100, Math.floor(1e9 / result.bigBlind / 50) * 50],
-    squidUnitBB: [1, Math.floor(1e6 / result.bigBlind)], actionSeconds: [20, 20],
+    squidUnitBB: [1, Math.floor(1e6 / result.bigBlind)], squidExtraTokens: [0, 100], actionSeconds: [20, 20],
     bombIntervalMinutes: [1, 120], bombAnteBB: [1, 1000], durationMinutes: [30, 720], timeBankCards: [3, 72], timeBankSeconds: [30, 30],
   };
   for (const [key, [min, max]] of Object.entries(ranges)) {

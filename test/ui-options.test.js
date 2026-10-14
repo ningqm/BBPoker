@@ -43,7 +43,7 @@ function formFrom(html){
   }
   for(const tag of html.matchAll(/<select name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)){
     const selected=[...tag[2].matchAll(/<option\b([^>]*)>/g)].find(x=>/\bselected\b/.test(x[1]));
-    fields.set(tag[1],{value:selected?.[1].match(/value="([^"]+)"/)?.[1]||''});
+    fields.set(tag[1],{value:selected?.[1].match(/value="([^"]+)"/)?.[1]||'',disabled:/<select[^>]*\sdisabled(?:\s|>)/.test(tag[0])});
   }
   return {fields,elements:{namedItem:name=>fields.get(name)},matches:()=>true,querySelector:()=>null};
 }
@@ -302,4 +302,18 @@ test('completed contenders remain visible after leaving their seat and folded ca
  let html=c.actionArea(room,me,false);assert.match(html,/离座玩家摊牌/);assert.match(html,/离座朋友/);assert.match(html,/♠Q|Q<span>♠/);assert.match(html,/♥Q|Q<span>♥/);
  room.players[1].folded=true;room.players[1].cards=[null,null];assert.doesNotMatch(c.actionArea(room,me,false),/离座玩家摊牌|离座朋友/);
  room.players[1].folded=false;room.players[1].seat=1;assert.doesNotMatch(c.actionArea(room,me,false),/离座玩家摊牌/);
+});
+
+test('unlimited fish options preserve disabled choices and reveal only applicable fields',()=>{
+  const c=harness();
+  let html=c.settingFields(c.defaults),form=formFrom(html);
+  assert.equal(c.readSettings(form).squidMode,'normal');assert.equal(c.readSettings(form).squidExtraTokens,3);
+  assert.match(html,/<div data-squid-extra hidden>/);assert.match(html,/9 人加 3 条，共 12 条鱼/);
+  html=c.settingFields({...c.defaults,squid:true,squidMode:'unlimited',squidExtraTokens:0});form=formFrom(html);
+  const extra={hidden:true},rule={textContent:''};form.querySelector=key=>key==='[data-squid-extra]'?extra:key==='[data-squid-rule]'?rule:null;
+  c.updateSettingConstraints(form);assert.equal(extra.hidden,false);assert.equal(form.fields.get('squidExtraTokens').disabled,false);
+  let settings=c.readSettings(form);assert.equal(settings.squidMode,'unlimited');assert.equal(settings.squidExtraTokens,0);assert.doesNotThrow(()=>settingsFor(settings));assert.match(rule.textContent,/可重复拿鱼/);assert.match(c.settingsOverview(settings),/无限鱿鱼/);
+  form.fields.get('squidMode').value='normal';c.updateSettingConstraints(form);assert.equal(extra.hidden,true);assert.equal(form.fields.get('squidExtraTokens').disabled,true);assert.match(rule.textContent,/已有鱼不再增加/);
+  form.fields.get('squid').checked=false;form.fields.get('squidMode').value='unlimited';c.updateSettingConstraints(form);
+  settings=c.readSettings(form);assert.equal(settings.squid,false);assert.equal(settings.squidMode,'unlimited');assert.equal(settings.squidExtraTokens,0);assert.equal(form.fields.get('squidMode').disabled,true);
 });

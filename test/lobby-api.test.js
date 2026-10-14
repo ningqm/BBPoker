@@ -28,14 +28,21 @@ async function setup(t, actionTickMs = 1000000) {
 test('lobby requires login and exposes only a bounded allowlist, never invitation/card/account data', async t => {
   const { app, api, users } = await setup(t);
   await api(null, '/api/lobby', undefined, 401);
-  const open = (await api(users[0], '/api/rooms', { access: 'public' }, 201)).room;
+  const open = (await api(users[0], '/api/rooms', { access: 'public', settings: { squid: true, squidMode: 'unlimited', squidExtraTokens: 7 } }, 201)).room;
   const invite = (await api(users[1], '/api/rooms', {}, 201)).room;
+  assert.equal(invite.settings.squidMode, 'normal'); assert.equal(invite.settings.squidExtraTokens, 3);
+  // Legacy rooms are read as ordinary squid without rewriting saved settings.
+  delete app.store.data.rooms[invite.code].settings.squidMode;
+  delete app.store.data.rooms[invite.code].settings.squidExtraTokens;
   app.store.data.rooms[invite.code].hand = { status: 'playing', deck: ['SECRET'], audit: 'SECRET', players: [] };
   const before = structuredClone(app.store.data);
   const lobby = await api(users[2], '/api/lobby');
   assert.equal(lobby.limit, 10); assert.equal(lobby.rooms.length, 2);
-  const allowed = ['code','name','hostName','status','access','joined','seatedCount','maxPlayers','smallBlind','bigBlind','squid','bombPot','bombIntervalMinutes','handNumber','endsAt','canJoin'].sort();
+  const allowed = ['code','name','hostName','status','access','joined','seatedCount','maxPlayers','smallBlind','bigBlind','squid','squidMode','squidExtraTokens','bombPot','bombIntervalMinutes','handNumber','endsAt','canJoin'].sort();
   for (const row of lobby.rooms) assert.deepEqual(Object.keys(row).sort(), allowed);
+  const unlimited = lobby.rooms.find(r => r.code === open.code), legacy = lobby.rooms.find(r => r.code === invite.code);
+  assert.deepEqual({ enabled: unlimited.squid, mode: unlimited.squidMode, extra: unlimited.squidExtraTokens }, { enabled: true, mode: 'unlimited', extra: 7 });
+  assert.deepEqual({ enabled: legacy.squid, mode: legacy.squidMode, extra: legacy.squidExtraTokens }, { enabled: false, mode: 'normal', extra: 3 });
   assert.equal(lobby.rooms.find(r => r.code === open.code).canJoin, true);
   assert.equal(lobby.rooms.find(r => r.code === invite.code).canJoin, false);
   assert.equal(lobby.rooms.find(r => r.code === invite.code).status, 'playing');

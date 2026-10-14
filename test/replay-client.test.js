@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createReplayPlayback, historyBoard, replaySnapshot, replayStreets, REPLAY_SPEEDS } from '../public/replay.js';
 import * as money from '../public/money.js';
+import * as lifecycle from '../public/lifecycle.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const first=source.indexOf(start),last=source.indexOf(end,first+start.length);assert.ok(first>=0&&last>first,`Missing ${start}`);return source.slice(first,last);}
@@ -26,7 +27,7 @@ function harness({unit='bb',historicalBlind=10,realCards=false}={}){
   const dialog={open:true,innerHTML:'initial',scrollTop:23,querySelector:selector=>selectors.get(selector)||null,querySelectorAll:selector=>selector==='.replay-streets button'?steps:logs,close(){this.open=false;}};
   const listeners=new Map(),windowListeners=new Map(),timers=new Map();let next=0;
   const document={visibilityState:'visible',querySelector:selector=>selectors.get(selector)||null,addEventListener(type,fn){const rows=listeners.get(type)||[];rows.push(fn);listeners.set(type,rows);}};
-  const context=vm.createContext({historyRefresh:{watch(){},stop(){}},...money,clearTimeout,statsUI,state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
+  const context=vm.createContext({historyRefresh:{watch(){},stop(){}},...money,lifecycle,clearTimeout,statsUI,state,dialog,document,window:{addEventListener(type,fn){windowListeners.set(type,fn);}},profileEditor:null,
     replaySnapshot,replayStreets,REPLAY_SPEEDS,createReplayPlayback,historyBoard,
     num:String,profitClass:()=>'',esc:String,fmtDate:()=>'',render(){},saveTablePreferences(){},
     cards:cards=>cards.join(','),card:card=>card||'?',btn:()=>'',openModal(){throw new Error('Existing playback must not replace the modal');},

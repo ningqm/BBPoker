@@ -259,3 +259,16 @@ test('unmatched or repeated timeout stays informational, never invents a check/f
   assert.deepEqual([...log.matchAll(/<li value="(\d+)"/g)].map(m => Number(m[1])), [1, 2, 3, 5]);
   assert.doesNotMatch(html, /（超时）（超时）|实际操作见前一条/);
 });
+
+test('nine-player unlimited history shows its archived fish snapshot without mixing it into the poker pot',()=>{
+  const hand=basic();for(let i=2;i<9;i++)hand.players.push({id:'p'+i,name:'玩家'+i,seat:i,startingStack:1000,net:0,miniNet:0,cards:[null,null]});
+  hand.squidRound=2;hand.squidMode='unlimited';hand.squidTokenBudget=12;hand.squidAwardedId='a';hand.squidCounts=Object.fromEntries(hand.players.map((p,i)=>[p.id,i===0?3:i===1?1:0]));
+  const before=structuredClone(hand),html=renderHandOverview(hand,'a');
+  assert.match(html,/无限鱿鱼 · 第 2 轮/);assert.match(html,/本轮已拿 4 \/ 12 条鱼，7 人无鱼/);assert.match(html,/甲 本手拿到 1 条鱼/);assert.match(html,/>鱼×3 · 本手＋1</);
+  assert.equal((html.match(/本手结束时的本轮鱼数/g)||[]).length,9);assert.match(html,/底池 <strong title="2 BB">2 BB/);assert.match(html,/德州 \+1 BB/);assert.match(html,/小游戏 -0.5 BB/);assert.match(html,/未公开底牌/);assert.deepEqual(hand,before);
+});
+
+test('old ordinary history stays readable and missing fish snapshots never invent counts',()=>{
+  const hand=basic();hand.squidRound=1;let html=renderHandOverview(hand,'a');assert.match(html,/普通鱿鱼 · 第 1 轮/);assert.doesNotMatch(html,/ho-fish-count|ho-fish-summary/);
+  hand.squidMode='unlimited';hand.squidTokenBudget=12;hand.squidCounts={a:NaN,b:-1};html=renderHandOverview(hand,'a');assert.doesNotMatch(html,/ho-fish-count|ho-fish-summary|NaN/);
+});

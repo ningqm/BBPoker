@@ -12,7 +12,7 @@ function harness(){
     avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:a=>a.type||a,
     boardCard:()=>'<span class="board-slot"></span>',streetNames:{flop:'翻牌'},
     actionArea:()=>'<div class="action-area"></div>',chatPanel:()=>'',errorPage:()=>''});
-  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const card=','const feedback='),section('const layouts=','function boardCard('),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function bombStatus(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.client={state,seatView,seatHoleCards,tableCenter,roomView,gameModeMarkers};'].join('\n'),context);
+  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const card=','const feedback='),section('const layouts=','function boardCard('),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.client={state,seatView,seatHoleCards,tableCenter,roomView,gameModeMarkers,miniPanel};'].join('\n'),context);
   return context.client;
 }
 function room(count=9){return {code:'fixture',name:'本地验收桌',status:'waiting',hostId:'p0',meId:'p0',settings:{maxPlayers:count,smallBlind:5,bigBlind:10,durationMinutes:60,squid:true,squidUnit:20,squidUnitBB:2,bombPot:true,bombAnte:30,bombAnteBB:3,bombIntervalMinutes:10},players:Array.from({length:count},(_,i)=>({id:'p'+i,name:'玩家昵称'+i,seat:i,stack:2000,connected:true})),mini:{squid:{active:false}},actions:{}};}
@@ -112,4 +112,21 @@ test('blind badges replace duplicate blind status text, while real actions remai
   assert.match(c.seatView(0,r), /class="seat-status\s*" title="raise"/);
   r.players[0].lastAction=null;r.players[0].allIn=true;
   assert.match(c.seatView(0,r), /title="ALL IN" data-tone="allin"/);
+});
+
+test('nine-player unlimited and bomb markers retain exact fish counts for every viewpoint',()=>{
+  const c=harness(),r=room(9);c.state.room=r;setDisplayUnit('bb');r.settings.squidMode='unlimited';r.settings.squidExtraTokens=3;
+  r.mini.squid={active:true,mode:'unlimited',round:2,unit:20,extraTokens:3,tokenBudget:12,participants:r.players.map(p=>p.id),counts:Object.fromEntries(r.players.map((p,i)=>[p.id,i===4?3:i===5?1:0])),won:['p4','p5']};
+  r.players[4].squidCount=3;r.players[5].squidCount=1;
+  r.hand={id:'nine',number:8,status:'playing',street:'flop',board:['As','2h','3c'],pot:270,bombPot:true,buttonSeat:4,smallBlindSeat:5,bigBlindSeat:6,squidRound:2};
+  const markers=c.gameModeMarkers(r);assert.match(markers,/无限/);assert.match(markers,/余 8\/12 · 7人无鱼/);assert.match(markers,/本手炸弹池/);assert.match(markers,/2 BB\/鱼/);
+  for(const me of ['p0','p4','p8']){r.meId=me;for(let seat=0;seat<9;seat++){const html=c.seatView(seat,r);assert.doesNotMatch(html,/title="小盲"|title="大盲"/);if(seat===4){assert.match(html,/title="庄家"/);assert.match(html,/本轮已获 3 条鱼/);assert.match(html,/>鱼×3</);}}}
+  const panel=c.miniPanel(r);assert.match(panel,/本轮 12 条鱼，剩余 8 条；7 人还没鱼/);assert.equal((panel.match(/<span class="(?:has-fish|no-fish)">/g)||[]).length,9);assert.match(panel,/未发出的鱼不计费/);
+  setDisplayUnit('points');
+});
+
+test('settled squid displays the actual posted mini result without changing poker pot or current counts',()=>{
+  const c=harness(),r=room(9);c.state.room=r;r.settings.squidMode='unlimited';
+  r.mini.squid={active:false,round:1,lastResult:{round:1,mode:'unlimited',tokensExhausted:true,changes:{p0:180,p1:-120}}};
+  const before=JSON.stringify(r),panel=c.miniPanel(r);assert.match(panel,/第 1 轮已结算/);assert.match(panel,/本轮鱼已发完/);assert.match(panel,/我的鱿鱼盈亏.*\+180 积分/);assert.match(panel,/本场小游戏盈亏/);assert.match(c.gameModeMarkers(r),/第 1 轮已结算/);assert.equal(JSON.stringify(r),before);
 });

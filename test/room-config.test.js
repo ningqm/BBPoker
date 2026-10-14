@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {reusableRoomSettings} from '../public/room-config.js';
 import {settingsFor,DEFAULTS} from '../src/room.js';
-const defaults={maxPlayers:9,smallBlind:5,bigBlind:10,minBuyInBB:100,maxBuyInBB:1000,maxTotalBuyInBB:null,actionSeconds:20,squid:false,squidUnitBB:2,bombPot:false,bombIntervalMinutes:10,bombAnteBB:2,durationMinutes:60,timeBankCards:6,timeBankSeconds:30};
+const defaults={maxPlayers:9,smallBlind:5,bigBlind:10,minBuyInBB:100,maxBuyInBB:1000,maxTotalBuyInBB:null,actionSeconds:20,squid:false,squidMode:'normal',squidExtraTokens:3,squidUnitBB:2,bombPot:false,bombIntervalMinutes:10,bombAnteBB:2,durationMinutes:60,timeBankCards:6,timeBankSeconds:30};
 test('reusing a room copies all supported options but none of its private or running state',()=>{
   const original={...settingsFor({maxPlayers:6,smallBlind:2,bigBlind:5,minBuyInBB:100,maxBuyInBB:1000,maxTotalBuyInBB:2500,actionSeconds:45,squid:true,squidUnitBB:3,bombPot:true,bombIntervalMinutes:8,bombAnteBB:4,durationMinutes:90,timeBankCards:5,timeBankSeconds:60}),invite:'secret',hostId:'private',code:'654321',name:'old name',hand:{cards:['As']},players:[{id:'private'}],startedAt:1,endsAt:2,approvalRequired:true,mushroom:true};
   const result=reusableRoomSettings(original,defaults);
@@ -39,4 +39,12 @@ test('retired time settings never override fixed timing when old rooms are reuse
   const result=reusableRoomSettings(old,defaults);
   assert.equal(result.actionSeconds,20);assert.equal(result.timeBankSeconds,30);assert.equal(result.timeBankCards,12);
   assert.equal(old.actionSeconds,90);assert.equal(old.timeBankCards,20);
+});
+
+test('reused unlimited settings retain mode and extra fish without reinterpreting legacy ordinary rooms',()=>{
+  const input={...defaults,squid:true,squidMode:'unlimited',squidExtraTokens:0};
+  const reused=reusableRoomSettings(input,defaults);assert.equal(reused.squidMode,'unlimited');assert.equal(reused.squidExtraTokens,0);assert.doesNotThrow(()=>settingsFor(reused));
+  assert.equal(reusableRoomSettings({squid:true},defaults).squidMode,'normal');
+  for(const patch of [{squidMode:'infinite'},{squidMode:42},{squidExtraTokens:-1},{squidExtraTokens:101},{squidExtraTokens:1.5}])assert.throws(()=>reusableRoomSettings({...input,...patch},defaults));
+  assert.equal(input.squidExtraTokens,0);
 });

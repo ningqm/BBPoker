@@ -128,7 +128,7 @@ test('departure clearly keeps reserve and settlement responsibility, including a
   const c=harness(),room=squidRoom();room.players[0].squidReserve=40;c.state.room=room;
   c.departureModal('stand');assert.match(c.state.modal.body,/最多覆盖.*40 积分/);assert.match(c.state.modal.body,/不会随离座取走/);assert.match(c.state.modal.body,/不重新收鱿鱼预留/);
   assert.doesNotMatch(c.state.modal.body,/离开需支付|立即结算|视为失败/);
-  room.mini.squid.won.push('a');c.departureModal('stand');assert.match(c.state.modal.body,/已获得本轮鱿鱼标记/);assert.match(c.state.modal.body,/结算权益/);
+  room.mini.squid.won.push('a');c.departureModal('stand');assert.match(c.state.modal.body,/已获得本轮 1 条鱼/);assert.match(c.state.modal.body,/结算权益/);
 });
 
 test('only an actual current-hand participant queues departure; squid responsibility is retained either way',()=>{
@@ -241,4 +241,23 @@ test('old personal history cannot return after a newer refresh or identity chang
     c.pending[0].resolve({rooms:[room({code:'stale-live'})]});c.pending[1].resolve({rooms:[{code:'stale-past',status:'closed'}]});await first;
     assert.equal(c.state.rooms[0].code,identityChange?'current':'newest');assert.equal(c.state.lobby.rooms.length,0);
   }
+});
+
+test('nine-player unlimited progress counts fish rather than unique holders and retains the round mode',()=>{
+  const participants=Array.from({length:9},(_,i)=>'p'+i),counts=Object.fromEntries(participants.map((id,i)=>[id,i===0?3:i===1?1:0]));
+  const r={settings:{squidMode:'unlimited'},mini:{squid:{active:true,mode:'unlimited',tokenBudget:12,participants,counts,won:['p0','p1']}}};
+  const view=lifecycle.squidProgress(r);assert.equal(view.name,'无限鱿鱼');assert.equal(view.awarded,4);assert.equal(view.holders,2);assert.equal(view.missing,7);assert.equal(view.remaining,8);assert.equal(view.budget,12);
+  assert.equal(lifecycle.playerSquidCount(r,{id:'p0'}),3);assert.equal(lifecycle.playerSquidCount(r,{id:'p2',squidCount:0,squidWon:true}),0);
+  delete r.mini.squid.mode;delete r.mini.squid.counts;const legacy=lifecycle.squidProgress(r);assert.equal(legacy.mode,'normal');assert.equal(legacy.awarded,2);assert.equal(legacy.counts.p0,1);
+});
+
+test('unlimited departure and premature settlement use the actual budget and fish counts',()=>{
+  const c=harness(),r=squidRoom();r.hand.status='complete';r.settings={bigBlind:10,squidMode:'unlimited',squidExtraTokens:3};
+  Object.assign(r.mini.squid,{mode:'unlimited',tokenBudget:6,counts:{a:0,b:3,c:1},won:['b','c'],canSettle:true,blockerSince:1});
+  r.players[0].squidMaxLoss=120;c.state.room=r;
+  const plan=lifecycle.departurePlan(r,r.players[0],'stand');assert.equal(plan.cost,120);assert.equal(plan.fishCount,0);
+  c.departureModal('stand');assert.match(c.state.modal.body,/最多覆盖.*120 积分/);
+  const quote=lifecycle.squidSettlement(r);assert.equal(quote.loserCost,80);assert.equal(quote.winnerGain,20);
+  c.settleSquidModal();assert.match(c.state.modal.body,/每位未获标记者支付 80 积分/);assert.match(c.state.modal.body,/有鱼者每条鱼获得 20 积分/);assert.match(c.state.modal.body,/剩余未发出的鱼不计费/);
+  r.mini.squid.counts.a=2;r.mini.squid.won.push('a');c.departureModal('stand');assert.match(c.state.modal.body,/本轮 2 条鱼/);assert.equal(c.state.departureConfirmation.cost,0);
 });

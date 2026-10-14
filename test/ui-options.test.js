@@ -7,7 +7,7 @@ import {settingsFor} from '../src/room.js';
 import {avatarMarkup,createAvatarCache} from '../public/avatar.js';
 import {reusableRoomSettings} from '../public/room-config.js';
 import * as money from '../public/money.js';
-import {betPresetOptions,betActionLabel,revealOptions,rebuyPrompt} from '../public/table-controls.js';
+import {betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt} from '../public/table-controls.js';
 import {createTurnCountdown} from '../public/table-feedback.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
@@ -15,7 +15,7 @@ function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a
 function harness({unit='points',...overrides}={}){
   money.setDisplayUnit(unit);
   const modals=[],listeners=new Map(),commands=[];
-  const context=vm.createContext({...money,lifecycle,betPresetOptions,betActionLabel,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+  const context=vm.createContext({...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
     state:{user:{name:'小鱼'},rooms:[],timeOffset:0,connected:true,feedbackResync:false},
@@ -69,12 +69,19 @@ function buyinFormFrom(html){
 test('room presets submit BB settings, direct buy-in and defaults without hidden mushroom/approval controls',()=>{
   const c=harness(),html=c.settingFields(c.defaults),form=formFrom(html),s=c.readSettings(form);
   assert.equal(s.smallBlind,5);assert.equal(s.bigBlind,10);assert.equal(s.minBuyInBB,100);assert.equal(s.maxBuyInBB,1000);
-  assert.equal(s.actionSeconds,30);assert.equal(settingsFor({}).actionSeconds,30);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
+  assert.equal(s.actionSeconds,20);assert.equal(settingsFor({}).actionSeconds,20);assert.equal(s.durationMinutes,60);assert.equal(s.timeBankCards,3);assert.equal(s.timeBankSeconds,30);
   assert.equal(s.bombPot,false);assert.equal(s.bombAnteBB,2);assert.equal(s.bombIntervalMinutes,10);
   assert.equal(s.squid,false);assert.equal(s.squidUnitBB,2);
   assert.doesNotThrow(()=>settingsFor(s));
   assert.doesNotMatch(html,/蘑菇|name="(?:approvalRequired|minBuyIn|maxBuyIn)"/);
   c.state.createKeyRequired=true;c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);assert.doesNotMatch(c.modals.at(-1).body,/建房口令|name="createKey"/);
+});
+test('twenty seconds is a new-room default while saved thinking-time choices remain configurable',()=>{
+  const c=harness();
+  for(const seconds of [15,20,30,60,90]){
+    const s=c.readSettings(formFrom(c.settingFields({...c.defaults,actionSeconds:seconds})));
+    assert.equal(s.actionSeconds,seconds);assert.equal(settingsFor(s).actionSeconds,seconds);
+  }
 });
 test('cumulative caps are optional and blind presets keep fixed transaction BB values',()=>{
   const c=harness(),form=formFrom(c.settingFields(c.defaults));

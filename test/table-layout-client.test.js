@@ -9,7 +9,7 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);};
 function harness(){
   const context=vm.createContext({lifecycle,formatChips,getDisplayUnit,revealOptions,Date,state:{timeOffset:0,connected:true,connection:'已连接',animations:false,fun:false,chatUnread:0},
-    avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:a=>a,
+    avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:a=>a.type||a,
     boardCard:()=>'<span class="board-slot"></span>',streetNames:{flop:'翻牌'},
     actionArea:()=>'<div class="action-area"></div>',chatPanel:()=>'',errorPage:()=>''});
   vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const card=','const feedback='),section('const layouts=','function boardCard('),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function bombStatus(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.client={state,seatView,seatHoleCards,tableCenter,roomView,gameModeMarkers};'].join('\n'),context);
@@ -50,7 +50,7 @@ test('long player names and status descriptions are escaped, with all-in and pos
 
 test('unit display changes rendered amounts without modifying seat, pot or settings values',()=>{
   const c=harness(),r=room(2);r.hand={id:'h',status:'playing',number:1,street:'flop',pot:35,board:[]};r.players[0].bet=15;c.state.room=r;const before=JSON.stringify(r);
-  setDisplayUnit('bb');const bb=c.seatView(0,r)+c.tableCenter(r);assert.match(bb,/200 BB/);assert.match(bb,/1\.5 BB/);assert.match(bb,/3\.5 BB/);assert.match(bb,/1 BB = 10 积分/);
+  setDisplayUnit('bb');const bb=c.seatView(0,r)+c.tableCenter(r);assert.match(bb,/200 <small class="stack-unit">BB<\/small>/);assert.match(bb,/1\.5 BB/);assert.match(bb,/3\.5 BB/);assert.match(bb,/1 BB = 10 积分/);
   setDisplayUnit('points');const points=c.seatView(0,r)+c.tableCenter(r);assert.match(points,/class="stack-value">2,000<\/div>/);assert.match(points,/15 积分/);assert.match(points,/35 积分/);assert.equal(JSON.stringify(r),before);
 });
 
@@ -100,4 +100,21 @@ test('own reveal cards, empty seats, spectators and closed tables are not covere
   r.players.pop();const empty=c.seatView(2,r);assert.match(empty,/data-action="sit"/);assert.doesNotMatch(empty,/seat-interaction-hit/);
   r.players[0].seat=null;assert.doesNotMatch(c.seatView(1,r),/seat-interaction-hit/);
   r.players[0].seat=0;r.status='closed';assert.doesNotMatch(c.seatView(1,r),/seat-interaction-hit/);
+});
+
+
+test('blind badges replace duplicate blind status text, while real actions remain visible', () => {
+  const c=harness(),r=room(2);c.state.room=r;
+  r.hand={id:'h',status:'playing',buttonSeat:0,smallBlindSeat:0,bigBlindSeat:1};
+  for (const [i,type] of [[0,'smallBlind'],[1,'bigBlind']]) {
+    r.players[i].inHand=true;r.players[i].lastAction={type};
+    const html=c.seatView(i,r);
+    assert.match(html, /class="seat-status\s*" title="" data-tone="[^\"]*"><\/div>/);
+    assert.match(html, new RegExp(i===0?'title="小盲"':'title="大盲"'));
+  }
+  assert.match(c.seatView(0,r), /class="dealer-button" title="庄家" aria-label="庄家"/);
+  r.players[0].lastAction={type:'raise',to:50};
+  assert.match(c.seatView(0,r), /class="seat-status\s*" title="raise"/);
+  r.players[0].lastAction=null;r.players[0].allIn=true;
+  assert.match(c.seatView(0,r), /title="ALL IN" data-tone="allin"/);
 });

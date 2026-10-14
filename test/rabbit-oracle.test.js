@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { RoomService } from '../src/room.js';
-import { availableActions } from '../src/poker.js';
+import { availableActions, rabbitRunout } from '../src/poker.js';
 import { verifyProof } from '../src/fairness.js';
 import { aggregateAnalytics } from '../src/analytics.js';
 import { exportPhh } from '../src/phh.js';
@@ -58,7 +58,7 @@ test('independent deal-position oracle covers 2–9 players and all fold streets
     const phh = exportPhh([historyBefore], [], f.observer);
     if (originalCount === 5) { assert.equal(h.rabbit ?? null, null); continue; }
     assert.equal(h.rabbit.nextAt, timestamp + 1000);
-    for (let exposed = originalCount; exposed <= 5; exposed++) {
+    for (const exposed of [originalCount, 5]) {
       if (exposed > originalCount) {
         const next = h.rabbit.nextAt;
         assert.equal(f.service.tick(f.room, next - 1), false);
@@ -83,8 +83,8 @@ test('independent deal-position oracle covers 2–9 players and all fold streets
       assert.equal(replaySnapshot(history, Math.max(0, history.log.length - 1), f.observer).rabbit, null);
       const result = replaySnapshot(history, history.log.length, f.observer);
       assert.deepEqual(result.board, h.board); assert.deepEqual(result.rabbit, state.hand.rabbit);
-      if (exposed < 5) { assert.equal(h.rabbit.active, true); if (exposed > originalCount) assert.equal(h.rabbit.nextAt, timestamp + 650); }
-      else { assert.equal(h.rabbit.active, false); assert.ok(f.room.nextHandAt >= timestamp + 1300); }
+      if (exposed < 5) assert.equal(h.rabbit.active, true);
+      else { assert.equal(h.rabbit.active, false); assert.equal(f.room.nextHandAt, timestamp + 4000); }
     }
   }
 });
@@ -103,4 +103,32 @@ test('bomb-pot flop fold follows the same original deck continuation without rep
   const history = f.service.handFor(f.observer, f.room.code, h.id);
   const clean = { ...history }; delete clean.rabbit;
   assert.equal(exportPhh([history], [], f.observer), exportPhh([clean], [], f.observer));
+});
+
+test('persisted v1 partial rabbits finish together without extending a paused or reconnected result interval', t => {
+  let timestamp = 1800000000000; t.mock.method(Date, 'now', () => timestamp);
+  for (const paused of [false, true]) {
+    const f = fixture(3), h = foldAt(f, 0), remaining = rabbitRunout(h), due = f.room.nextHandAt;
+    // A server upgrade can load a v1 file saved after any prefix, with its
+    // original commitment and genuine settlement already stored.
+    h.rabbit = { version: 1, originalCount: 0, board: remaining.cards.slice(0, 2), indices: remaining.indices.slice(0, 2), active: true, nextAt: timestamp + 2300, finishedAt: null };
+    f.store.data.hands[0].rabbit = structuredClone(h.rabbit);
+    f.room.autoDealPaused = paused;
+    const frozen = actualOnly(h), ledger = structuredClone(f.store.data.ledger);
+    const restored = new RoomService({ data: structuredClone(f.store.data) }), room = restored.room(f.room.code);
+    for (const user of f.users) restored.connections.set(`${room.code}:${user.id}`, 1);
+    timestamp += 2000; restored.connectionChanged(room, timestamp, { reconnected: true });
+    assert.equal(room.hand.rabbit.board.length, 2);
+    timestamp += 400; restored.tick(room, timestamp);
+    assert.deepEqual(room.hand.rabbit.board, remaining.cards);
+    assert.equal(room.hand.rabbit.active, false);
+    assert.equal(room.nextHandAt, paused ? null : due);
+    assert.deepEqual(actualOnly(room.hand), frozen); assert.deepEqual(restored.db.ledger, ledger);
+    const archived = restored.handFor(f.observer, room.code, h.id);
+    assert.ok(archived.rabbit.proofs.every(proof => verifyProof(h.id, h.audit.root, proof)));
+    assert.deepEqual(archived.rabbit.board, remaining.cards);
+    timestamp = due; restored.tick(room, timestamp);
+    assert.equal(room.handNumber, paused ? 1 : 2);
+    if (!paused) { assert.notEqual(room.hand.id, h.id); assert.equal(room.hand.rabbit, undefined); assert.deepEqual(room.hand.board, []); }
+  }
 });

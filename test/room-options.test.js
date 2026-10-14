@@ -35,7 +35,7 @@ test('BB configuration fixes per-transfer limits and validates timing and cumula
   const s = settingsFor({ smallBlind: 10, bigBlind: 20, minBuyInBB: 50, maxBuyInBB: null, squidUnitBB: 3, approvalRequired: true });
   assert.equal(s.minBuyIn, 2000); assert.equal(s.maxBuyIn, 20000); assert.equal(s.squidUnit, 60);
   assert.equal(s.maxTotalBuyInBB, null); assert.equal(s.buyInStepBB, 50); assert.equal(s.bombIntervalMinutes, 10);
-  assert.equal(s.actionSeconds, 30); assert.equal(s.durationMinutes, 60); assert.equal(s.approvalRequired, false);
+  assert.equal(s.actionSeconds, 20); assert.equal(s.durationMinutes, 60); assert.equal(s.approvalRequired, false);
   assert.equal(s.timeBankCards, 3); assert.equal(s.timeBankSeconds, 30);
   for (const input of [{ maxTotalBuyInBB: NaN }, { maxTotalBuyInBB: Infinity }, { maxTotalBuyInBB: 50 }, { maxTotalBuyInBB: 125 }, { squidUnitBB: .5 },
     { bombAnteBB: Infinity }, { bombIntervalMinutes: 0 }, { bombIntervalMinutes: 121 }, { timeBankCards: -1 }, { timeBankSeconds: 0 }, { durationMinutes: NaN }, { mushroom: true }]) assert.throws(() => settingsFor(input));
@@ -84,7 +84,7 @@ test('table clock starts on first hand and settings cannot reset it after play',
   assert.equal(f.room.startedAt, null); assert.equal(f.service.needsTick(f.room, Date.now() + 1e9), false);
   const start = Date.now(); f.service.start(f.room, start);
   assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
-  assert.equal(f.room.deadline, start + 30000); finish(f);
+  assert.equal(f.room.deadline, start + 20000); finish(f);
   assert.throws(() => f.cmd(0, 'settings', { settings: { durationMinutes: 60 } }), /配置已锁定/);
   f.service.start(f.room, start + 60000); assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
 });

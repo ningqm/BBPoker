@@ -45,7 +45,7 @@ test('throw retry precedes throttles; three-second/twelve-per-minute limits also
   other.chat(0, {}, other.time + 24000); assert.throws(() => other.chat(0, {}, other.time + 28000), e => e.status === 429);
 });
 
-test('fold-win rabbit reveals a scheduled prefix while real settlement and proof privacy stay unchanged', t => {
+test('fold-win rabbit reveals every remaining card together while real settlement and proof privacy stay unchanged', t => {
   const f = fixture(t); f.command(0, 'start'); f.foldFinish();
   const h = f.room.hand, immutable = value => { const { rabbit, ...real } = value; return real; };
   const actual = structuredClone(immutable(h)), ledger = structuredClone(f.store.data.ledger), stats = f.service.stats(f.users[0].id), initial = f.time;
@@ -54,28 +54,25 @@ test('fold-win rabbit reveals a scheduled prefix while real settlement and proof
   assert.deepEqual(f.service.handFor(f.users[3].id, f.room.code, h.id).rabbit.proofs, []);
   assert.equal(f.service.history(f.users[3].id, f.room.code).hands[0].rabbit, null);
   f.advance(999); assert.equal(f.service.tick(f.room), false);
-  for (let i = 1; i <= 5; i++) {
-    f.next(); const view = f.service.state(f.room, f.users[3].id), replay = f.service.handFor(f.users[3].id, f.room.code, h.id);
-    assert.equal(view.hand.rabbit.board.length, i); assert.deepEqual(view.hand.rabbit, replay.rabbit);
-    assert.equal(view.hand.rabbit.proofs.length, i); assert.equal(view.hand.rabbit.indices, undefined);
-    assert.ok(view.hand.rabbit.proofs.every(p => verifyProof(h.id, h.audit.root, p)));
-    assert.ok(view.hand.rabbit.proofs.every(p => !h.players.some(player => player.cardIndices.includes(p.position)) && !h.burnIndices.includes(p.position)));
-    assert.deepEqual(view.hand.board, []); assert.ok(view.players.every(player => player.cards.every(card => card === null)));
-    assert.deepEqual(immutable(h), actual); assert.deepEqual(f.store.data.ledger, ledger); assert.deepEqual(f.service.stats(f.users[0].id), stats);
-    if (i < 5) { assert.equal(h.rabbit.nextAt, f.time + 650); assert.equal(f.service.history(f.users[3].id, f.room.code).hands[0].rabbit, null); }
-  }
-  assert.equal(h.rabbit.active, false); assert.equal(h.rabbit.finishedAt, initial + 3600); assert.ok(f.room.nextHandAt >= h.rabbit.finishedAt + 1300);
+  f.next(); const view = f.service.state(f.room, f.users[3].id), replay = f.service.handFor(f.users[3].id, f.room.code, h.id);
+  assert.equal(view.hand.rabbit.board.length, 5); assert.deepEqual(view.hand.rabbit, replay.rabbit);
+  assert.equal(view.hand.rabbit.proofs.length, 5); assert.equal(view.hand.rabbit.indices, undefined);
+  assert.ok(view.hand.rabbit.proofs.every(p => verifyProof(h.id, h.audit.root, p)));
+  assert.ok(view.hand.rabbit.proofs.every(p => !h.players.some(player => player.cardIndices.includes(p.position)) && !h.burnIndices.includes(p.position)));
+  assert.deepEqual(view.hand.board, []); assert.ok(view.players.every(player => player.cards.every(card => card === null)));
+  assert.deepEqual(immutable(h), actual); assert.deepEqual(f.store.data.ledger, ledger); assert.deepEqual(f.service.stats(f.users[0].id), stats);
+  assert.equal(h.rabbit.active, false); assert.equal(h.rabbit.finishedAt, initial + 1000); assert.equal(f.room.nextHandAt, initial + 5000);
   assert.deepEqual(f.service.history(f.users[3].id, f.room.code).hands[0].rabbit.board, h.rabbit.board);
   assert.equal(f.service.handLibrary(f.users[0].id).hands[0].rabbit.board.length, 5);
   const id = h.id; f.advance(f.room.nextHandAt - f.time - 1); assert.equal(f.service.tick(f.room), false);
   f.advance(1); assert.equal(f.service.tick(f.room), true); assert.notEqual(f.room.hand.id, id); assert.equal(f.store.data.hands.length, 1);
 });
 
-test('slow clocks extend next-hand hold; pause/offline stop dealing but do not stop rabbit', t => {
+test('slow clocks drain rabbit and deal in the same due tick; pause/offline only stop dealing', t => {
   const f = fixture(t); f.command(0, 'start'); f.foldFinish(); const h = f.room.hand;
-  for (let i = 1; i <= 5; i++) { f.advance(2000); f.service.tick(f.room); assert.equal(h.rabbit.board.length, i); }
-  assert.equal(f.room.nextHandAt, f.time + 1300); assert.equal(f.room.handNumber, 1);
-  f.advance(1299); assert.equal(f.service.tick(f.room), false); f.advance(1); f.service.tick(f.room); assert.equal(f.room.handNumber, 2);
+  f.advance(6000); f.service.tick(f.room);
+  assert.equal(h.rabbit.board.length, 5); assert.equal(h.rabbit.active, false); assert.equal(f.room.handNumber, 2);
+  assert.notEqual(f.room.hand.id, h.id); assert.equal(f.room.hand.rabbit, undefined); assert.deepEqual(f.room.hand.board, []);
   f.command(0, 'autoDeal', { paused: true }); f.foldFinish();
   for (const user of f.users) f.service.connections.delete(`${f.room.code}:${user.id}`);
   while (f.room.hand.rabbit.active) f.next(); assert.equal(f.room.nextHandAt, null); assert.equal(f.room.handNumber, 2);
@@ -130,8 +127,8 @@ test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE a
   const frozen = structuredClone(app.store.data); let failed; const failedSave = new Promise(resolve => { failed = resolve; });
   app.store.save = () => { failed(); throw new Error('rabbit reveal write failure'); };
   timestamp = room().hand.rabbit.nextAt; await failedSave; assert.deepEqual(app.store.data, frozen);
-  app.store.save = originalSave; const revealed = await first.until(state => state.hand?.rabbit?.board.length === 1);
-  assert.equal(app.store.read().hands[0].rabbit.board.length, 1); assert.equal(revealed.hand.rabbit.proofs.length, 1);
+  app.store.save = originalSave; const revealed = await first.until(state => state.hand?.rabbit?.board.length === 5);
+  assert.equal(app.store.read().hands[0].rabbit.board.length, 5); assert.equal(revealed.hand.rabbit.proofs.length, 5);
   assert.deepEqual(revealed.players.flatMap(p => p.cards), [null, null, null, null]);
   const save = structuredClone(app.store.data), key = readFileSync(join(directory, 'key')); await app.close();
   app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 }); await listen();
@@ -139,10 +136,10 @@ test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE a
   const refreshed = await api(users[2].token, `/api/rooms/${code}`); assert.deepEqual(refreshed.hand.rabbit, revealed.hand.rabbit); assert.deepEqual(refreshed.hand.board, []);
   assert.deepEqual((await api(users[0].token, `/api/rooms/${code}/chat`, throwBody)).message, message);
   const archived = await api(users[2].token, `/api/rooms/${code}/hands/${room().hand.id}`);
-  assert.equal(archived.rabbit.board.length, 1); assert.equal(archived.rabbit.proofs.length, 1);
-  assert.equal((await api(users[2].token, `/api/rooms/${code}/history`)).hands[0].rabbit, null);
+  assert.equal(archived.rabbit.board.length, 5); assert.equal(archived.rabbit.proofs.length, 5);
+  assert.equal((await api(users[2].token, `/api/rooms/${code}/history`)).hands[0].rabbit.board.length, 5);
   assert.equal((await api(users[0].token, '/api/stats')).hands, 1);
-  timestamp = room().hand.rabbit.nextAt; app.service.tick(room(), timestamp); app.store.save();
-  assert.equal(app.store.read().hands[0].rabbit.board.length, 2);
-  assert.equal((await api(users[2].token, `/api/rooms/${code}/hands/${room().hand.id}`)).rabbit.board.length, 2);
+  timestamp += 1000; app.service.tick(room(), timestamp); app.store.save();
+  assert.equal(app.store.read().hands[0].rabbit.board.length, 5);
+  assert.equal((await api(users[2].token, `/api/rooms/${code}/hands/${room().hand.id}`)).rabbit.board.length, 5);
 });

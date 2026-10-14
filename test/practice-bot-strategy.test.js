@@ -85,8 +85,25 @@ test('real engine accepts all bot choices in heads-up and multiway hands, conser
         actions: availableActions(hand, meId) };
       const decision = decideAction(r, { random });
       assert.ok(decision);
+      if (decision.action === 'raise') assert.ok(decision.amount % 10 === 0 || decision.amount === r.actions.maxRaiseTo);
       assert.doesNotThrow(() => applyAction(hand, meId, decision.action, decision.amount));
     }
     assert.equal(hand.players.reduce((sum, p) => sum + p.stack, 0), stacks.reduce((sum, stack) => sum + stack, 0));
+  }
+});
+
+
+test('practice bot raises in whole BB while preserving exact fractional all-in stacks', () => {
+  for (const bigBlind of [7, 10, 25]) {
+    const r = room(); r.settings.bigBlind = bigBlind;
+    r.actions.minRaiseTo = bigBlind * 4 + 1;
+    r.actions.maxRaiseTo = bigBlind * 100 + 3;
+    const result = decideAction(r, { random: () => 0 });
+    assert.equal(result.action, 'raise');
+    assert.ok(result.amount >= r.actions.minRaiseTo);
+    assert.equal(result.amount % bigBlind, 0);
+    r.actions.minRaiseTo = bigBlind * 4 + 1;
+    r.actions.maxRaiseTo = bigBlind * 4 + 2;
+    assert.deepEqual(decideAction(r, { random: () => 0 }), { action: 'raise', amount: r.actions.maxRaiseTo });
   }
 });

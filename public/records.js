@@ -160,8 +160,14 @@ export function restoreRecordDraft(form,state,draft) {
   if(draft.focus){const field=form.elements.namedItem(draft.focus.name);field?.focus({preventScroll:true});if(typeof field?.setSelectionRange==='function'&&typeof draft.focus.start==='number'&&!['number','date','range'].includes(field.type))field.setSelectionRange(draft.focus.start,draft.focus.end);}
   updateHoleDraft(form);
 }
-function filterSummary(kind,state) {
+function filterSummary(kind,state,rooms=[]) {
   const f={...defaultRecordFilters(),...state.filters},labels=[];
+  if(!(kind==='hands'&&state.scope==='table')){
+    if(state.room)labels.push('对局：'+(roomChoices(rooms,state.room).find(room=>room.code===state.room)?.label||'已选择的对局'));
+    if(f.period==='custom')labels.push(f.from&&f.to?`${f.from} 至 ${f.to}`:f.from?`${f.from} 起`:f.to?`截至 ${f.to}`:'自选日期');
+    else if(f.period!=='all')labels.push(f.period==='today'?'今天':`近 ${f.period} 天`);
+  }
+  if(kind==='hands'&&state.favorites)labels.push('仅收藏');
   const result={win:'盈利',loss:'亏损',even:'持平',winOver:`赢超过 ${f.minBB} BB`,lossOver:`输超过 ${f.minBB} BB`}[f.result];if(result)labels.push(result);
   if(kind==='hands'){
     const hole=holePresentation(state.filters);if(hole.custom||hole.value.holePreset!=='all')labels.push(hole.summary);
@@ -172,7 +178,7 @@ function filterSummary(kind,state) {
   if(kind!=='hands'&&String(f.q||'').trim())labels.push('含搜索词');
   return labels.length?labels.join(' · '):'全部手牌';
 }
-function roomChoices(rooms,selected) {
+export function roomChoices(rooms=[],selected) {
   const timestamp=room=>{const value=room.startedAt??room.createdAt;if(!value)return 0;const time=Number(new Date(value));return Number.isFinite(time)?time:0;};
   const choices=[...rooms].sort((a,b)=>timestamp(b)-timestamp(a)).map(room=>({...room,label:[room.name||'未命名对局',timestamp(room)?dateLabel(timestamp(room)):''].filter(Boolean).join(' · ')}));
   if(selected&&!choices.some(room=>room.code===selected))choices.unshift({code:selected,label:'已选择的对局'});
@@ -201,7 +207,7 @@ export function recordFilters(kind,state,rooms=[]) {
   const f={...defaultRecordFilters(),...state.filters},hands=kind==='hands',table=hands&&state.scope==='table',prefix=hands?'hand-records':'session-records';
   const availableRooms=roomChoices(rooms,state.room);
   const option=(value,label,current)=>`<option value="${escape(value)}" ${value===current?'selected':''}>${escape(label)}</option>`;
-  const summary=filterSummary(kind,state),filtered=summary!=='全部手牌';
+  const summary=filterSummary(kind,state,rooms),filtered=summary!=='全部手牌';
   const dateFields=table?'':`<section class="record-date-group" aria-label="筛选日期"><div class="record-periods" role="group" aria-label="日期范围">${[['all','全部日期'],['today','今天'],['3','近 3 天'],['7','近 7 天'],['30','近 30 天'],['custom','自选日期']].map(([value,label])=>button(label,'record-period',`data-kind="${kind}" data-period="${value}" aria-pressed="${f.period===value}"`,f.period===value?'selected small':'ghost small')).join('')}</div>${f.period==='custom'?`<div class="record-date-fields"><label class="field">开始日期<input type="date" name="from" value="${escape(f.from)}"></label><label class="field">结束日期<input type="date" name="to" value="${escape(f.to)}"></label><p class="record-date-note">开始或结束可留空；按本地日期筛选。</p></div>`:''}</section>`;
   const resultOptions=[['all','全部结果'],['win','盈利'],['loss','亏损'],['even','持平'],['winOver','赢超过 N BB'],['lossOver','输超过 N BB']];
   const results=`<div class="record-result-group"><label class="field">${hands?'我的整手盈亏':'我的盈亏'}<select name="result" data-record-auto="1">${resultOptions.map(([v,l])=>option(v,l,f.result)).join('')}</select>${hands?'<small class="record-result-help">含本手小游戏</small>':''}</label>${`<label class="field record-bb-threshold">超过多少 BB（固定阈值）<input type="text" name="minBB" inputmode="decimal" maxlength="13" aria-label="超过多少 BB" value="${escape(f.minBB)}"><small>按${hands?'每手':'每桌'}大盲折算，严格大于此数；填写后点筛选。</small></label>`}</div>`;
@@ -219,7 +225,7 @@ export function opponentFilters(state,rooms=[]) {
   const types=[['all','全部玩法'],['holdem','普通德州'],['bomb','炸弹池']],labels=[];
   for(const [key,options]of [['position',positionOptions],['type',types],['tableSize',tableSizeOptions]])if(f[key]!=='all')labels.push(options.find(([value])=>value===f[key])?.[1]||'已选择');
   const dates=`<section class="record-date-group" aria-label="筛选日期"><div class="record-periods" role="group" aria-label="日期范围">${[['all','全部日期'],['today','今天'],['3','近 3 天'],['7','近 7 天'],['30','近 30 天'],['custom','自选日期']].map(([value,label])=>button(label,'record-period',`data-kind="hands" data-period="${value}" aria-pressed="${f.period===value}"`,f.period===value?'selected small':'ghost small')).join('')}</div>${f.period==='custom'?`<div class="record-date-fields"><label class="field">开始日期<input type="date" name="from" value="${escape(f.from)}"></label><label class="field">结束日期<input type="date" name="to" value="${escape(f.to)}"></label><p class="record-date-note">开始或结束可留空；按本地日期筛选。</p></div>`:''}</section>`;
-  return `<form id="hand-records-filter-form" class="record-filters opponent-filters" data-record-kind="hands" data-record-key="${escape(recordFilterKey(state))}">${dates}<div class="opponent-filter-main"><label class="field">选择对局<select name="room" data-record-auto="1">${option('','全部对局',state.room||'')}${roomChoices(rooms,state.room).map(room=>option(room.code,room.label,state.room)).join('')}</select></label><div class="opponent-filter-actions"><button type="submit" class="outline small">筛选</button>${button('重置','record-reset','data-kind="hands"','ghost small')}</div></div><details class="record-personal-options opponent-filter-more" data-record-disclosure="opponent-options" ${labels.length?'open':''}><summary>更多条件 <span>${escape(labels.join(' · ')||'位置、玩法、发牌人数')}</span></summary><div class="opponent-filter-fields"><label class="field">我的位置<select name="position" data-record-auto="1">${positionOptions.map(([v,l])=>option(v,l,f.position)).join('')}</select></label><label class="field">玩法<select name="type" data-record-auto="1">${types.map(([v,l])=>option(v,l,f.type)).join('')}</select></label><label class="field">发牌人数<select name="tableSize" data-record-auto="1">${tableSizeOptions.map(([v,l])=>option(v,l,f.tableSize)).join('')}</select></label></div></details></form>`;
+  return `<form id="hand-records-filter-form" class="record-filters opponent-filters" data-record-kind="hands" data-record-key="${escape(recordFilterKey(state))}">${dates}<div class="opponent-filter-main"><label class="field">选择对局<select name="room" data-record-auto="1">${option('','全部对局',state.room||'')}${roomChoices(rooms,state.room).map(room=>option(room.code,room.label,state.room)).join('')}</select></label><div class="opponent-filter-actions"><button type="submit" class="outline small">筛选</button>${button('重置','record-reset','data-kind="hands"','ghost small')}</div></div><details class="record-personal-options opponent-filter-more" data-record-disclosure="opponent-options" ${labels.length?'open':''}><summary>更多条件 <span>${escape(labels.join(' · ')||'位置、玩法、发牌人数')}</span></summary><div class="opponent-filter-fields"><label class="field">我的位置<select name="position" data-record-auto="1">${positionOptions.map(([v,l])=>option(v,l,f.position)).join('')}</select></label><label class="field">玩法<select name="type" data-record-auto="1">${types.map(([v,l])=>option(v,l,f.type)).join('')}</select></label><label class="field">发牌人数<select name="tableSize" data-record-auto="1">${tableSizeOptions.map(([v,l])=>option(v,l,f.tableSize)).join('')}</select></label></div></details><p class="record-filter-summary" aria-label="当前筛选条件">${escape(filterSummary('hands',state,rooms))}</p></form>`;
 }
 export function handContextChips(hand) {
   if(hand.participated===false)return '';

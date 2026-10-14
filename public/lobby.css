@@ -14,3 +14,5 @@
 @media(max-width:760px){.room-countdown[data-squid-expiry="true"]{max-width:106px;white-space:normal;text-align:right;line-height:1.4}}
 
 .entry-mode-options{border:0;padding:0;margin:18px 0 0;min-width:0}.entry-mode-options legend{font-size:13px;font-weight:650;margin-bottom:9px}.entry-mode-option{display:flex;align-items:flex-start;gap:9px;border:1px solid #d8e3da;border-radius:11px;padding:11px 12px;margin:7px 0;cursor:pointer;font-size:13px}.entry-mode-option:has(input:checked){background:#eaf5ed;border-color:#6f9f83}.entry-mode-option input{width:auto;min-width:16px;margin:3px 0 0;accent-color:var(--mint)}.entry-mode-option small{display:block;font-size:11px;line-height:1.6;color:var(--muted);margin-top:4px}.entry-blind-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.entry-blind-actions button{flex:1;min-width:140px}.lifecycle-state small{flex-basis:100%;line-height:1.6}
+
+.past-rooms .room-item>span:first-child{min-width:0;overflow-wrap:anywhere}.past-rooms .room-item>.muted{flex-shrink:0;font-size:12px}

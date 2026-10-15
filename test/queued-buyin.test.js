@@ -82,13 +82,14 @@ for (const phase of ['immediate', 'queued', 'applied', 'cancelled']) test(`durab
 
 test('top-up receipt IDs are member-specific, prototype-safe, and recorded only after acceptance', t => {
   const f = fixture(t, { start: false }), commandId = '__proto__';
+  const initialReceipts = f.users.slice(0, 2).map(u => structuredClone(f.room.members[u.id].buyinReceipts));
   assert.throws(() => f.cmd(0, 'buyin', { amountBB: 10, commandId }), /单次带入/);
-  assert.equal(f.room.members[f.users[0].id].buyinReceipts, undefined);
+  assert.deepEqual(f.room.members[f.users[0].id].buyinReceipts, initialReceipts[0]);
   for (const i of [0, 1]) f.cmd(i, 'buyin', { amountBB: 100, commandId });
   for (const i of [0, 1]) {
     const m = f.room.members[f.users[i].id];
     assert.equal(m.totalBuyIn, 2000);
-    assert.deepEqual(Object.keys(m.buyinReceipts), ['command:__proto__']);
+    assert.deepEqual(Object.keys(m.buyinReceipts).sort(), [...Object.keys(initialReceipts[i]), 'command:__proto__'].sort());
     assert.equal(Object.getPrototypeOf(m.buyinReceipts), Object.prototype);
   }
   evictGeneralCommands(f); const before = structuredClone(f.store.data);

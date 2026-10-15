@@ -59,7 +59,7 @@ test('closing a betting round retains the last wager, log and private deck until
   const f = fixture(t); f.ready();
   f.command(f.actor(), 'raise', { amount: 30 }); f.act('call');
   const h = f.room.hand, lastActor = f.actor(), cursor = h.deckCursor, logLength = h.log.length;
-  f.act('call'); const due = f.time + 900;
+  f.act('call'); const due = f.time + 300;
   assert.deepEqual(h.players.map(p => p.bet), [30, 30, 30]);
   assert.equal(h.deckCursor, cursor); assert.equal(h.log.length, logLength + 1);
   assert.equal(h.log.at(-1).type, 'call'); assert.equal(h.log.at(-1).street, 'preflop');
@@ -79,6 +79,59 @@ test('closing a betting round retains the last wager, log and private deck until
   assert.equal(h.deckCursor, cursor + 4); assert.equal(h.board.length, 3); assert.deepEqual(h.players.map(p => p.bet), [0, 0, 0]);
   assert.equal(h.log.filter(e => e.type === 'street').length, 1);
   assert.equal(f.service.pendingBuyIn(f.room.members[f.users[lastActor].id]), 1000);
+});
+
+for (const phase of ['initial-deal', 'street-tail', 'board-flip', 'active-turn']) test(`chat, top-up and table controls preserve the exact running clock (${phase})`, t => {
+  const f = fixture(t);
+  if (phase === 'street-tail' || phase === 'board-flip') { f.closeBetting(); if (phase === 'board-flip') f.step(); }
+  if (phase === 'active-turn') f.ready();
+  const clock = () => ({ deadline: f.room.deadline, presentation: structuredClone(f.room.presentation),
+    transition: structuredClone(f.room.hand.transition), actor: f.room.hand.actingId, logLength: f.room.hand.log.length });
+  const expected = clock(), topupId = randomUUID();
+  const operations = [
+    () => f.service.chat(f.users[0], f.room.code, { kind: 'text', text: '这手慢慢想', messageId: randomUUID() }),
+    () => f.service.chat(f.users[1], f.room.code, { kind: 'emote', emote: 'nice', messageId: randomUUID() }),
+    () => f.command(0, 'buyin', { amountBB: 100, commandId: topupId }),
+    () => f.command(0, 'buyin', { amountBB: 100, commandId: topupId }),
+    () => f.command(1, 'sitout', { value: true }),
+    () => f.command(1, 'cancelDeparture'),
+    () => f.command(2, 'stand'),
+    () => f.command(2, 'cancelDeparture'),
+    () => f.command(0, 'autoDeal', { paused: true }),
+    () => f.command(0, 'autoDeal', { paused: false }),
+    () => f.service.join(f.users[0], f.room.code, f.room.invite),
+    () => { f.service.connections.set(`${f.room.code}:${f.users[1].id}`, 0); f.service.connectionChanged(f.room); },
+    () => { f.service.connections.set(`${f.room.code}:${f.users[1].id}`, 1); f.service.connectionChanged(f.room, f.time, { reconnected: true }); },
+    () => f.state(),
+  ];
+  for (const operation of operations) { operation(); assert.deepEqual(clock(), expected); }
+  assert.equal(f.service.pendingBuyIn(f.room.members[f.users[0].id]), 1000);
+});
+
+test('ordinary streets open at 900ms total and same-street next actors have no artificial pause', t => {
+  const f = fixture(t); f.ready();
+  for (const count of [3, 4, 5]) {
+    f.closeBetting(); const lastActionAt = f.time;
+    assert.equal(f.room.hand.transition.nextAt, lastActionAt + 300);
+    f.step(); assert.equal(f.room.hand.board.length, count);
+    assert.equal(f.room.presentation.actionReadyAt, lastActionAt + 900);
+    f.step(); assert.equal(f.time, lastActionAt + 900); assert.equal(f.room.deadline, f.time + 20000);
+    const actor = f.room.hand.actingId;
+    f.act('check'); assert.notEqual(f.room.hand.actingId, actor);
+    assert.equal(f.room.presentation.actionReadyAt, f.time);
+    assert.equal(f.room.deadline, f.time + 20000);
+    assert.equal(f.state(f.actor()).actions.canAct, true);
+  }
+});
+
+test('a time card extends only the deadline; unrelated updates cannot restart its turn baseline', t => {
+  const f = fixture(t); f.ready(); f.advance(2500);
+  const deadline = f.room.deadline, baseline = structuredClone(f.room.presentation), actor = f.actor();
+  f.command(actor, 'timebank');
+  assert.equal(f.room.deadline, deadline + 30000); assert.deepEqual(f.room.presentation, baseline);
+  f.service.chat(f.users[actor], f.room.code, { kind: 'text', text: '再想一下', messageId: randomUUID() });
+  f.command(actor, 'buyin', { amountBB: 100 }); f.state(actor);
+  assert.equal(f.room.deadline, deadline + 30000); assert.deepEqual(f.room.presentation, baseline);
 });
 
 test('ordinary river call shows the last action, then the contenders, then pays exactly once', t => {
@@ -149,7 +202,7 @@ test('a late transition tick publishes one stage and anchors a complete new turn
   const f = fixture(t); f.closeBetting(); const due = f.room.hand.transition.nextAt, cursor = f.room.hand.deckCursor;
   f.at(due + 60000); assert.equal(f.service.tick(f.room), true);
   assert.equal(f.room.hand.street, 'flop'); assert.equal(f.room.hand.deckCursor, cursor + 4);
-  assert.equal(f.room.presentation.actionReadyAt, f.time + 900); assert.equal(f.room.deadline, f.time + 20900);
+  assert.equal(f.room.presentation.actionReadyAt, f.time + 600); assert.equal(f.room.deadline, f.time + 20600);
   assert.equal(f.room.hand.log.filter(e => e.type === 'timeout').length, 0);
   const before = structuredClone(f.room.hand); assert.equal(f.service.tick(f.room), false); assert.deepEqual(f.room.hand, before);
 });
@@ -158,9 +211,9 @@ test('a timed-out final check waits before drawing and records the timeout on th
   const f = fixture(t); f.ready(); f.act('call'); f.act('call');
   const actor = f.room.hand.actingId, deadline = f.room.deadline; f.at(deadline);
   assert.equal(f.service.tick(f.room), true);
-  assert.equal(f.room.hand.board.length, 0); assert.equal(f.room.hand.transition.nextAt, deadline + 900);
+  assert.equal(f.room.hand.board.length, 0); assert.equal(f.room.hand.transition.nextAt, deadline + 300);
   assert.deepEqual(f.room.hand.log.at(-1), { seq: f.room.hand.log.length, street: 'preflop', playerId: actor, type: 'timeout', amount: 0 });
-  f.step(); assert.equal(f.room.hand.street, 'flop'); assert.equal(f.room.deadline, f.time + 20900);
+  f.step(); assert.equal(f.room.hand.street, 'flop'); assert.equal(f.room.deadline, f.time + 20600);
 });
 
 for (const kind of ['street', 'showdown', 'showdown-revealed', 'runout-showdown', 'award']) test(`encrypted server restart preserves the pending ${kind} deadline without replacing it by an actor clock`, async t => {
@@ -210,6 +263,6 @@ test('a failed server timer save rolls back the draw and retry advances the same
   for (let i = 0; i < 100 && app.store.data.rooms[code].hand.board.length !== 3; i++) await new Promise(resolve => setTimeout(resolve, 5));
   const room = app.store.data.rooms[code];
   assert.equal(room.hand.board.length, 3); assert.equal(room.hand.log.filter(e => e.type === 'street').length, 1);
-  assert.equal(room.presentation.actionReadyAt, f.time + 900); assert.equal(room.deadline, f.time + 20900);
+  assert.equal(room.presentation.actionReadyAt, f.time + 600); assert.equal(room.deadline, f.time + 20600);
   assert.deepEqual(app.store.read(), app.store.data);
 });

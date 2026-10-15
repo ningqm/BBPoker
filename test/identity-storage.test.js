@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
@@ -38,7 +39,7 @@ function browserStorage(t) {
 }
 function tab() {
   const calls = [];
-  const context = vm.createContext({clearTimeout,statsUI,records,funTracker:createTableFunTracker(),
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot,clearTimeout,statsUI,records,funTracker:createTableFunTracker(),
     feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
     avatarCache: { clear() {} },
@@ -117,7 +118,7 @@ test('desktop storage read failure cannot trigger unconditional clearing', async
 function desktopHandlers() {
   const files = new Map(), handlers = new Map(), allowedOrigin = 'https://poker.example.test';
   const file = '/profile/identity.enc';
-  const context = vm.createContext({
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot,
     path, Promise, JSON, validateIdentity, allowedOrigin,
     app: { getPath: () => '/profile' }, trusted() {},
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
@@ -151,7 +152,7 @@ test('desktop main process compares and removes within its serialized identity q
 
 test('desktop preload forwards the expected session to the main process', () => {
   const calls = []; let bridge;
-  const context = vm.createContext({ require: () => ({
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, require: () => ({
     contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } },
     ipcRenderer: { invoke(...args) { calls.push(args); } },
   }) });

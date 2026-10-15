@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,11 +11,11 @@ function section(start, end) {
   return source.slice(first, last);
 }
 function harness(page = 'room') {
-  const state = { page, timeOffset: 0, chatOpen: false, replayRequest: 0, connected: true, feedbackResync: false,
+  const state = {clock:createRoomClock(), page, chatOpen: false, replayRequest: 0, connected: true, feedbackResync: false,
     room: { meId: 'me', settings: {}, hand: { status: 'playing', actingId: 'friend' },
       actions: { canAct: false }, deadline: Date.now() + 20000 } };
   let html = '', notices = [], clocks = [];
-  const dialog = { open: false, shows: 0, get innerHTML() { return html; },
+  const dialog = { open: false, shows: 0, dataset: {}, get innerHTML() { return html; },
     set innerHTML(value) {
       html = value;
       notices = Array.from(value.matchAll(/<div\b[^>]*\bdata-history-turn\b[^>]*>/g), () => ({ hidden: true }));
@@ -23,7 +24,7 @@ function harness(page = 'room') {
   const document = { visibilityState: 'visible', querySelectorAll(selector) {
     return selector === '[data-history-turn]' ? notices : selector === '[data-turn-clock]' ? clocks : [];
   } };
-  const context = vm.createContext({ state, dialog, document, Date, profileEditor: null,
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, state, dialog, document, Date, profileEditor: null,
     btn: (label, action, cls = '', attrs = '') => `<button class="${cls}" data-action="${action}" ${attrs}>${label}</button>`,
     moneyUnitToggle: () => '', render() {}, actorClock: () => null, syncRebuyPrompt() {},
     turnCountdown: { update: () => ({ sound: null, urgent: false }) }, tableSounds: { play() {} },

@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -27,7 +28,7 @@ function harness(){
     const custom={hidden:/class="field stats-custom-hands" hidden/.test(html),querySelector:()=>fields.namedItem('handCount')};
     currentForm={id:'stats-filter-form',dataset:{statsKey:statsUI.statsFilterKey(client.state.statsView)},elements:fields,contains:field=>fields.includes(field),querySelector:selector=>selector==='.stats-custom-hands'?custom:null};
   }
-  const context=vm.createContext({statsUI,createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,document,dialog,
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,statsUI,createRequestGuard,createReplayPlayback,URLSearchParams,Date,Set,Map,document,dialog,
     FormData:class{constructor(form){this.form=form;}get(name){return this.form.elements.namedItem(name)?.value??null;}has(name){return Boolean(this.form.elements.namedItem(name));}},
     api(path){return new Promise((resolve,reject)=>calls.push({path,resolve,reject}));},
     render(){const body=statsUI.renderStatsPage(client.state.statsView.data,client.state.statsView);draws.push(body);rebuild(body);},

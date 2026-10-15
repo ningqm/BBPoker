@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as tableControls from '../public/table-controls.js';
 import * as tableScene from '../public/table-scene.js';
 import test from 'node:test';
@@ -13,9 +14,9 @@ const section=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function harness(){
   const requests=createRequestGuard(),timers=new Map(),pending=[],paths=[],messages=[],commands=[];
-  const state={user:{id:'a'},page:'lobby',rooms:[],timeOffset:0,lobby:{rooms:[],filter:'all',loading:false,loaded:false,error:'',request:0,timer:null,controller:null,joining:'',limit:10}};
+  const state={clock:createRoomClock(),user:{id:'a'},page:'lobby',rooms:[],lobby:{rooms:[],filter:'all',loading:false,loaded:false,error:'',request:0,timer:null,controller:null,joining:'',limit:10}};
   let sequence=0,renders=0;
-  const context=vm.createContext({...tableScene,...tableControls,...money,lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...tableScene,...tableControls,...money,lifecycle,state,requests,AbortController,document:{visibilityState:'visible'},
     clearTimeout:id=>timers.delete(id),setTimeout:(fn,ms)=>{timers.set(++sequence,{fn,ms});return sequence;},
     api:(path,body,options={})=>{const result=deferred();pending.push({path,body,options,...result});return result.promise;},
     navigate:path=>paths.push(path),render:()=>renders++,toast:message=>messages.push(message),rebuyPrompt:()=>null,
@@ -26,7 +27,7 @@ function harness(){
     section('const esc=','const profitClass='),section('const btn=','const avatar='),
     section('function stopLobbyPolling(','async function route('),
     section('function lobbyRoomCard(','function career('),
-    section('function departureModal(','function rulesModal('),section('function buyinModal(','function updateBuyinSummary('),
+    section('function departureModal(','function rulesModal('),section('function buyinTimingSummary(','function updateBuyinSummary('),
     'globalThis.client={stopLobbyPolling,loadLobby,joinPublicRoom,joinInviteModal,lobbyRoomCard,departureModal,confirmDeparture,settleSquidModal,participationNotice,entryBlindModal,confirmEntryBlind,buyinModal,entryModeFields};',
   ].join('\n'),context);
   return {...context.client,state,requests,context,pending,timers,paths,messages,commands,get renders(){return renders;}};

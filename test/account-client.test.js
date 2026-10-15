@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import * as statsUI from '../public/stats.js';
@@ -34,7 +35,7 @@ const clientSource = [
 function harness() {
   const calls = [], writes = [], toasts = [], timers = new Map(), modals = [], cleared = [], rendered = [];
   let timerId = 0, client, avatarPatch={};
-  const context = vm.createContext({...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot,...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard, AbortController, TextDecoder, Uint8Array, URLSearchParams, avatarMarkup,avatarEditorMarkup,createAvatarCache,
     $:()=>({}),createAvatarEditor:()=>({patch:()=>avatarPatch,setSaving(){},setError(){},destroy(){}}),
     apiUrl: p => `https://poker.test${p}`,

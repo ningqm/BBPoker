@@ -104,7 +104,7 @@ test('combined nine: 3bet/4bet and three all-ins, pending leaver, newcomer barri
   f.cmd(3, 'allin'); f.cmd(4, 'call'); f.cmd(5, 'call');
   finishRunout(f);
   // Three stacks 760 each + dead SB5 + BB10 = 2295. AA beats KK and QQ.
-  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [25,20,2250]);
+  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [2295]);
   assert.deepEqual(f.room.hand.result.mainWinnerIds, [f.id(3)]);
   assert.deepEqual(f.room.hand.players.map(p => p.stack - p.startingStack), [0,-5,-10,1535,-760,-760,0,0,0]);
   assert.equal(q.counts[f.id(3)], 1); assert.equal(f.member(4).seat, null); assert.equal(f.member(4).cashedOut, 0);

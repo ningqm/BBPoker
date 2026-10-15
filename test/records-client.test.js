@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as statsUI from '../public/stats.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +21,7 @@ function harness({dom=false,realCards=false}={}){
     const list=kind==='hands'?client.state.library:client.state.sessions,fields=['q','from','to'].map(name=>({name,value:list.filters?.[name]||'',type:name==='q'?'search':'date',selectionStart:2,selectionEnd:2,focus(){documentRef.activeElement=this;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}}));fields.namedItem=name=>fields.find(field=>field.name===name);
     const form={id:kind==='hands'?'hand-records-filter-form':'session-records-filter-form',dataset:{recordKind:kind,recordKey:records.recordFilterKey(list)},isConnected:true,elements:fields,contains:field=>fields.includes(field)};for(const field of fields)field.form=form;documentRef.currentForm=form;
   }
-  const context=vm.createContext({statsUI,records,formatHandBB,formatChips,formatAggregate,getDisplayUnit,unitLabel,createRequestGuard,historyBoard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,statsUI,records,formatHandBB,formatChips,formatAggregate,getDisplayUnit,unitLabel,createRequestGuard,historyBoard,URLSearchParams,Date,Set,Map,FormData:class extends URLSearchParams{constructor(form){super(Array.from(form.elements||[]).filter(f=>f.name).map(f=>[f.name,f.value]));}},
     api(path){return new Promise((resolve,reject)=>calls.push({path,resolve,reject}));},document:dom?documentRef:undefined,app:{contains:()=>client.state.page!=='room'},render(){if(client.state.page==='hands'||client.state.page==='sessions')rebuild(client.state.page);},
     openModal(title,body,kind){client.state.modal={kind,title};modals.push({title,body,kind});if(kind==='hand-library')rebuild('hands');if(kind==='session-list')rebuild('sessions');},closeModal(){client.state.modal=null;},
     toast(message){toasts.push(message);},navigate(path){navigations.push(path);},
@@ -39,7 +40,7 @@ test('custom dates and quick ranges use local day boundaries across timezone and
   for(const filters of [{period:'custom',from:'2026-02-30'},{period:'custom',from:'2026-10-14',to:'2026-10-13'},{period:'custom'},{period:'bad'}])assert.throws(()=>records.recordDateRange(filters));
 });
 test('query resets discard old cursors while keeping current filters; hand and session options stay separate',()=>{
-  const state={filters:{period:'all',result:'loss',q:'  朋友局  ',handNumber:'12',type:'bomb',status:'closed'},favorites:true,room:'123456',nextCursor:'old-page'};
+  const state={clock:createRoomClock(),filters:{period:'all',result:'loss',q:'  朋友局  ',handNumber:'12',type:'bomb',status:'closed'},favorites:true,room:'123456',nextCursor:'old-page'};
   const hand=records.recordQuery('hands',state,true);assert.equal(hand.get('before'),null);assert.equal(hand.get('favorites'),'1');assert.equal(hand.get('room'),'123456');assert.equal(hand.get('type'),'bomb');assert.equal(hand.get('result'),'loss');assert.equal(hand.get('q'),null);assert.equal(hand.has('handNumber'),false);assert.equal(hand.has('status'),false);
   const sessions=records.recordQuery('sessions',state);assert.equal(sessions.get('before'),'old-page');assert.equal(sessions.get('status'),'closed');assert.equal(sessions.get('q'),'朋友局');assert.equal(sessions.has('handNumber'),false);assert.equal(sessions.has('favorites'),false);assert.equal(sessions.has('type'),false);
 });
@@ -99,7 +100,7 @@ test('actual history row renders public turn and river previews in their board s
 });
 
 test('list refreshes preserve unsubmitted drafts and caret without changing applied filters or restoring a different filter',()=>{
-  const state={filters:{period:'custom',from:'2026-10-01',to:'2026-10-13',q:'applied'},room:'123456'};
+  const state={clock:createRoomClock(),filters:{period:'custom',from:'2026-10-01',to:'2026-10-13',q:'applied'},room:'123456'};
   const form=values=>{const fields=Object.entries(values).map(([name,value])=>({name,value,type:'text',selectionStart:2,selectionEnd:4,focused:false,focus(){this.focused=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;}}));fields.namedItem=name=>fields.find(field=>field.name===name);return{dataset:{recordKey:records.recordFilterKey(state)},elements:fields,contains:field=>fields.includes(field)};};
   const original=form({q:'正在输入的搜索词',from:'2026-10-02',to:'2026-10-12'}),active=original.elements.namedItem('q');const draft=records.captureRecordDraft(original,state,active),fresh=form({q:'applied',from:'2026-10-01',to:'2026-10-13'});
   records.restoreRecordDraft(fresh,state,draft);assert.equal(fresh.elements.namedItem('q').value,'正在输入的搜索词');assert.equal(fresh.elements.namedItem('from').value,'2026-10-02');assert.equal(fresh.elements.namedItem('q').focused,true);assert.equal(fresh.elements.namedItem('q').selectionEnd,4);assert.equal(state.filters.q,'applied');assert.equal(state.filters.from,'2026-10-01');
@@ -126,7 +127,7 @@ test('session detail distinguishes squid settlements from legacy mushroom refund
 
 test('table history ignores every date state and never displays date or room controls',()=>{
   for(const filters of [{period:'custom',from:'2026-02-30',to:'bad'},{period:'7'},{period:'invalid'}]){
-    const state={scope:'table',room:'123456',filters},query=records.recordQuery('hands',state);
+    const state={clock:createRoomClock(),scope:'table',room:'123456',filters},query=records.recordQuery('hands',state);
     assert.equal(query.has('from'),false);assert.equal(query.has('to'),false);
     const html=records.recordFilters('hands',state,[{code:'123456',name:'这张桌'}]);
     assert.doesNotMatch(html,/name="(?:from|to|room)"|data-action="record-period"|当前牌桌|日期范围/);
@@ -179,7 +180,7 @@ test('quick starting-card choices use declared form values, then custom ranks co
 });
 
 test('record refresh preserves unfinished BB and rank drafts plus disclosure state',()=>{
-  const state={filters:{...records.defaultRecordFilters(),result:'winOver',minBB:'20'},scope:'table',room:'123456'};
+  const state={clock:createRoomClock(),filters:{...records.defaultRecordFilters(),result:'winOver',minBB:'20'},scope:'table',room:'123456'};
   const form=(values,open)=>{const fields=Object.entries(values).map(([name,value])=>({name,value,type:'text',selectionStart:3,selectionEnd:3,focus(){this.focused=true;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;}}));fields.namedItem=name=>fields.find(f=>f.name===name);const disclosures=[{dataset:{recordDisclosure:'table'},open},{dataset:{recordDisclosure:'hole'},open}];return{dataset:{recordKey:records.recordFilterKey(state)},elements:fields,contains:f=>fields.includes(f),querySelectorAll:()=>disclosures,disclosures};};
   const original=form({minBB:'12.',holeRank1:'A',holeRank2:'Q',holeType:'suited'},true),fresh=form({minBB:'20',holeRank1:'',holeRank2:'',holeType:'all'},false);
   const draft=records.captureRecordDraft(original,state,original.elements.namedItem('minBB'));records.restoreRecordDraft(fresh,state,draft);
@@ -195,7 +196,7 @@ test('mobile date styling uses a single column and native date fields can shrink
 });
 
 test('session records share BB thresholds while keeping starting-card controls out',()=>{
-  const state={filters:{result:'lossOver',minBB:'50.25',holeRanks:'AK',holeType:'suited'}};
+  const state={clock:createRoomClock(),filters:{result:'lossOver',minBB:'50.25',holeRanks:'AK',holeType:'suited'}};
   const query=records.recordQuery('sessions',state);assert.equal(query.get('result'),'lossOver');assert.equal(query.get('minBB'),'50.25');assert.equal(query.has('holeRanks'),false);
   const html=records.recordFilters('sessions',state);assert.match(html,/name="minBB"[^>]*value="50.25"/);assert.match(html,/按每桌大盲折算/);assert.doesNotMatch(html,/name="holeRank[12]"|起手牌条件/);
   for(const value of ['', '1.001', '-1'])assert.throws(()=>records.recordQuery('sessions',{filters:{result:'winOver',minBB:value}}),/BB 门槛/);
@@ -290,7 +291,7 @@ test('context chips distinguish combined heads-up positions and never describe a
 });
 
 test('advanced disclosures and unsubmitted selections survive view redraws without becoming applied filters',()=>{
-  const state={scope:'personal',filters:records.defaultRecordFilters(),view:'hands'};
+  const state={clock:createRoomClock(),scope:'personal',filters:records.defaultRecordFilters(),view:'hands'};
   const make=(values,open)=>{const fields=Object.entries(values).map(([name,value])=>({name,value,type:'select-one'}));fields.namedItem=name=>fields.find(f=>f.name===name);const disclosure={dataset:{recordDisclosure:'personal'},open};return{dataset:{recordKey:records.recordFilterKey(state)},elements:fields,querySelectorAll:()=>[disclosure],contains:f=>fields.includes(f),disclosure};};
   const original=make({opponent:'friend',position:'CO',potType:'multiway',tableSize:'short',maxHands:'1000'},true),draft=records.captureRecordDraft(original,state,null);
   const fresh=make({opponent:'',position:'all',potType:'all',tableSize:'all',maxHands:'all'},false);records.restoreRecordDraft(fresh,state,draft);
@@ -339,7 +340,7 @@ test('card ranks, specific suits and colors serialize separately; custom wins ov
 });
 
 test('preset clicks clear custom cards and custom edits update only draft preview and selection state',()=>{
-  const state={filters:records.defaultRecordFilters()},form=startingHandForm(state,{holeRank1:'A',holeSuit1:'h',holeRank2:'A',holeSuit2:'h',holeType:'pair'});
+  const state={clock:createRoomClock(),filters:records.defaultRecordFilters()},form=startingHandForm(state,{holeRank1:'A',holeSuit1:'h',holeRank2:'A',holeSuit2:'h',holeType:'pair'});
   form.disclosures[1].open=true;
   assert.equal(records.applyHolePreset(form,{holePreset:'suitedConnector'}),true);
   assert.equal(form.elements.namedItem('holeRank1').value,'');assert.equal(form.elements.namedItem('holeSuit2').value,'');assert.equal(form.elements.namedItem('holeType').value,'all');
@@ -355,7 +356,7 @@ test('preset clicks clear custom cards and custom edits update only draft previe
 });
 
 test('restoring a starting-hand draft refreshes preview and pressed buttons without resetting its preset',()=>{
-  const state={filters:records.defaultRecordFilters()},original=startingHandForm(state),fresh=startingHandForm(state);
+  const state={clock:createRoomClock(),filters:records.defaultRecordFilters()},original=startingHandForm(state),fresh=startingHandForm(state);
   records.applyHolePreset(original,{holePreset:'premium'});original.disclosures[0].open=true;
   const draft=records.captureRecordDraft(original,state,null);records.restoreRecordDraft(fresh,state,draft);
   assert.equal(fresh.elements.namedItem('holePreset').value,'premium');for(const rank of ['QQ','KK','AA','AK'])assert.ok(fresh.nodes.preview.textContent.includes(rank));assert.equal(fresh.presets.find(p=>p.dataset.holePreset==='premium')['aria-pressed'],'true');assert.equal(fresh.disclosures[0].open,true);assert.equal(state.filters.holePreset,'all');
@@ -400,7 +401,7 @@ test('starting-hand controls use shrinking two-card columns and preserve fixed B
 
 test('applied hand filter summary names the selected table, date, favorites and every narrowing condition',()=>{
   const rooms=[{code:'old-table',name:'重复朋友局',startedAt:'2026-10-13T09:00:00Z'}];
-  const state={scope:'personal',room:'old-table',favorites:true,opponentOptions:[{id:'p2',name:'朋友甲'}],filters:{period:'7',result:'winOver',minBB:'25',holePreset:'pairs',type:'bomb',opponent:'p2',position:'BTN',potType:'headsUp',tableSize:'short',maxHands:'100',handNumber:'12'}};
+  const state={clock:createRoomClock(),scope:'personal',room:'old-table',favorites:true,opponentOptions:[{id:'p2',name:'朋友甲'}],filters:{period:'7',result:'winOver',minBB:'25',holePreset:'pairs',type:'bomb',opponent:'p2',position:'BTN',potType:'headsUp',tableSize:'short',maxHands:'100',handNumber:'12'}};
   // Use an existing recognized preset to avoid relying on a legacy alias.
   state.filters.holePreset='all';state.filters.holeType='pair';
   const summary=records.recordFilters('hands',state,rooms).match(/aria-label="当前筛选条件">([^<]+)<\/p>/)[1];

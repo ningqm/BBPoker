@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as tableControls from '../public/table-controls.js';
 import * as tableScene from '../public/table-scene.js';
 import test from 'node:test';
@@ -17,10 +18,10 @@ function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a
 function harness({unit='points',...overrides}={}){
   money.setDisplayUnit(unit);
   const modals=[],listeners=new Map(),commands=[];
-  const context=vm.createContext({...tableScene,...tableControls,...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...tableScene,...tableControls,...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
-    state:{user:{name:'小鱼'},rooms:[],timeOffset:0,connected:true,feedbackResync:false},
+    state:{clock:createRoomClock(),user:{name:'小鱼'},rooms:[],connected:true,feedbackResync:false},
     openModal(title,body,kind){modals.push({title,body,kind});context.state.modal={kind};},closeModal(){context.state.modal=null;},
     async command(type,payload){commands.push({type,...payload});return true;},toast(message){throw new Error(message);},...overrides,
     document:{querySelectorAll:()=>[],...overrides.document,addEventListener(type,fn){listeners.set(type,fn);}},
@@ -28,7 +29,7 @@ function harness({unit='points',...overrides}={}){
   vm.runInContext([
     section('const defaults=','const state='),section('const esc=','const profitClass='),section('const btn=','const card='),section('const card=','const feedback='),
     section('function seatHoleCards(','function seatView('),section('function actionArea(','function career('),section('function participationNotice(','function rulesModal('),
-    section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function tick(){','setInterval(tick,'),section('function settingFields(','function joinInvite('),section('function buyinModal(','function inviteModal('),
+    section('function seatActions(','function roomView('),section('function roomClock(','function tick('),section('function tick(){','setInterval(tick,'),section('function settingFields(','function joinInvite('),section('function buyinTimingSummary(','function inviteModal('),
     section("document.addEventListener('submit'",'function resetPrivateView('),
     'globalThis.client={defaults,state,settingFields,settingsOverview,readSettings,updateSettingConstraints,applySettingPreset,createModal,loadPreviousRoomSettings,buyinModal,updateBuyinSummary,roomClock,miniCutoff,tick,syncRebuyPrompt,avatar,seatActions,actionArea};',
   ].join('\n'),context);
@@ -214,7 +215,7 @@ test('elapsed clock does not disable start during a server-authorized squid exte
 
 test('mid-session buy-in defaults to waiting for a big blind and quotes a returner from server state',()=>{
   const c=harness();c.state.room={meId:'a',startedAt:1,settings:{...c.defaults,minBuyIn:200,maxBuyIn:2000},players:[{id:'a',seat:null,stack:0}]};
-  c.buyinModal(2);let html=c.modals.at(-1).body;assert.match(html,/name="entryMode" value="wait" checked/);assert.match(html,/补盲加入 · 10 积分/);assert.match(html,/等过庄/);assert.match(html,/全员等盲无法开牌/);
+  c.buyinModal(2);let html=c.modals.at(-1).body;assert.match(html,/name="entryMode" value="wait" checked/);assert.match(html,/补盲加入 · 10 积分/);assert.match(html,/等过庄/);assert.match(html,/入座后可切换/);
   c.state.room.players[0].entryBlind={required:true,mode:'wait',reason:'missed',live:10,dead:5};c.buyinModal(3);html=c.modals.at(-1).body;
   assert.match(html,/补盲加入 · 15 积分/);assert.match(html,/补小盲 5 积分 不抵跟注/);
   c.state.room.players[0].seat=0;c.buyinModal();assert.doesNotMatch(c.modals.at(-1).body,/name="entryMode"/);
@@ -231,7 +232,7 @@ test('bomb presets and custom minutes submit a timer rather than a hand count',(
 
 function rebuyRoom(c){
   const room={code:'rebuy-room',meId:'hero',status:'waiting',hand:{id:'busted-hand',status:'complete'},settings:{...c.defaults},players:[{id:'hero',seat:0,stack:0,totalBuyIn:2000}],autoDeal:{paused:false,rebuyGrace:{handId:'busted-hand',pendingIds:['hero'],startsAt:5000,endsAt:10000}}};
-  Object.assign(c.state,{room,page:'room',connected:true,busy:false,timeOffset:6000-Date.now()});return room;
+  Object.assign(c.state,{room,page:'room',connected:true,busy:false,clock:createRoomClock({monotonicNow:()=>6000,wallNow:()=>6000})});return room;
 }
 
 test('rebuy grace highlights the header without opening a dialog or submitting money',()=>{

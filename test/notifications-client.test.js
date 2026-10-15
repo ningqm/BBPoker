@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -26,11 +27,11 @@ class Element {
 }
 
 function harness(){
-  const body=new Element('body'),globalHost=new Element(),dialog=new Element('dialog'),modalBody=new Element(),timers=new Map(),state={modal:null};
+  const body=new Element('body'),globalHost=new Element(),dialog=new Element('dialog'),modalBody=new Element(),timers=new Map(),state={clock:createRoomClock(),modal:null};
   modalBody.className='modal-body';dialog.append(modalBody);dialog.open=false;body.append(globalHost,dialog);
   let sequence=0,clock=0;
   const document={createElement:tag=>new Element(tag),querySelectorAll:selector=>body.querySelectorAll(selector)};
-  const context=vm.createContext({state,dialog,document,$:selector=>selector==='#toasts'?globalHost:null,
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state,dialog,document,$:selector=>selector==='#toasts'?globalHost:null,
     setTimeout(callback,delay){const id=++sequence;timers.set(id,{callback,at:clock+delay,canceled:false});return id;},
     clearTimeout(id){const timer=timers.get(id);if(timer)timer.canceled=true;},
   });
@@ -121,9 +122,9 @@ test('failed modal loading reports the error after closing so the notice is not 
 
 test('turn urgency removes stale browser tooltips while keeping accessible timeout guidance',()=>{
   const button=new Element('button');button.setAttribute('title','旧弹出提示');button.setAttribute('aria-label','弃牌');
-  const state={room:{settings:{},hand:{status:'playing'},actions:{canCheck:false}},page:'room',connected:true,feedbackResync:false,busy:false,timeOffset:0};
+  const state={clock:createRoomClock(),room:{settings:{},hand:{status:'playing'},actions:{canCheck:false}},page:'room',connected:true,feedbackResync:false,busy:false,timeOffset:0};
   let urgent=true;
-  const context=vm.createContext({state,Date,document:{visibilityState:'visible',querySelectorAll:selector=>selector==='[data-timeout-action]'?[button]:[]},
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state,Date,document:{visibilityState:'visible',querySelectorAll:selector=>selector==='[data-timeout-action]'?[button]:[]},
     syncRebuyPrompt(){},actorClock:()=>null,turnCountdown:{update:()=>({urgent,sound:null})},tableSounds:{play(){throw new Error('Unexpected audio');}},
   });
   vm.runInContext(section('function tick(){','setInterval(tick,400);')+'\nglobalThis.tick=tick;',context);

@@ -44,10 +44,10 @@ test('fresh deal and each visible street reserve animation time before a full tw
     assert.equal(f.room.hand.transition.kind, 'street');
     assert.equal(f.room.hand.board.length, boardCount === 3 ? 0 : boardCount - 1);
     assert.equal(f.room.hand.actingId, null); assert.equal(f.room.deadline, null);
-    f.advance(899); assert.equal(f.service.tick(f.room), false);
+    f.advance(299); assert.equal(f.service.tick(f.room), false);
     f.advance(1); assert.equal(f.service.tick(f.room), true);
     assert.equal(f.room.hand.board.length, boardCount);
-    const delay = boardCount === 3 ? 900 : 700;
+    const delay = 600;
     assert.equal(f.state().hand.actionReadyAt, f.time + delay);
     assert.equal(f.state().hand.turnStartedAt, f.time + delay);
     assert.equal(f.room.deadline, f.time + delay + 20000);

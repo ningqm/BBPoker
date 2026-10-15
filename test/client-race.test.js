@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import {updateHandCategoryMotion} from '../public/hand-category.js';
 import * as records from '../public/records.js';
 import {createTableFunTracker} from '../public/table-fun.js';
@@ -60,7 +61,7 @@ function clientHarness({ writeIdentity = async () => {}, clearIdentity = async (
   const timers = new Map();
   let timerId = 0, clock = 0;
   let client;
-  const context = vm.createContext({updateHandCategoryMotion,...money,...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot,updateHandCategoryMotion,...money,...tableScene,...tableControls,funTracker:createTableFunTracker(),statsUI,records,feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),tableSounds:{play(){},playFeedback(){},suspend(){}},
     createRequestGuard,avatarCache:{clear(){}},
     apiUrl: path => apiUrl(path, { apiBase: 'https://table.example' }),
     fetch(url, options) {

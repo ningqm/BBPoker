@@ -98,3 +98,24 @@ test('hydrated avatars keep the same private source only while their content ide
   patchStableControls(current,scene({message:'new'}));assert.equal(current.querySelectorAll('img[data-custom-avatar]')[0].getAttribute('src'),'blob:private-avatar');
   patchStableControls(current,scene({avatarId:'b'.repeat(32)}));assert.equal(current.querySelectorAll('img[data-custom-avatar]')[0].getAttribute('src'),'/fallback.svg');
 });
+
+test('header entry choice updates the same control immediately and disappears after actual admission',()=>{
+  const header=(mode,canChoose=true)=>el('div',{class:'room-head'},[
+    el('div',{class:'room-heading'},['Synthetic table']),
+    el('div',{class:'room-head-tools'},[
+      ...(canChoose?[el('button',{class:'table-entry-button outline small','data-action':'entry-blind'},[mode==='wait'?'等大盲加入 ▾':'补盲加入 ▾'])]:[]),
+      el('div',{class:'table-topup'},[el('button',{'data-action':'buyin'},['补码']),el('span',{class:'table-topup-status'},['200 BB'])]),
+      el('button',{'data-action':'invite'},['邀请']),
+    ]),
+  ]);
+  const current=attach(header('wait')),entry=current.querySelector('.table-entry-button');
+  for (const mode of ['post','wait','post']) {
+    patchStableControls(current,header(mode));
+    assert.equal(current.querySelector('.table-entry-button'),entry);
+    assert.equal(entry.textContent,mode==='wait'?'等大盲加入 ▾':'补盲加入 ▾');
+    assert.equal(entry.detaches,0,'an unrelated refresh must not swallow a pressed entry control');
+  }
+  patchStableControls(current,header('post',false));
+  assert.equal(current.querySelector('.table-entry-button'),null);assert.equal(entry.isConnected,false);
+  assert.match(current.textContent,/补码.*邀请/);assert.doesNotMatch(current.textContent,/等大盲|补盲/);
+});

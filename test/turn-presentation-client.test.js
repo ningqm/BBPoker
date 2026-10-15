@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -27,9 +28,9 @@ function fixture(){
  const room={code:'timing-fixture',meId:'a',status:'playing',settings:{actionSeconds:20},
   hand:{id:'h',status:'playing',actingId:'a',actionSeq:4,actionReadyAt:now-100,turnStartedAt:now-100},
   deadline:now+19900,actions:{turnAvailable:true,canAct:true}};
- const state={room,page:'room',timeOffset:0,connected:true,feedbackResync:false,busy:false,sound:false};
+ const state={clock:createRoomClock({monotonicNow:()=>now,wallNow:()=>now}),room,page:'room',connected:true,feedbackResync:false,busy:false,sound:false};
  const nodes=['a','b'].map(id=>{const seat=new Element(id==='a'?'seat acting':'seat',{playerId:id});const timer=new Element('seat-turn');timer.seat=seat;timer.clock=new Element();return timer;});
- const context=vm.createContext({state,Date:Clock,actorClock,turnCountdown:createTurnCountdown(),syncRebuyPrompt(){},
+ const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state,Date:Clock,actorClock,turnCountdown:createTurnCountdown(),syncRebuyPrompt(){},
   document:{visibilityState:'visible',querySelectorAll:selector=>selector==='[data-seat-turn]'?nodes:[]}});
  vm.runInContext(source.slice(start,end)+'\nglobalThis.runTick=tick;',context);
  return {room,state,nodes,tick:()=>context.runTick(),at:value=>{now=value;},get now(){return now;}};

@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -10,8 +11,8 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>{const start=source.indexOf(a),end=source.indexOf(b,start+a.length);assert.ok(start>=0&&end>start);return source.slice(start,end);};
 function room(){return {code:'topup-room',meId:'me',hostId:'me',status:'playing',settings:{bigBlind:10,maxPlayers:9,maxTotalBuyInBB:1000},players:[{id:'me',seat:0,stack:1200,totalBuyIn:6000,pendingBuyIn:0,inHand:true}],hand:{id:'hand-1',status:'playing',actionSeq:3},actions:{},autoDeal:{}};}
 function harness(){
-  money.setDisplayUnit('bb');const state={room:room(),connected:true,feedbackResync:false,busy:false,timeOffset:0,page:'room',chatUnread:0},modals=[],toasts=[],calls=[],listeners=new Map();let request=0,pending,activeForm=null;
-  const context=vm.createContext({...money,...controls,...scene,lifecycle,state,Date,
+  money.setDisplayUnit('bb');const state={clock:createRoomClock(),room:room(),connected:true,feedbackResync:false,busy:false,page:'room',chatUnread:0},modals=[],toasts=[],calls=[],listeners=new Map();let request=0,pending,activeForm=null;
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...money,...controls,...scene,lifecycle,state,Date,
     requests:{capture:()=>({valid:()=>true,check(){}})},commandId:()=>`topup-${++request}`,
     api:(path,body)=>{calls.push({path,body});return new Promise((resolve,reject)=>{pending={resolve,reject};});},
     render(){},normalizeState(next){state.room=next.room||next;},
@@ -21,7 +22,7 @@ function harness(){
     FormData:class{constructor(form){this.form=form;}get(key){return this.form.elements?.namedItem(key)?.value??this.form.values?.[key]??null;}},
     tableCenter:()=>'',seatView:()=>'',actionArea:()=>'',chatPanel:()=>'',errorPage:()=>'',
   });
-  vm.runInContext([section('const esc=','const profitClass='),section('const btn=','const avatar='),section('function buyinModal(','function inviteModal('),section('async function command(','function stopStream('),section("document.addEventListener('submit'",'function resetPrivateView('),section('function roomView(){','function tableInfoModal('),section('function bombStatus(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.testClient={buyinModal,roomView,refreshBuyinStatus,updateBuyinSummary};'].join('\n'),context);
+  vm.runInContext([section('const esc=','const profitClass='),section('const btn=','const avatar='),section('function buyinTimingSummary(','function inviteModal('),section('async function command(','function stopStream('),section("document.addEventListener('submit'",'function resetPrivateView('),section('function roomView(){','function tableInfoModal('),section('function bombStatus(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.testClient={buyinModal,roomView,refreshBuyinStatus,updateBuyinSummary};'].join('\n'),context);
   function form(amount=100){const submit={disabled:false,isConnected:true};return {id:'buyin-form',dataset:{seat:''},values:{amountBB:String(amount)},querySelector:()=>submit,submit};}
   return {state,modals,toasts,calls,...context.testClient,form,attachForm(form){activeForm=form;},submit:form=>listeners.get('submit')({target:form,preventDefault(){}}),resolve(next=state.room){pending.resolve({room:next});},reject(error){pending.reject(error);}};
 }

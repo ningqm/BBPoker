@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as scene from '../public/table-scene.js';
 import * as statsUI from '../public/stats.js';
 import { renderHandCategory } from '../public/hand-category.js';
@@ -11,7 +12,7 @@ import {revealOptions,betActionEnabled} from '../public/table-controls.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);};
 function harness({realBoardCards=false}={}){
-  const context=vm.createContext({...scene,lifecycle,renderHandCategory,formatChips,getDisplayUnit,revealOptions,betActionEnabled,Date,state:{timeOffset:0,connected:true,connection:'已连接',animations:false,fun:false,chatUnread:0},
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...scene,lifecycle,renderHandCategory,formatChips,getDisplayUnit,revealOptions,betActionEnabled,Date,state:{clock:createRoomClock(),connected:true,connection:'已连接',animations:false,fun:false,chatUnread:0},
     avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI,formatAction:a=>a.type||a,
     boardCard:()=>'<span class="board-slot"></span>',streetNames:{flop:'翻牌'},
     autoDealText:()=> '5 秒后自动发下一手',actionArea:()=>'<div class="action-area"></div>',chatPanel:()=>'',errorPage:()=>''});
@@ -105,7 +106,7 @@ test('the total pot opens equity details on demand without a separate table butt
 test('on-demand equity details retain eligible side-pot players and explain the seat percentage',()=>{
   setDisplayUnit('points');const r=room(3),rows=[{id:'p0',equity:20,winPct:15,tiePct:10},{id:'p1',equity:35,winPct:35,tiePct:0},{id:'p2',equity:45,winPct:45,tiePct:0}];
   r.hand={board:['As','Kh','2d'],equity:{method:'exact',samples:990,players:rows,pots:[{amount:300,eligibleIds:['p0','p1','p2'],players:rows},{amount:500,eligibleIds:['p1','p2'],players:[{id:'p0',equity:99},{id:'p1',equity:40},{id:'p2',equity:60}]}]}};
-  let opened;const context=vm.createContext({state:{room:r},dialog:{scrollTop:12,querySelector:()=>null},card:()=>'',formatChips,num:String,openModal:(title,body,kind)=>{opened={title,body,kind};}});
+  let opened;const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state:{clock:createRoomClock(),room:r},dialog:{scrollTop:12,querySelector:()=>null},card:()=>'',formatChips,num:String,openModal:(title,body,kind)=>{opened={title,body,kind};}});
   vm.runInContext([section('const esc=','const fmtDate='),section('function equityDetails(','function miniPanel('),'equityDetails();'].join('\n'),context);
   assert.equal(opened.title,'全下胜率');assert.equal(opened.kind,'equity');assert.match(opened.body,/座位上的百分比为主池权益，平局按分得的份额计入/);
   const potSections=[...opened.body.matchAll(/<section class="table-info-section">([\s\S]*?)<\/section>/g)].map(match=>match[1]);assert.equal(potSections.length,2);
@@ -279,6 +280,19 @@ test('own time cards and countdown share one seat-side control area with no copy
   assert.ok('disabled' in elements(waitingTools).find(n=>n.attrs['data-action']==='timebank').attrs);
 });
 
+test('each opponent clock and fish counter remain in the identity grid with name, stack and avatar retained',()=>{
+  const c=harness(),r=thinkingRoom();c.state.room=r;
+  for(let index=1;index<9;index++){
+    r.hand.actingId='p'+index;r.players[index].squidWon=true;
+    const tree=markupTree(c.seatView(index,r)),main=oneClass(tree,'seat-main'),identity=oneClass(main,'seat-identity');
+    assert.equal(oneClass(identity,'seat-turn').parent,identity);
+    assert.ok(oneClass(main,'name').text.length>0);assert.ok(oneClass(main,'stack-value').text.length>0);
+    assert.ok(oneClass(identity,'seat-avatar-button'));assert.ok(oneClass(oneClass(main,'seat-label'),'squid-count'));
+    assert.equal(oneClass(tree,'seat-time-tools'),undefined,'only the hero needs an outside time-card control group');
+    assert.equal(elements(tree).filter(n=>hasClass(n,'seat-turn')).length,1);
+  }
+});
+
 test('seat time cards respect fresh actor, connection and presentation state and update remaining count',()=>{
   for(const [name,change] of [
     ['off turn',(c,r)=>{r.hand.actingId='p1';r.actions.canAct=false;}],
@@ -306,9 +320,9 @@ test('seat time cards respect fresh actor, connection and presentation state and
 // Run the real delegated click handler and mutation wrapper. DOM primitives are
 // doubled; authorization, busy-state and the submitted command are production code.
 function timeCardClickHarness(){
-  const room=thinkingRoom(),state={room,connected:true,busy:false,feedbackResync:false,timeOffset:0,modal:null,page:'room'},calls=[],modals=[],errors=[],listeners=new Map();
+  const room=thinkingRoom(),state={clock:createRoomClock(),room,connected:true,busy:false,feedbackResync:false,modal:null,page:'room'},calls=[],modals=[],errors=[],listeners=new Map();
   let finish;
-  const context=vm.createContext({state,Date,actorClock:scene.actorClock,betActionEnabled,requests:{capture:()=>({check(){},valid:()=>true})},commandId:()=>String(calls.length+1),
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state,Date,actorClock:scene.actorClock,betActionEnabled,requests:{capture:()=>({check(){},valid:()=>true})},commandId:()=>String(calls.length+1),
     api:(path,payload)=>{calls.push({path,payload});return new Promise(resolve=>{finish=resolve;});},render(){},normalizeState(next){state.room=next;},playerStatsModal:async id=>modals.push(id),toast:(message)=>errors.push(message),
     document:{addEventListener:(type,listener)=>listeners.set(type,listener),visibilityState:'visible'},navigator:{onLine:true}});
   vm.runInContext([section('function seatTimeBankEnabled(','function seatHoleCards('),section('async function command(','function stopStream('),section('async function handleAction(','function setRaise('),section("document.addEventListener('click'","document.addEventListener('compositionstart'")].join('\n'),context);
@@ -339,9 +353,9 @@ test('an old enabled seat-time button cannot act after turn, clock or synchroniz
 });
 
 test('connection updates use the same seat-time guard instead of re-enabling a stale command',()=>{
-  const room=thinkingRoom(),state={room,connected:true,busy:false,feedbackResync:false,timeOffset:0};
+  const room=thinkingRoom(),state={clock:createRoomClock(),room,connected:true,busy:false,feedbackResync:false,timeOffset:0};
   const button={dataset:{action:'timebank'},disabled:true};
-  const context=vm.createContext({state,Date,actorClock:scene.actorClock,betActionEnabled,esc:String,setRaisePanel(){},syncInteractionPanel(){},document:{querySelectorAll:selector=>selector==='[data-game-action]'?[button]:[]}});
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,state,Date,actorClock:scene.actorClock,betActionEnabled,esc:String,setRaisePanel(){},syncInteractionPanel(){},document:{querySelectorAll:selector=>selector==='[data-game-action]'?[button]:[]}});
   vm.runInContext([section('function seatTimeBankEnabled(','function seatHoleCards('),section('function updateConnection(','async function loadMe(')].join('\n'),context);
   context.updateConnection();assert.equal(button.disabled,false);
   for(const change of [()=>state.feedbackResync=true,()=>state.connected=false,()=>state.busy=true,()=>room.hand.actionReadyAt=Date.now()+900,()=>room.deadline=Date.now()-1]){

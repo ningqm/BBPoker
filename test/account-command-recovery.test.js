@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -43,7 +44,7 @@ const room = revision => ({ code: '123456', revision, meId: 'old-user', hand: { 
 function harness() {
   const pending = [], streams = [], identities = [], notices = [];
   let client, id = 0;
-  const context = vm.createContext({ ...money, ...tableScene, ...tableControls, statsUI, records, updateHandCategoryMotion,
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, ...money, ...tableScene, ...tableControls, statsUI, records, updateHandCategoryMotion,
     createRequestGuard, feedback: createTableFeedback(), turnCountdown: createTurnCountdown(), funTracker: createTableFunTracker(),
     tableSounds: { play() {}, playFeedback() {}, suspend() {}, stopPlayback() {} }, avatarCache: { clear() {} },
     AbortController, apiUrl: path => path,

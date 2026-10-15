@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -24,7 +25,7 @@ function harness() {
     getElementById: () => null, body: { classList: { toggle() {} } } };
   const app = { innerHTML: '', querySelector: () => null,
     contains: target => Boolean(target?.app && target.isConnected) };
-  const context = vm.createContext({ document: doc, window: { addEventListener: listen(windowEvents) },
+  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, document: doc, window: { addEventListener: listen(windowEvents) },
     navigator: { onLine: true }, app, syncBetControls,
     statsUI: { defaultStatsFilters: () => ({}), captureStatsDraft() {}, restoreStatsDraft() {} },
     records: { captureRecordDraft() {}, restoreRecordDraft() {} },

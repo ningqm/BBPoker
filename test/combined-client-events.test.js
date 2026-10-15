@@ -1,3 +1,4 @@
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import {updateHandCategoryMotion} from '../public/hand-category.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,11 +24,11 @@ function nineRoom(revision=1){
 }
 function harness(){
   const requests=createRequestGuard(),calls=[],listeners=new Map(),toasts=[],saved=[],navigated=[],sounds=[],infoPaint=[];
-  const state={user:{id:'p0'},token:'synthetic-session',page:'room',room:nineRoom(),busy:false,connected:true,feedbackResync:false,timeOffset:0,raise:0,
+  const state={clock:createRoomClock(),user:{id:'p0'},token:'synthetic-session',page:'room',room:nineRoom(),busy:false,connected:true,feedbackResync:false,raise:0,
     chatDraft:'',chatBusy:false,chatPending:null,chatOpen:false,chatUnread:0,chatMuted:false,reactionsMuted:false,reactions:{},funEffects:[],animations:true,sound:true,modal:null};
   let serial=0;
   const pending=(path,body)=>new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));
-  const context=vm.createContext({patchStableControls,updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,patchStableControls,updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
     api:pending,fetch:(url,options)=>pending(url,options),apiUrl:path=>path,
     FormData:class{constructor(form){this.values=form.values;}get(name){return this.values[name]??null;}},
     document:{visibilityState:'visible',addEventListener:(type,fn)=>listeners.set(type,fn)},navigator:{onLine:true},

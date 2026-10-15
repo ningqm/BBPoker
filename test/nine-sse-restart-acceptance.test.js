@@ -191,8 +191,8 @@ test('nine actual SSE players: concurrent chats/top-up, disconnect, three-way al
   }
   const h = f.room().hand;
   assert.deepEqual(h.board, ['Ac','Kd','Qc','2s','3d']);
-  assert.deepEqual(h.result.pots.map(p => p.amount), [25,20,2250,1000]);
-  assert.deepEqual(h.result.pots.map(p => p.winnerIds), [[f.id(3)],[f.id(3)],[f.id(3)],[f.id(4)]]);
+  assert.deepEqual(h.result.pots.map(p => p.amount), [2295,1000]);
+  assert.deepEqual(h.result.pots.map(p => p.winnerIds), [[f.id(3)],[f.id(4)]]);
   assert.deepEqual(h.log.filter(e => e.type === 'refund').map(e => e.amount), []);
   assert.equal(h.players.find(p => p.id === f.id(5)).stack, 500, 'covering caller retains chips above the largest opposing all-in');
   const expected = [0,-5,-10,1535,-260,-1260,0,0,0];

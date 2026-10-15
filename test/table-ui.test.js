@@ -1,3 +1,5 @@
+import { renderRoomResults } from '../public/room-results.js';
+import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as scene from '../public/table-scene.js';
 import { renderHandCategory } from '../public/hand-category.js';
 import test from 'node:test';
@@ -10,8 +12,8 @@ import { betPresetOptions, betActionLabel, betTurnKey, normalizeBetAmount, betAm
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(){
-  const context=vm.createContext({...scene,renderHandCategory,lifecycle,betPresetOptions,betActionLabel,betTurnKey,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betSliderKeyPosition,betActionEnabled,revealOptions,Date,formatChips,chipInputValue,getDisplayUnit,unitLabel,boardCard:()=>'<span class="fixture-board-card"></span>',streetNames:{preflop:'翻前',flop:'翻牌'},
-    state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
+  const context=vm.createContext({renderRoomResults,moneyUnitToggle:()=>'<div class="money-unit-toggle"></div>',createRoomClock,isOlderRoomSnapshot,...scene,renderHandCategory,lifecycle,betPresetOptions,betActionLabel,betTurnKey,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betSliderKeyPosition,betActionEnabled,revealOptions,Date,formatChips,chipInputValue,getDisplayUnit,unitLabel,boardCard:()=>'<span class="fixture-board-card"></span>',streetNames:{preflop:'翻前',flop:'翻牌'},
+    state:{clock:createRoomClock(),connected:true,busy:false,raise:20,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
   vm.runInContext([section('function participationNotice(','function rulesModal('),section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function career(){'),'globalThis.client={state,roomView,actionArea,autoDealText,miniPanel,bombStatus};'].join('\n'),context);
@@ -78,10 +80,15 @@ test('expired squid details explain automatic closure without repeating ordinary
   r.expiryMode=null;const regular=c.miniPanel(r);assert.match(regular,/data-action="settle-squid"/);assert.match(regular,/两手之间/);
 });
 
-test('waiting entry offers one compact choice while actual hand participants never see another blind charge',()=>{
+test('waiting entry offers one header choice while actual hand participants never see another blind charge',()=>{
   const c=harness(),r=room(),me=r.players[0];r.hand={status:'playing'};me.inHand=false;me.entryBlind={required:true,mode:'wait',reason:'new',live:10,dead:0,waitingFor:'bigBlind'};
-  let html=c.actionArea(r,me,true);assert.match(html,/等待大盲加入/);assert.equal((html.match(/data-action="entry-blind"/g)||[]).length,1);
-  me.inHand=true;html=c.actionArea(r,me,true);assert.doesNotMatch(html,/data-action="entry-blind"/);
+  c.state.room=r;
+  let html=c.roomView(),header=html.slice(html.indexOf('<div class="room-head">'),html.indexOf('<div class="game-grid">'));
+  assert.equal((html.match(/data-action="entry-blind"/g)||[]).length,1);
+  assert.match(header,/等大盲加入.*data-action="entry-blind"|data-action="entry-blind"[^>]*>等大盲加入/);
+  assert.doesNotMatch(c.actionArea(r,me,true),/data-action="entry-blind"/);
+  me.entryBlind.mode='post';me.entryBlind.waitingFor='button';html=c.roomView();assert.match(html,/补盲加入/);assert.doesNotMatch(html,/等大盲加入 ▾/);
+  me.inHand=true;html=c.roomView();assert.doesNotMatch(html,/data-action="entry-blind"/);
 });
 
 test('absent-player settlement countdown has priority over dealing another hand',()=>{
@@ -120,7 +127,7 @@ test('table tool strip keeps play-related tools and removes general data and leg
 });
 
 test('seat lifecycle status remains separate from the zero-stack All-in marker and completed payouts',()=>{
-  const context=vm.createContext({...scene,renderHandCategory,lifecycle,formatChips,chipInputValue,getDisplayUnit,unitLabel,revealOptions,betActionEnabled,state:{},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...scene,renderHandCategory,lifecycle,formatChips,chipInputValue,getDisplayUnit,unitLabel,revealOptions,betActionEnabled,state:{clock:createRoomClock(),},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
   vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const layouts=','function boardCard('),'globalThis.draw=seatView;'].join('\n'),context);
   const r=room(),p=r.players[1];r.hand={status:'playing',actingId:'me'};p.connected=true;p.inHand=true;p.allIn=true;p.stack=0;p.bet=100;p.contributed=100;
   let html=context.draw(1,r);assert.match(html,/class="seat-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/bet-allin-label|class="seat-status[^>]*>All-in</);assert.match(html,/本轮已投入 100 积分，All-in/);
@@ -144,7 +151,7 @@ test('the last available chips are labeled all-in both for a call and the raise 
   c.state.raise=20;assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="false"[^>]*>加至 20/);
   const nodes=new Map(['#raise-button','#raise-range','#raise-amount'].map(id=>[id,{dataset:{},setAttribute(){}}]));
   c.state.room=r;
-  const context=vm.createContext({...scene,renderHandCategory,state:c.state,$:id=>nodes.get(id),document:{querySelectorAll:()=>[]},betActionLabel,betPresetOptions,betTurnKey,normalizeBetAmount,betSliderFromAmount,betSelection,betActionEnabled,chipInputValue,unitLabel,esc:String,chips:value=>formatChips(value,r.settings.bigBlind),num:value=>String(value)});
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...scene,renderHandCategory,state:c.state,$:id=>nodes.get(id),document:{querySelectorAll:()=>[]},betActionLabel,betPresetOptions,betTurnKey,normalizeBetAmount,betSliderFromAmount,betSelection,betActionEnabled,chipInputValue,unitLabel,esc:String,chips:value=>formatChips(value,r.settings.bigBlind),num:value=>String(value)});
   vm.runInContext(section('function setRaise(','document.addEventListener(')+';globalThis.adjust=setRaise;',context);
   context.adjust(1000);assert.equal(nodes.get('#raise-button').dataset.allin,'true');assert.match(nodes.get('#raise-button').textContent,/All-in/);
   context.adjust(25);assert.equal(nodes.get('#raise-button').dataset.allin,'false');assert.match(nodes.get('#raise-amount').innerHTML,/加至 <b>30 积分/);assert.match(nodes.get('#raise-button').textContent,/加至 30/);
@@ -160,4 +167,12 @@ test('rounded or clamped fraction presets remain enabled and short all-ins do no
   assert.doesNotMatch(html,/<button[^>]*data-preset="[^"]+"[^>]*disabled/);
   r.actions={...r.actions,canRaise:false,canAllIn:true,maxRaiseTo:70};
   const short=c.actionArea(r,r.players[0],true);assert.doesNotMatch(short,/id="raise-range"|data-action="raise"/);assert.match(short,/data-action="allin"/);
+});
+
+
+test('closing a room replaces the entire live table with all-player results, including departed players',()=>{
+  const c=harness(),r=room();r.status='closed';r.hand={number:19,status:'complete'};
+  r.players=[{id:'me',name:'我',seat:null,stack:0,totalBuyIn:4000,sessionProfit:200},{id:'left',name:'提前走的朋友',seat:null,stack:0,totalBuyIn:2000,sessionProfit:-200},{id:'watch',name:'旁观者',seat:null,totalBuyIn:0,sessionProfit:0}];c.state.room=r;
+  const html=c.roomView();assert.match(html,/本场战绩/);assert.match(html,/提前走的朋友/);assert.match(html,/2 人 · 19 手/);assert.match(html,/累计带入/);assert.match(html,/累计收回/);assert.match(html,/data-action="history"/);assert.match(html,/data-action="lobby"/);
+  assert.doesNotMatch(html,/table-stage|table-bottom|table-toolbar|raise-range|data-action="(?:check|call|buyin|start)"|旁观者/);
 });

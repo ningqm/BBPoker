@@ -28,7 +28,7 @@ test('offline check knock and audition WAV match sample by sample', () => {
   assert.ok(largestError <= 1, `PCM difference: ${largestError}`);
 });
 
-test('check knock is deterministic across context rates and has two clear, unclipped soft impacts', () => {
+test('recorded check cue is deterministic across context rates and has two separated, unclipped impacts', () => {
   const first = createCheckKnockBuffer(audioContext(22050));
   const next = createCheckKnockBuffer(audioContext(48000));
   assert.equal(first.sampleRate, 44100); assert.equal(first.numberOfChannels, 1);
@@ -41,9 +41,16 @@ test('check knock is deterministic across context rates and has two clear, uncli
     return Math.sqrt(values.reduce((sum, value) => sum + value ** 2, 0) / values.length);
   };
   const peak = samples.reduce((max, value) => { assert.ok(Number.isFinite(value)); return Math.max(max, Math.abs(value)); }, 0);
-  assert.ok(peak >= 0.8 && peak < 0.9);
+  assert.ok(peak >= 0.75 && peak < 0.81);
   assert.ok(rms(0, 0.12) > 0.08, 'first knock is audible');
-  assert.ok(rms(0.145, 0.265) > 0.08, 'second knock is audible');
-  assert.ok(rms(0.12, 0.14) < 0.01, 'separate the two knocks with a quiet gap');
+  assert.ok(rms(0.17, 0.29) > 0.08, 'second knock is audible');
+  assert.ok(rms(0.15, 0.165) < 0.01, 'separate the two knocks with a quiet gap');
   assert.ok(rms(0.33, 0.36) < 0.002, 'the sound ends without a long ringing tail');
+});
+
+test('mutating one audio context buffer cannot alter the next recorded cue', () => {
+  const first = createCheckKnockBuffer(audioContext());
+  const expected = new Float32Array(first.getChannelData(0));
+  first.getChannelData(0).fill(0);
+  assert.deepEqual(createCheckKnockBuffer(audioContext()).getChannelData(0), expected);
 });

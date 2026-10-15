@@ -22,7 +22,7 @@
 
 `public/audio/chips.wav` 来源为 Joma86 的 [AllInPushChips.wav](https://freesound.org/people/Joma86/sounds/532861/)，按作者公开 HQ MP3 预览解码并线性衰减，许可为 [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)。来源、输入及输出哈希、处理方式和复现步骤见 [筹码声音素材](docs/chip-sound-source.md)。未提取任何商业扑克平台的音轨，也不表示作者对 BBPoker 的背书。
 
-当前过牌使用 BBPoker 原创合成双敲桌算法；`public/audio/check-knock.wav` 是同一运行时算法的复现产物，不含外部采样。旧 `check.wav` 保留兼容，但不再作为局内过牌声音。详见 [过牌音效](docs/check-knock-sound.md) 与 [全部音频说明](docs/audio-assets.md)。
+当前过牌使用 Rvgerxini 的 [Knocking / 462317](https://freesound.org/people/Rvgerxini/sounds/462317/) 录音，原作者标注 [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)。项目从两次不同的真实敲击裁剪、滤波和渐隐为 360 毫秒双敲声；`public/check-knock.js` 内嵌 PCM 与 `public/audio/check-knock.wav` 一致。旧 `check.wav` 保留兼容，但不再作为局内过牌声音。来源、构建输入哈希和复现步骤见 [过牌音效](docs/check-knock-sound.md) 与 [全部音频说明](docs/audio-assets.md)。项目没有分发整段原始 MP3，录音作者未对 BBPoker 作背书。
 
 工具及模型许可证不等于第三方背书；自行重建或分发依赖／模型时应保留其完整许可和版权要求。
 

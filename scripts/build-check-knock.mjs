@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Render the exact browser algorithm to PCM16 WAV for reproducible audition.
+// Render the exact embedded browser recording to PCM16 WAV for audition.
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';

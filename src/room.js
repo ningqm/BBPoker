@@ -266,7 +266,11 @@ export class RoomService {
     const seat = integer(cmd.seat, 0, r.settings.maxPlayers - 1, '座位');
     if (Object.values(r.members).some(p => p.seat === seat) || r.pending.some(p => p.seat === seat && p.playerId !== m.id)) fail('这个座位已被占用或正在申请');
     if (cmd.entryMode !== undefined && !['wait', 'post'].includes(cmd.entryMode)) fail('入桌方式需要选择等大盲或补盲加入');
-    this.requestBuyin(r, m, seat, this.buyinAmount(r, cmd));
+    const amount = this.buyinAmount(r, cmd);
+    this.requestBuyin(r, m, seat, amount);
+    // Seating also funds the table. Its receipt must survive leaving and the
+    // bounded command cache, just like a later top-up receipt does.
+    this.recordBuyinReceipt(m, { commandId: cmd.commandId, amount, at: now() }, 'applied');
     this.setBlindMode(r, m, cmd.entryMode ?? 'wait');
   }
   pendingBuyIn(m) { return (m.queuedBuyins ?? []).reduce((sum, request) => sum + request.amount, 0); }

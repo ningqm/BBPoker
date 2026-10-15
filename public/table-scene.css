@@ -392,3 +392,17 @@
 @media(max-width:360px){
  .at-table .table-stage .seat .seat-allin-label{font-size:10px}
 }
+
+/* Fish counters are wider than blind markers. Tuck only these counters
+   inward so the outer seats do not crop them against a phone's screen edge. */
+@media(max-width:760px){
+ .at-table .table-stage .seat[data-edge=left] .seat-label .squid-count{transform:translateX(5px)}
+ .at-table .table-stage .seat[data-edge=right] .seat-label .squid-count{transform:translateX(-5px)}
+}
+
+/* Long totals need both grid columns on tablets and desktop too. Ordinary
+   stacks keep their larger avatar and the existing number size. */
+@media(min-width:761px){
+ .at-table .table-stage .seat .stack-value.stack-wide{grid-column:1/-1;justify-content:center}
+ .at-table .table-stage .seat .seat-main:has(.stack-wide) .seat-identity .seat-avatar-button{grid-row:1;width:18px;height:18px}
+}

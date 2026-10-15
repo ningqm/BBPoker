@@ -25,23 +25,24 @@
 .room-shell .action-dock .action-buttons .fold-button{background:#f1f3f5e6;border:1px solid #cfd6dc;color:#65717e}
 .room-shell .action-dock .action-buttons [data-action=check]{background:#e0f1e9ed;border-color:#a7d3bf;color:#28705c}
 .room-shell .action-dock .action-buttons [data-action=call]{background:#e5effeec;border-color:#b0c8eb;color:#2d619e}
-.room-shell .action-dock .raise-submit{width:100%;min-height:44px;padding:8px 5px;border-radius:12px;background:#a2641b;border:1px solid #945b17;color:#fff;font-size:14px;font-weight:750;line-height:1.2}
+.room-shell .action-dock .raise-submit{width:100%;min-height:44px;padding:8px 5px;border-radius:12px;background:#a2641b;border:1px solid #945b17;color:#fff;font-size:14px;font-weight:750;line-height:1.2;overflow-wrap:anywhere}
 .room-shell .action-dock .raise-submit[data-allin=true]{background:#b33d60;border-color:#9b2b4c}
 .room-shell .action-dock .raise-submit:disabled{background:#d7dfd9;border-color:#c8d4cc;color:#829187;cursor:default}
 .room-shell .action-dock .action-buttons [data-allin=true],.room-shell .action-dock .action-buttons [data-action=allin]{background:#b33d60;border-color:#9b2b4c;color:white}
 .room-shell .action-dock :is(.action-buttons,.raise-shortcuts) button:disabled,.room-shell .action-dock .raise-toggle:disabled{opacity:1;cursor:default;color:#98a89e;background:#e6ece7b3;border-color:#d8e1d9;box-shadow:none}
 .room-shell .action-dock .timebank-button:disabled{opacity:.45}
-.room-shell .action-dock .raise-popover{position:absolute;z-index:80;right:10px;bottom:calc(100% - 5px);width:184px;box-sizing:border-box;padding:12px;border:1px solid #c4d6ca;border-radius:20px;background:#fbfdf8f5;box-shadow:0 12px 44px #163d303d;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+/* Keep the picker low over the dock on every screen, away from side seats. */
+.room-shell .action-dock .raise-popover{position:absolute;z-index:80;right:10px;bottom:4px;width:128px;box-sizing:border-box;padding:8px;border:1px solid #c4d6ca;border-radius:16px;background:#fbfdf8f5;box-shadow:0 12px 44px #163d303d;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);max-height:calc(100dvh - 16px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
 .action-dock .raise-popover[hidden]{display:none!important}
-.action-dock .raise-popover header{display:flex;align-items:center;justify-content:space-between;gap:4px}
-.room-shell .action-dock .raise-popover #raise-amount{min-width:0;text-align:left;font-size:11px;color:#89663b;white-space:normal;line-height:1.4}
+.action-dock .raise-popover header{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-height:36px}
+.room-shell .action-dock .raise-popover #raise-amount{display:none}
 .room-shell .action-dock .raise-popover #raise-amount b{display:block;font-size:18px;color:#7a4d18;font-variant-numeric:tabular-nums}
-.room-shell .action-dock .raise-popover .raise-close{flex:0 0 30px;min-height:32px;padding:1px;width:30px;font-size:22px;line-height:1;background:transparent;border:0;color:#698372}
-.action-dock .raise-vertical-track{display:flex;flex-direction:column;align-items:center;gap:6px;margin:8px 0}
-.action-dock .raise-range-rail{display:block;position:relative;width:44px;height:180px;flex:none}
-.room-shell .action-dock #raise-range{position:absolute;left:50%;top:50%;display:block;writing-mode:horizontal-tb;direction:ltr;appearance:auto;-webkit-appearance:auto;width:180px;min-width:180px;height:44px;min-height:44px;transform:translate(-50%,-50%) rotate(-90deg);margin:0;padding:0;flex:none;accent-color:#ad731f;cursor:ns-resize;touch-action:none}
+.room-shell .action-dock .raise-popover .raise-close{flex:0 0 36px;min-height:36px;padding:1px;width:36px;font-size:22px;line-height:1;background:transparent;border:0;color:#698372}
+.action-dock .raise-vertical-track{display:flex;flex-direction:column;align-items:center;gap:4px;margin:2px 0 6px}
+.action-dock .raise-range-rail{display:block;position:relative;width:44px;height:140px;flex:none}
+.room-shell .action-dock #raise-range{position:absolute;left:50%;top:50%;display:block;writing-mode:horizontal-tb;direction:ltr;appearance:auto;-webkit-appearance:auto;width:140px;min-width:140px;height:44px;min-height:44px;transform:translate(-50%,-50%) rotate(-90deg);margin:0;padding:0;flex:none;accent-color:#ad731f;cursor:ns-resize;touch-action:none}
 .action-dock .raise-endpoint{font-size:11px;color:#788771;font-variant-numeric:tabular-nums}
-.action-dock .raise-popover p{font-size:10px;line-height:1.4;text-align:center;color:#71856f;margin:6px 0 0}
+.action-dock .raise-vertical-track .raise-endpoint:last-child,.action-dock .raise-popover p{display:none}
 .action-dock .detached-showdown,.action-dock .detached-final-cards{position:absolute;bottom:calc(100% + 8px);left:0;max-width:calc(100% - 198px);z-index:20;padding:5px 8px;background:#fffffff0;border-radius:10px}
 @media(max-width:760px){
  .room-shell .table-bottom .action-dock{padding:8px 2px;border-radius:16px}
@@ -58,9 +59,26 @@
  .room-shell .action-dock .turn-tools{gap:4px}
  .room-shell .table-bottom .action-dock .turn-row{gap:5px;font-size:11px}
  .room-shell .action-dock .auto-deal-status{font-size:11px}
- .room-shell .action-dock .raise-popover{right:2px;width:136px}
+}
+@media(max-width:760px),(max-width:1100px) and (max-height:550px){
+ /* Keep the vertical picker in the lower right control corner, clear of the
+    board and your cards. It floats over the dock without resizing the table. */
+ .room-shell .action-dock .raise-popover{right:-6px;bottom:4px;width:104px;padding:8px;border-radius:14px;max-height:calc(100dvh - 16px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
+ .room-shell .action-dock .raise-popover header{min-height:30px;justify-content:flex-end}
+ /* The submit button already contains the selected total. */
+ .room-shell .action-dock .raise-popover #raise-amount{display:none}
+ .room-shell .action-dock .raise-popover .raise-close{flex-basis:36px;width:36px;min-height:36px}
+ .room-shell .action-dock .raise-vertical-track{gap:4px;margin:2px 0 6px}
+ .room-shell .action-dock .raise-range-rail{height:120px}
+ .room-shell .action-dock #raise-range{width:120px;min-width:120px}
+ .room-shell .action-dock .raise-vertical-track .raise-endpoint:last-child,.room-shell .action-dock .raise-popover p{display:none}
+ .room-shell .action-dock .raise-submit{min-height:44px;padding:7px 2px;font-size:12px;overflow-wrap:anywhere}
+}
+@media(min-width:761px) and (max-width:1100px) and (max-height:550px){
+ .room-shell .action-dock .raise-popover{right:10px}
 }
 @media(max-width:360px){
+ .room-shell .action-dock .raise-popover{width:92px}
  .room-shell .action-dock .action-buttons button{font-size:11px}
  .room-shell .action-dock .raise-shortcuts button{font-size:9px}
  .action-dock .bet-preset-amount{font-size:10px}

@@ -37,7 +37,7 @@ Rebuild in an isolated Python environment with `kokoro-onnx==0.6.1`,
 3. Run `node --test test/table-audio.test.js test/table-feedback.test.js`.
 4. For a reviewable sample using the actual shipped files and playback gains,
    run `node scripts/preview-table-audio.mjs --output /tmp/bbpoker-audio-review.wav`.
-   The sequence is chips alone, then 下注、加注、再加注、跟注、过牌、弃牌、All-in.
+   The sequence starts with chips and the current check knock, followed by the configured action voice cues; the live table uses the knock instead of the legacy check voice.
 
 SHA-256 of the build inputs used for this asset set:
 
@@ -112,3 +112,10 @@ These references guide semantics and settings only. No WPK, GGPoker or PokerStar
 licensed Joma86 chip recording and generated neutral speech are the bundled sources.
 The new voice is generated speech; whether its timbre is preferable remains a
 listening decision for the user, not something unit tests can establish.
+
+
+## Original check knock and collection playback (0.22.0)
+
+The live check cue is now an original, locally synthesized 360 ms double table knock from `public/check-knock.js`. It does not use a third-party recording, a commercial platform sample or a network service. `public/audio/check-knock.wav` is a reproducible preview of that same runtime algorithm; rebuild it with `node scripts/build-check-knock.mjs`. The legacy `check.wav` remains for compatibility but is not the live check cue. See [check-knock provenance and hashes](check-knock-sound.md).
+
+Actual pot awards reuse the existing CC0 chips recording at the configured collection gain and playback rate. Split and side pots do not stack multiple collection sounds; refunds do not create an award cue. Check events are deduplicated by hand/action, independent of generic prompt throttling. Mute, background, disconnect and reconnect suppression still applies. Browser autoplay restrictions still require the user's initial gesture and may require another gesture after a system interruption.

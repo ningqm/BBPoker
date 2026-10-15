@@ -1,3 +1,5 @@
+import { createCheckKnockBuffer } from './check-knock.js';
+
 // Presentation only: these helpers never choose cards, settle a pot, or submit an action.
 const SLIDER_MAX = 1000;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -54,6 +56,7 @@ function snapshot(room, now) {
         amount: event.amount, to: event.to, street: event.street, isRaise: event.isRaise,
       })),
       winnerIds: [...(hand.result?.mainWinnerIds ?? [])],
+      paidOut: Object.values(hand.result?.payouts ?? {}).some(amount => Number.isFinite(amount) && amount > 0),
     } : null,
   };
 }
@@ -114,12 +117,16 @@ function transitions(previous, current) {
   // A batched response may include a raise followed by somebody's fold/check.
   // Announce only the most recent action and attach chips to that same action;
   // OR-ing every earlier bet makes an unrelated check or fold sound like a bet.
+  // Checks are physical table taps, independent of the newest spoken action
+  // and turn/board notifications. Keep each fresh action's identity.
+  const checks = freshActions.filter(event => event.type === 'check').slice(-9);
+  if (checks.length) feedback.checks = checks.map(event => `${current.code}:${current.meId}:${after.id}:check:${event.seq}`);
   const latestAction = freshActions.at(-1);
   if (latestAction) {
     const chips = ['raise', 'call', 'allin'].includes(latestAction.type) &&
       (latestAction.amount === undefined || finite(latestAction.amount) > 0);
     feedback.sound = chips ? 'chip' : ['fold', 'check'].includes(latestAction.type) ? latestAction.type : null;
-    feedback.speech = spokenAction(after, latestAction);
+    if (latestAction.type !== 'check') feedback.speech = spokenAction(after, latestAction);
     feedback.chips = chips;
   }
   if (after.boardLength > before.boardLength) {
@@ -135,10 +142,16 @@ function transitions(previous, current) {
   }
   if (before.status !== 'complete' && after.status === 'complete') {
     feedback.animations.push({ type: 'win', playerIds: after.winnerIds });
-    feedback.sound = 'win';
+    // One collection cue for the actual settlement, including split and side
+    // pots. Merely showing the river, a refund or a complete-state restore is
+    // not a payout. Replace any final-action chip hit instead of layering it.
+    if (after.paidOut || fresh.some(event => event.type === 'payout' && finite(event.amount) > 0)) {
+      feedback.sound = 'collect';
+      feedback.chips = false;
+    }
   }
   if (feedback.sound || feedback.speech) {
-    const turn = feedback.sound === 'yourturn' ? `:turn:${after.actingId}:${after.actionReadyAt}` : '';
+    const turn = feedback.sound === 'yourturn' ? `:turn:${after.actingId}:${after.actionReadyAt}` : feedback.sound === 'collect' ? ':payout' : '';
     feedback.eventId = `${current.code}:${current.meId}:${after.id}:${after.seq}${turn}`;
   }
   return feedback;
@@ -202,26 +215,28 @@ const tones = {
   deal: [[660, 360, 0, 0.055, 0.025], [760, 440, 0.065, 0.055, 0.02]],
   board: [[520, 820, 0, 0.075, 0.022]],
   chip: [], // Same-origin multi-chip foley; no synthetic click fallback.
+  collect: [], // The selected recording, fuller and lower for a pot being gathered.
   fold: [[260, 130, 0, 0.06, 0.015]],
-  check: [[480, 340, 0, 0.035, 0.022]],
+  check: [], // Short double table knock in a separate action channel.
   yourturn: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.09, 0.075, 0.025]],
   win: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.075, 0.075, 0.022], [1100, 1100, 0.15, 0.09, 0.019]],
   countdown: [[820, 820, 0, 0.055, 0.035]],
   'countdown-last': [[1050, 1050, 0, 0.075, 0.045]],
 };
 
-export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'check', 'fold', 'allin']);
+export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'fold', 'allin']);
 export const TABLE_VOICE_LABELS = Object.freeze({ bet: '下注', raise: '加注', reraise: '再加注', call: '跟注', check: '过牌', fold: '弃牌', allin: 'All-in' });
 // Versioned separately from the app release so replaced media never uses an old cache.
 const AUDIO_ASSET_VERSION = '20261015-allin-aoyin-v7';
-export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, voice: 0.8, voiceLead: 0.025 });
+export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, collect: 0.78, collectRate: 0.92, check: 0.85, voice: 0.8, voiceLead: 0.025 });
 
 /** Same-origin recorded cues and synthesized effects; never a delayed action queue. */
 export function createTableSounds({ enabled = false, voiceEnabled = true,
   AudioContext: AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext,
   document: doc = globalThis.document, now = () => Date.now(), fetch: fetcher = globalThis.fetch } = {}) {
   let context = null, unlocked = false, disposed = false, lastPlayed = -Infinity, generation = 0;
-  let voiceSource = null;
+  let voiceSource = null, knockNextAt = 0;
+  let activated = false, suspendedByApp = false, recoveryAttempted = false;
   const buffers = new Map(), loading = new Map(), active = new Set();
   const heardEvents = new Set();
   const visible = () => doc?.visibilityState !== 'hidden';
@@ -242,13 +257,39 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     }
   }
   function stopPlayback() {
-    stop(); stopVoice();
+    stop(); stopVoice(); knockNextAt = 0;
   }
   function suspend() {
-    generation++; unlocked = false; stop(); stopVoice();
+    generation++; unlocked = false; suspendedByApp = true; stop(); stopVoice(); knockNextAt = 0;
     try { if (context && context.state !== 'closed') ignoreRejection(context.suspend()); } catch {}
   }
-  function visibilityChanged() { if (!visible()) suspend(); }
+  async function resumeActivated() {
+    // Reuse only an already activated context. Browsers may still require a
+    // fresh real gesture; a rejected/pending resume never blocks the table or
+    // queues missed sounds. One attempt per interruption avoids retry loops.
+    if (disposed || !activated || !enabled || !visible() || suspendedByApp ||
+        !context || context.state === 'closed' || recoveryAttempted) return false;
+    recoveryAttempted = true;
+    const audio = context, attempt = generation;
+    try {
+      if (audio.state !== 'running') await audio.resume();
+      if (disposed || context !== audio || attempt !== generation || !enabled || !visible() || suspendedByApp) return false;
+      unlocked = audio.state === 'running';
+      if (unlocked) { recoveryAttempted = false; ignoreRejection(preloadAudio()); }
+      return unlocked;
+    } catch { if (context === audio && attempt === generation) unlocked = false; return false; }
+  }
+  function audioStateChanged() {
+    if (disposed || !activated || !enabled || !visible() || suspendedByApp) return;
+    if (context?.state === 'running') { unlocked = true; recoveryAttempted = false; }
+    else if (['suspended', 'interrupted'].includes(context?.state)) {
+      unlocked = false; stopPlayback(); ignoreRejection(resumeActivated());
+    }
+  }
+  function visibilityChanged() {
+    if (!visible()) suspend();
+    else { suspendedByApp = false; recoveryAttempted = false; ignoreRejection(resumeActivated()); }
+  }
   doc?.addEventListener?.('visibilitychange', visibilityChanged);
   function preloadAudio() {
     if (disposed || !context?.decodeAudioData || typeof fetcher !== 'function') return Promise.resolve(false);
@@ -292,6 +333,23 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     };
     return entry;
   }
+  function knock() {
+    if (!ready() || !context.createBufferSource || !context.createBuffer) return false;
+    try {
+      // Built locally on the first gesture/action: no download race can swallow
+      // an early check. A short bounded burst separates coalesced live checks;
+      // there is no timer queue and suspend/disconnect stops every source.
+      if (!buffers.has('check-knock')) buffers.set('check-knock', createCheckKnockBuffer(context));
+      const taps = [...active].filter(entry => entry.kind === 'knock');
+      if (taps.length >= 18) { const oldest = taps[0]; oldest.node.stop(); oldest.node.disconnect(); oldest.gain.disconnect(); active.delete(oldest); }
+      const start = Math.max(context.currentTime, Math.min(knockNextAt, context.currentTime + 0.8));
+      knockNextAt = start + 0.1;
+      const source = context.createBufferSource(), gain = context.createGain();
+      source.buffer = buffers.get('check-knock'); register(source, gain, 'knock');
+      gain.gain.setValueAtTime(TABLE_AUDIO_MIX.check, start);
+      source.start(start); source.stop(start + source.buffer.duration + 0.01); return true;
+    } catch { return false; }
+  }
   function cue(type, offset = 0, speech = false) {
     let played = false;
     const start = context.currentTime + offset;
@@ -305,25 +363,31 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       gain.gain.exponentialRampToValueAtTime(0.0001, start + delay + duration);
       oscillator.start(start + delay); oscillator.stop(start + delay + duration + 0.01); played = true;
     }
-    if (type === 'chip' && buffers.has('chips') && context.createBufferSource) {
+    if (['chip', 'collect'].includes(type) && buffers.has('chips') && context.createBufferSource) {
       // Ordinary prompts may accompany the natural tail. Another chip event
       // replaces this channel so rapid bets never pile up recorded impacts.
       stop('chip');
       const source = context.createBufferSource(), gain = context.createGain(); source.buffer = buffers.get('chips');
       const entry = register(source, gain, 'chip');
-      entry.volume = speech ? TABLE_AUDIO_MIX.chipsUnderVoice : TABLE_AUDIO_MIX.chips;
+      const rate = type === 'collect' ? TABLE_AUDIO_MIX.collectRate : 1;
+      source.playbackRate?.setValueAtTime(rate, start);
+      entry.volume = speech ? TABLE_AUDIO_MIX.chipsUnderVoice : type === 'collect' ? TABLE_AUDIO_MIX.collect : TABLE_AUDIO_MIX.chips;
       gain.gain.setValueAtTime(entry.volume, start);
-      source.start(start); source.stop(start + source.buffer.duration + 0.01); played = true;
+      source.start(start); source.stop(start + source.buffer.duration / rate + 0.01); played = true;
     }
     return played;
   }
   function play(type, { chips = false, speech = false } = {}) {
     if (!ready() || !Object.hasOwn(tones, type)) return false;
-    const timestamp = now(); if (timestamp - lastPlayed < 90) return false;
+    if (type === 'check') return knock();
+    // A real payout can share a response with the final action. It replaces
+    // that chip channel immediately; the event ID prevents duplicate playback.
+    const timestamp = now(); if (type !== 'collect' && timestamp - lastPlayed < 90) return false;
     stop('tone');
     try {
-      const chipsPlayed = chips && type !== 'chip' ? cue('chip', 0, speech) : false;
-      const effectPlayed = cue(type, chips && type !== 'chip' ? 0.08 : 0, speech);
+      const separateChips = chips && !['chip', 'collect'].includes(type);
+      const chipsPlayed = separateChips ? cue('chip', 0, speech) : false;
+      const effectPlayed = cue(type, separateChips ? 0.08 : 0, speech);
       if (chipsPlayed || effectPlayed) lastPlayed = timestamp;
       return chipsPlayed || effectPlayed;
     } catch { stop(); return false; }
@@ -332,7 +396,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     // Cancel first even when this clip is unavailable, so a previous player's
     // action cannot continue to masquerade as the new player's action.
     stopVoice();
-    if (!ready() || !voiceEnabled || !buffers.has(type) || !context.createBufferSource) return false;
+    if (type === 'check' || !ready() || !voiceEnabled || !buffers.has(type) || !context.createBufferSource) return false;
     try {
       // A check/fold voice can arrive while an earlier chip-only cue finishes.
       // Apply the same existing duck level before this new voice starts.
@@ -355,14 +419,24 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     },
     async unlock() {
       if (disposed || !enabled || !visible() || !AudioContextClass) return false;
-      const attempt = generation;
+      // A newer real gesture supersedes an automatic recovery or an older
+      // gesture. Late promises must not relock a successfully resumed table.
+      const attempt = ++generation;
+      let audio;
       try {
-        if (!context || context.state === 'closed') { clearAudio(); context = new AudioContextClass(); }
-        if (context.state !== 'running') await context.resume();
-        unlocked = !disposed && enabled && visible() && attempt === generation && context.state === 'running';
-        if (unlocked) ignoreRejection(preloadAudio());
+        suspendedByApp = false; recoveryAttempted = false;
+        if (!context || context.state === 'closed') {
+          context?.removeEventListener?.('statechange', audioStateChanged);
+          clearAudio(); activated = false; context = new AudioContextClass();
+          context.addEventListener?.('statechange', audioStateChanged);
+        }
+        audio = context;
+        if (audio.state !== 'running') await audio.resume();
+        if (disposed || attempt !== generation || context !== audio || !enabled || !visible() || suspendedByApp) return false;
+        unlocked = audio.state === 'running';
+        if (unlocked) { activated = true; ignoreRejection(preloadAudio()); }
         return unlocked;
-      } catch { unlocked = false; return false; }
+      } catch { if (attempt === generation && (!audio || context === audio)) unlocked = false; return false; }
     },
     play, speak, stopPlayback, preloadAudio, preloadVoices: preloadAudio,
     playFeedback(feedback) {
@@ -374,14 +448,24 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
         heardEvents.add(feedback.eventId);
         if (heardEvents.size > 256) heardEvents.delete(heardEvents.values().next().value);
       }
-      const effect = feedback?.sound ? play(feedback.sound, { chips: feedback.chips === true, speech: voiceEnabled && buffers.has(feedback.speech) }) : false;
+      let checked = false;
+      const checks = Array.isArray(feedback?.checks) ? feedback.checks.slice(-9) : [];
+      for (const id of checks) {
+        if (typeof id !== 'string' || heardEvents.has(id)) continue;
+        heardEvents.add(id);
+        if (heardEvents.size > 256) heardEvents.delete(heardEvents.values().next().value);
+        checked = knock() || checked;
+      }
+      if (checks.length && !feedback?.speech) stopVoice();
+      const effect = feedback?.sound && !(feedback.sound === 'check' && checks.length) ? play(feedback.sound, { chips: feedback.chips === true, speech: voiceEnabled && buffers.has(feedback.speech) }) : false;
       const spoken = feedback?.speech ? speak(feedback.speech) : false;
-      return effect || spoken;
+      return checked || effect || spoken;
     },
     suspend,
     dispose() {
-      disposed = true; generation++; unlocked = false; stop(); stopVoice(); clearAudio();
+      disposed = true; generation++; unlocked = false; stop(); stopVoice(); knockNextAt = 0; clearAudio();
       doc?.removeEventListener?.('visibilitychange', visibilityChanged);
+      context?.removeEventListener?.('statechange', audioStateChanged);
       try { if (context && context.state !== 'closed') ignoreRejection(context.close()); } catch {}
       context = null; heardEvents.clear();
     },

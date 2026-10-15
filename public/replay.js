@@ -45,7 +45,12 @@ export function replayStreets(hand) {
   const labels = { flop: '翻牌', turn: '转牌', river: '河牌' };
   for (let i = 0; i < hand.log.length; i++) {
     const event = hand.log[i];
-    if (event.type === 'street' && labels[event.street] && !result.some(x => x.street === event.street)) result.push({ street: event.street, label: labels[event.street], index: i + 1 });
+    // Older saved runouts revealed one card at a time. The street shortcut
+    // points to the complete flop, while step playback still keeps every card.
+    const boardCount = { flop: 3, turn: 4, river: 5 }[event.street];
+    if (['street', 'runoutCard'].includes(event.type) && labels[event.street] &&
+        Array.isArray(event.board) && event.board.length >= boardCount &&
+        !result.some(x => x.street === event.street)) result.push({ street: event.street, label: labels[event.street], index: i + 1 });
   }
   result.push({ street: 'complete', label: '结算', index: hand.log.length });
   return result;
@@ -75,8 +80,8 @@ export function replaySnapshot(hand, requestedIndex = 0, viewerId = '') {
         if (player && original) player.cards = [...original.cards];
       }
     } else if (event.type === 'runoutCard') {
-      if (!Array.isArray(event.board)) throw new Error('跑牌记录无效');
-      if (!board.length) for (const player of players) { player.bet = 0; player.lastAction = null; }
+      if (!streets.has(event.street) || !Array.isArray(event.board)) throw new Error('跑牌记录无效');
+      if (street !== event.street || !board.length) for (const player of players) { player.bet = 0; player.lastAction = null; }
       board = [...event.board]; street = event.street;
     } else if (event.type === 'street') {
       if (!streets.has(event.street) || !Array.isArray(event.board)) throw new Error('牌谱轮次记录无效');

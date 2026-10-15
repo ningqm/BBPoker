@@ -50,8 +50,8 @@ export function betActionLabel(room,amount) {
   return Number(room?.hand?.currentBet)>0?'加至':'下注';
 }
 
-// Presets are selections, not amounts: rounding or a short stack may give two
-// presets the same amount without making both of them the chosen control.
+// Retain the custom amount across unrelated table snapshots. Preset buttons
+// submit immediately; they no longer have a selected visual state.
 export function betSelection(room,amount,preset=null) {
   const value=normalizeBetAmount(room,amount),option=betPresetOptions(room).find(p=>p.id===preset);
   return {amount:value,preset:option?.available&&option.amount===value?option.id:null};
@@ -74,10 +74,40 @@ export function betSliderKeyPosition(key,position) {
   return next===undefined?null:Math.max(0,Math.min(1000,next));
 }
 
+// Keyboard steps follow legal chip amounts, not the nonlinear slider's pixel
+// scale. Small position steps would round back to the same BB forever near
+// the minimum; an exact fractional all-in remains reachable at the endpoint.
+export function betAmountFromKey(room,key,amount) {
+  const bounds=betAmountBounds(room);
+  if(!bounds)return null;
+  const {minimum,maximum,bigBlind}=bounds;
+  if(key==='Home')return minimum;
+  if(key==='End')return maximum;
+  const step={ArrowUp:1,ArrowRight:1,ArrowDown:-1,ArrowLeft:-1,PageUp:10,PageDown:-10}[key];
+  if(step===undefined)return null;
+  const value=normalizeBetAmount(room,amount);
+  const next=(step>0?Math.floor(value/bigBlind)+step:Math.ceil(value/bigBlind)+step)*bigBlind;
+  return normalizeBetAmount(room,Math.max(minimum,Math.min(maximum,next)));
+}
+
 export function betActionEnabled(room,action) {
   const a=room?.actions||{};
-  if(room?.status==='closed'||room?.hand?.status!=='playing'||room?.hand?.transition||!a.canAct)return false;
+  if(room?.status==='closed'||room?.hand?.status!=='playing'||room?.hand?.transition||room?.hand?.runout?.active||!a.canAct)return false;
   return Boolean(({fold:a.canFold,check:a.canCheck,call:!a.canCheck&&Number(a.callAmount)>0,raise:a.canRaise,allin:a.canAllIn,timebank:a.canUseTimeBank,'raise-preset':a.canRaise,'toggle-raise-panel':a.canRaise})[action]);
+}
+
+// A click submits exactly the amount and turn printed on that button. An old
+// DOM node must never silently become a different wager after a table update.
+export function betSubmission(room,{turnKey,amount,preset=null}={}) {
+  const currentKey=betTurnKey(room),value=Number(amount),a=room?.actions||{};
+  if(!currentKey||turnKey!==currentKey||!Number.isSafeInteger(value)||value<=0)return null;
+  if(preset){
+    const option=betPresetOptions(room).find(p=>p.id===preset);
+    if(!option?.available||option.amount!==value)return null;
+  }
+  if(betActionEnabled(room,'raise')&&value>=a.minRaiseTo&&value<=a.maxRaiseTo&&value===normalizeBetAmount(room,value))return {type:'raise',amount:value};
+  if(!preset&&!a.canRaise&&betActionEnabled(room,'allin')&&value===a.maxRaiseTo&&value>Number(room.hand.currentBet))return {type:'allin'};
+  return null;
 }
 
 export function revealOptions(room,player) {

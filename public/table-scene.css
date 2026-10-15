@@ -41,6 +41,11 @@
 .seat-turn{position:absolute;left:-7px;top:-15px;display:flex;gap:4px;align-items:center;min-width:48px;height:24px;border-radius:14px;padding:2px 7px;background:#246cc4;color:white;border:2px solid #eef7ff;box-shadow:0 2px 5px #1b548b22;z-index:5;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .seat-turn:after{content:'';position:absolute;left:3px;right:3px;bottom:-5px;height:3px;background:#5aa5ef;border-radius:2px;transform:scaleX(var(--turn-progress,1));transform-origin:left}
 .turn-dot{width:5px;height:5px;border-radius:100%;background:#fff}.seat-turn.urgent{background:#d45c24}.seat-turn.urgent:after{background:#ee7138}.seat-turn.urgent .turn-dot{animation:actor-pulse .85s ease-in-out infinite}
+/* The server has selected the next actor, but cards are still arriving.
+   Keep preparation distinct from an enabled turn or low-time warning. */
+.at-table .seat-turn.is-preparing{background:#e6ece8;color:#65786d;border-color:#f5f8f5;box-shadow:0 1px 3px #35554212;font-weight:500}
+.at-table .seat-turn.is-preparing:after{background:#b9c9bf;transform:scaleX(1)}
+.at-table .seat-turn.is-preparing .turn-dot{background:#91a69a;animation:none}
 @keyframes actor-pulse{50%{opacity:.25}}
 .at-table .table-stage .seat.acting{z-index:5}
 .poker-chip{display:inline-block;flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:#bd9851;border:3px dashed #fff4d9;outline:1px solid #b99450;box-shadow:0 1px 2px #684b3326}
@@ -70,12 +75,13 @@
 .hand-category[data-hand-category=flush]{text-shadow:0 1px 0 #ffd9ef88}
 .hand-category[data-hand-category=quads]{text-shadow:0 1px 0 #ffc982}
 .hand-category[data-hand-category=straight-flush]{text-shadow:0 1px 0 #fff0b4}
-.at-table .table-stage .seat[data-edge=top] .seat-hand-info{top:-22px}
+.at-table .table-stage .seat[data-edge=top] .seat-hand-info{top:auto;bottom:calc(100% + 5px);flex-wrap:nowrap}
 .at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 21px)}
 .at-table .table-stage .table-center{top:50%;width:310px;min-width:0;transform:translate(-50%,-50%);z-index:1}
-.at-table .table-stage .table-config{max-width:310px;margin:0 auto 9px}.at-table .table-config-primary{background:#eef7f1c4;border-color:#b9d4c57a}
+.at-table .table-stage .table-center .board{width:max-content;margin-left:auto;margin-right:auto}
+
 .pot-cluster{display:flex;flex-direction:column;align-items:center;gap:5px;margin:6px auto 10px;font-variant-numeric:tabular-nums}
-.pot-total{display:flex;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;padding:5px 13px;border:1px solid #aecbb7;border-radius:22px;background:#f4faf4d9;box-shadow:0 3px 9px #244d3310}
+.pot-total{display:flex;white-space:nowrap;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;padding:5px 13px;border:1px solid #aecbb7;border-radius:22px;background:#f4faf4d9;box-shadow:0 3px 9px #244d3310}
 .pot-total>span{font-size:11px;color:#59705f}.pot-total>strong{font-size:25px;color:#285b40;letter-spacing:-.04em}
 .pot-breakdown{display:flex;justify-content:center;flex-wrap:wrap;gap:4px;max-width:100%}
 .pot-token{display:flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid #d5c295;border-radius:10px;background:#fff8e4;font-size:10px;color:#775423;white-space:nowrap}.pot-token b{font-weight:750}.pot-token .poker-chip{width:11px;height:11px;border-width:2px}
@@ -86,8 +92,20 @@
 .at-table .seat-reaction{position:absolute;left:0;top:0;bottom:auto;transform:none;max-width:145px;width:max-content;max-height:66px;border-radius:12px;padding:6px 9px;display:flex;flex-direction:column;gap:3px;z-index:20;background:#fffdf8;box-shadow:0 3px 10px #20544020;pointer-events:none;border:1px solid #d4c8a9;color:#314c3c;font-size:12px;line-height:1.45;overflow:hidden}
 .at-table .seat-reaction small{font-size:9px;color:#7f8e83;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;max-width:110px}.at-table .seat-reaction>span:not(.chat-emote){display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .at-table .seat-reaction.is-emote{padding:4px 8px;min-width:42px;text-align:center}.at-table .seat-reaction .chat-emote{font-size:29px;line-height:1.1}
-.pot-flight-layer{position:absolute;inset:0;z-index:15;pointer-events:none;overflow:visible}.pot-flight{position:absolute;width:24px;height:24px;animation:award-chips 1050ms cubic-bezier(.3,.8,.3,1) both;pointer-events:none}.pot-flight i{position:absolute;width:21px;height:21px;border-radius:50%;background:#c49a45;border:3px dashed #fff5d8;box-shadow:0 2px 0 #8b6933}.pot-flight i:nth-child(2){top:-5px;left:3px}.pot-flight i:nth-child(3){top:-10px;left:6px}
-@keyframes award-chips{0%,15%{opacity:1;transform:translate(-50%,-50%) scale(.9)}85%{opacity:1;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.75)}100%{opacity:0;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.5)}}
+/* A paid seat stays unmistakable for the whole result pause. Outlines and
+   color do not change the carefully reserved seat/card/receipt dimensions. */
+.at-table .table-stage .seat.collecting .seat-main{border-color:#c28b23;background:linear-gradient(135deg,#fffdf4,#fff0b9);outline:2px solid #e9bb54;outline-offset:1px;box-shadow:0 0 0 5px #e7b43c20,0 3px 9px #8c5d2220}
+.at-table .table-stage .seat.collecting .stack-value{color:#75420a;font-weight:850}
+.at-table .table-stage .seat.collecting .seat-status[data-tone=win]{color:#693900;background:#ffdf80;border-color:#c6952b;font-weight:850;box-shadow:0 1px 3px #94701624}
+.pot-flight-layer{position:absolute;inset:0;z-index:15;pointer-events:none;overflow:visible}
+.pot-award{pointer-events:none}
+.pot-flight{position:absolute;width:22px;height:22px;animation:award-chips 1050ms cubic-bezier(.3,.8,.3,1) both;pointer-events:none}
+.pot-flight i{position:absolute;width:19px;height:19px;border-radius:50%;background:#daa942;border:3px dashed #fff4ce;box-shadow:0 2px 0 #8a601c,0 3px 5px #684b3333}
+.pot-flight i:nth-child(2){top:-4px;left:2px}.pot-flight i:nth-child(3){top:-8px;left:4px}
+.pot-arrival-ring{position:absolute;border:3px solid #d99c1a;border-radius:16px;box-shadow:0 0 0 2px #fff6d2,0 0 15px #edb23f55;animation:award-arrival 1800ms ease-out both;pointer-events:none}
+@keyframes award-chips{0%{opacity:0;transform:translate(-50%,-50%) scale(.9)}8%,15%{opacity:1;transform:translate(-50%,-50%) scale(.9)}85%{opacity:1;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.75)}100%{opacity:0;transform:translate(calc(-50% + var(--award-x)),calc(-50% + var(--award-y))) scale(.45)}}
+@keyframes award-arrival{0%{opacity:0;box-shadow:0 0 0 1px #f7cf6477}12%,45%{opacity:1;box-shadow:0 0 0 4px #edb23f33,0 0 15px #edb23f66}28%,65%{opacity:.55;box-shadow:0 0 0 1px #f7cf6444}80%{opacity:.9;box-shadow:0 0 0 3px #edb23f22}100%{opacity:0;box-shadow:0 0 0 1px transparent}}
+@media(max-width:760px){.pot-flight{width:18px;height:18px}.pot-flight i{width:16px;height:16px;border-width:2px}.pot-arrival-ring{border-width:2px;border-radius:13px}}
 .at-table .table-toolbar{margin-top:5px;min-height:38px}.at-table .table-drawer{bottom:190px;top:92px;z-index:20}
 @media(max-width:760px){
  .at-table .room-shell,.at-table .room-shell:has(.table-stage){height:auto;min-height:calc(100dvh - 45px);padding:4px 10px 6px}.at-table .room-head{min-height:42px}.at-table .room-head h2{font-size:13px}
@@ -111,11 +129,12 @@
  /* The two top seats share a narrow arc on a nine-seat table. Reserve this
     space throughout the hand so long categories never shift the table mid-turn. */
  .at-table .table-stage[data-seat-count="9"]{margin-top:38px}
- .at-table .table-stage[data-seat-count="9"] .seat[data-edge=top] .seat-hand-info{flex-direction:column;top:auto;bottom:calc(100% + 4px);max-width:84px}
+ .at-table .table-stage .seat[data-edge=top] .seat-hand-info{top:auto;bottom:calc(100% + 5px);flex-direction:column;max-width:84px;flex-wrap:nowrap}
+ .at-table .table-stage[data-seat-count="9"] .seat[data-edge=top] .seat-hand-info{max-width:72px}
  .at-table .table-stage .seat[data-edge=left] .seat-hand-info{top:calc(100% + 3px)}
  .at-table .table-stage .seat[data-edge=right] .seat-hand-info{top:calc(100% + 3px)}
  .at-table .table-stage .seat-hand-info .equity-badge{font-size:9px;padding:1px 2px}
- .at-table .table-stage .table-center{width:180px;top:51%}.at-table .table-stage .table-config{max-width:180px;margin-bottom:7px}.at-table .table-center .board{gap:3px;margin:6px 0}
+ .at-table .table-stage .table-center{width:180px;top:51%}.at-table .table-center .board{gap:3px;margin:6px 0}
  .at-table .table-center .card{width:33px;height:47px;font-size:23px;padding:3px}.at-table .table-center .card span{font-size:22px}
  .pot-cluster{gap:4px;margin:5px auto 7px}.pot-total{gap:5px;padding:4px 8px}.pot-total>span{font-size:9px}.pot-total>strong{font-size:21px}.pot-total>.poker-chip{width:14px;height:14px}
  .pot-token{font-size:8px;gap:3px;padding:2px 5px}.pot-breakdown{gap:3px}.uncalled-pot{font-size:8px;line-height:16px}.result-countdown{font-size:9px}.at-table .table-center .result-title{font-size:10px}
@@ -125,7 +144,7 @@
 @media(max-width:360px){
  .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){margin-left:26px;margin-right:26px;min-height:480px;height:max(480px,calc(100dvh - 340px))}
  .at-table .table-stage .seat{width:62px}.at-table .table-stage .seat .seat-main,.at-table .table-stage .seat.acting .seat-main{grid-template-columns:15px minmax(0,1fr);column-gap:2px}.at-table .table-stage .seat .seat-identity .seat-avatar-button{width:15px;height:20px}.at-table .table-stage .seat .stack-value{font-size:12px}.at-table .table-stage .seat .name{font-size:8px}
- .at-table .table-stage .table-center{width:156px}.at-table .table-stage .table-config{max-width:156px}.at-table .table-center .card{width:28px;height:43px;font-size:21px}.at-table .table-center .card span{font-size:20px}.pot-total{padding:4px 6px;gap:4px}.pot-total>strong{font-size:18px}.pot-total>span{font-size:8px}.pot-token{font-size:8px}.pot-token .poker-chip{display:none}
+ .at-table .table-stage .table-center{width:156px}.at-table .table-center .card{width:28px;height:43px;font-size:21px}.at-table .table-center .card span{font-size:20px}.pot-total{padding:4px 5px;gap:3px}.pot-total>strong{font-size:18px}.pot-total>span{font-size:8px}.pot-token{font-size:8px}.pot-token .poker-chip{display:none}
  .at-table .table-stage .seat .seat-label{right:-18px;width:16px}.at-table .table-stage .seat[data-side=left] .seat-label,.at-table .table-stage[data-seat-count="9"] .seat[data-relative-seat="4"] .seat-label{left:-18px;right:auto}
 }
 .no-motion .pot-flight-layer{display:none}.no-motion .seat-turn .turn-dot{animation:none}
@@ -137,18 +156,16 @@
 .at-table .seat[data-side=right] .seat-turn{right:calc(100% + 10px);left:auto;top:-10px}
 @media(max-width:760px){.at-table .seat-turn{left:-43px;top:13px}.at-table .seat[data-side=left] .seat-turn{left:calc(100% + 7px);top:-6px}.at-table .seat[data-side=right] .seat-turn{right:calc(100% + 7px);top:-6px}}
 @media(max-width:760px){
- .at-table .table-stage .table-center.has-hand .table-config{margin-bottom:72px}
  .at-table .table-stage .seat[data-side=right] .seat-label{right:-18px}
  .at-table .table-stage .seat[data-side=left] .seat-label{left:-18px}
 }
 
 @media(max-width:360px){.at-table .table-stage .seat[data-side=right] .seat-label{right:-16px}}
 
-@media(max-width:760px){.at-table .table-stage .table-center.is-complete .table-config{margin-bottom:18px}}
 .at-table .table-center .hand-result .result-title{margin:3px 0;line-height:14px}
 
 /* Top-up stays visible above the felt, without changing height when queued. */
-.at-table .room-head{height:58px;min-height:58px;align-items:center;gap:10px}
+.at-table .room-head{display:grid;grid-template-columns:minmax(0,1fr) auto;height:auto;min-height:58px;align-items:center;column-gap:10px;row-gap:3px}
 .at-table .room-heading{min-width:0;flex:1}.at-table .room-heading h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .at-table .room-head-tools{display:flex;flex-direction:row;align-items:flex-start;gap:8px;flex:none;min-width:0}
 .table-topup{display:flex;flex-direction:column;align-items:center;min-width:96px;gap:3px;height:50px}
@@ -159,7 +176,7 @@
 .topup-timing{font-size:13px;line-height:1.7;background:#eef6f0;border:1px solid #d3e6d8;padding:10px 12px;border-radius:10px;margin:0 0 12px;color:#315944}
 .topup-pending{color:#8b570d;background:#fff1ce;padding:8px 10px;border-radius:8px;font-size:13px;margin:0 0 12px}.topup-pending[hidden]{display:none}
 @media(max-width:760px){
- .at-table .room-head{height:58px;min-height:58px;gap:5px}.at-table .room-head h2{font-size:13px}.at-table .room-head-tools{gap:5px}
+ .at-table .room-head{height:auto;min-height:58px;column-gap:5px;row-gap:3px}.at-table .room-head h2{font-size:13px}.at-table .room-head-tools{gap:5px}
  .at-table .table-stage{height:clamp(460px,calc(100dvh - 356px),640px)}
  .table-topup{min-width:78px}.at-table .table-topup .table-topup-button{font-size:12px;padding:5px 11px}.table-topup-status{font-size:9px}
  .at-table .room-head-tools>button{min-height:31px;padding:5px 8px;font-size:11px}
@@ -169,7 +186,6 @@
 /* All-in belongs to the chips on the felt, never the cards or identity panel. */
 .at-table .table-stage .bet-chip.is-allin{border-color:#d5819b;background:#fff2f6;color:#963754;gap:5px}
 .bet-chip.is-allin .poker-chip{background:#b6456c;outline-color:#a53f61;border-color:#ffe4ed}
-.bet-chip .bet-allin-label{font-size:10px;line-height:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap}
 .bet-chip .bet-value{font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Your remaining time and time cards share one target group beside your avatar. */
 .at-table .table-stage .seat.mine .seat-time-tools{position:absolute;right:calc(100% + 10px);top:2px;display:flex;flex-direction:column;align-items:center;gap:4px;width:104px;z-index:6}
@@ -179,10 +195,6 @@
 .at-table .table-stage .seat-time-tools .timebank-button:not(:disabled):hover{background:#e4d4fa;border-color:#9670c9}
 .at-table .table-stage .seat-time-tools .timebank-button:focus-visible{outline:2px solid #7146b7;outline-offset:3px}
 @media(max-width:760px){
- .at-table .table-stage .bet-chip.is-allin:has(.bet-value){display:grid;grid-template-columns:12px auto;column-gap:4px;row-gap:0;padding:3px 5px}
- .bet-chip.is-allin:has(.bet-value) .poker-chip{grid-column:1;grid-row:1/3;align-self:center}
- .bet-chip.is-allin .bet-value{grid-column:2;grid-row:1;line-height:13px}
- .bet-chip.is-allin .bet-allin-label{grid-column:2;grid-row:2;font-size:9px;line-height:12px}
  .at-table .table-stage .seat.mine .seat-time-tools{right:calc(100% + 9px);width:92px;top:0;gap:4px}
  .at-table .table-stage .seat-time-tools .seat-turn{min-width:46px;height:23px;font-size:11px}
  .at-table .table-stage .seat-time-tools .timebank-button{width:92px;min-height:36px;padding:6px 4px;font-size:10px}
@@ -191,18 +203,9 @@
  .at-table .table-stage .seat.mine .seat-time-tools{right:calc(100% + 7px);width:82px}
  .at-table .table-stage .seat-time-tools .timebank-button{width:82px;font-size:9px}
 }
-/* Nine-way All-in needs a separate inner lane for the middle seats and settings. */
-@media(max-width:760px){
- .at-table .table-stage[data-seat-count="9"] .seat:is([data-relative-seat="2"],[data-relative-seat="7"]) .bet-chip.is-allin,
- .at-table .table-stage[data-seat-count="8"] .seat:is([data-relative-seat="2"],[data-relative-seat="6"]) .bet-chip.is-allin,
- .at-table .table-stage[data-seat-count="4"] .seat:is([data-relative-seat="1"],[data-relative-seat="3"]) .bet-chip.is-allin{top:-54px}
- .at-table .table-stage[data-seat-count="9"]:has(.bet-chip.is-allin) .table-config{transform:translateY(28px)}
-}
 @media(max-width:360px){
- .at-table .table-stage .bet-chip.is-allin:has(.bet-value){grid-template-columns:10px auto;column-gap:3px;padding:3px}
  .bet-chip.is-allin .poker-chip{width:10px;height:10px}
  .bet-chip.is-allin .bet-value{font-size:9px;line-height:12px}
- .bet-chip.is-allin .bet-allin-label{font-size:8px;line-height:11px}
 }
 
 /* Upgrades reveal after the 520 ms card flip reaches its visible midpoint. */
@@ -221,3 +224,171 @@
    the next player's hole cards; its full description remains on the tooltip. */
 .at-table .table-stage .seat-hand-info .seat-status-inline{position:static;transform:none;margin:0;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:760px){.at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.seat-status-inline){max-width:94px}}
+
+
+/* Settings live above the felt. Pot and board keep a centered, stable lane
+   across ordinary play, runout and the result pause. */
+.at-table .table-stage{min-height:480px;height:clamp(480px,calc(100dvh - 260px),660px);margin-bottom:28px}
+.at-table .table-stage>.table-center{top:50%;transform:translate(-50%,-50%)}
+.at-table .table-stage .pot-breakdown{flex-wrap:nowrap;justify-content:flex-start;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding-bottom:3px}
+.at-table .table-stage .pot-token,.at-table .table-stage .uncalled-pot{flex:none}
+.at-table .table-stage .pot-cluster{width:max-content;max-width:100%}
+.at-table .table-stage .street-label,.at-table .table-stage .result-title,.at-table .table-stage .result-countdown,.at-table .table-stage .rabbit-note{width:max-content;max-width:100%;margin-left:auto;margin-right:auto}
+@media(max-width:760px){
+ .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){height:clamp(500px,calc(100dvh - 314px),640px);min-height:500px;margin-top:25px;margin-bottom:35px}
+ .at-table .table-stage:is([data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"]){height:clamp(540px,calc(100dvh - 314px),660px);min-height:540px;margin-top:30px}
+ .at-table .table-stage .seat[data-edge=bottom]{--seat-y:95%}
+ .at-table .table-stage>.table-center{top:44%;width:196px}
+ .at-table .table-stage .seat[data-edge=top] .bet-chip{top:calc(100% + 38px)}
+ .at-table .table-stage .seat[data-edge=bottom] .bet-chip{bottom:calc(100% + 58px)}
+ .at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 6px)}
+ .at-table .table-stage .seat.mine .seat-time-tools{top:0;gap:3px}
+ .at-table .table-stage .seat-time-tools .timebank-button{min-height:32px}
+ .at-table .table-stage .seat-hand-info{max-width:100px;flex-wrap:wrap;row-gap:2px}
+ .at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info{top:calc(100% + 4px)}
+ .at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.equity-badge){flex-direction:column;gap:2px}
+ .at-table .table-stage .seat .name{font-size:10px}.at-table .table-stage .seat .stack-value{font-size:14px}
+ .at-table .table-stage .bet-chip{max-width:110px;font-size:10px}
+}
+@media(max-width:360px){
+ .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){margin-left:26px;margin-right:26px}
+ .at-table .table-stage>.table-center{width:156px}
+ .at-table .table-stage .seat .stack-value{font-size:12px}.at-table .table-stage .seat .name{font-size:9px}
+}
+
+/* Wagers appear inside their reserved lane; no animated vertical swing across
+   a nearby card or settings label. The payout animation remains unchanged. */
+.at-table .table-stage .bet-chip.chip-enter{animation-name:table-wager-arrive}
+@keyframes table-wager-arrive{from{opacity:.2;scale:.8}to{opacity:1;scale:1}}
+
+/* During a runout the felt contains only the central pots and board. */
+@media(max-width:760px){
+ .at-table .table-stage>.table-center.has-equity{top:44%}
+ .at-table .table-stage .table-center.has-equity .table-hand-center{display:flex;flex-direction:column;align-items:center}
+ .at-table .table-stage .table-center.has-equity .table-hand-center>.pot-cluster{order:0;margin-bottom:5px}
+ .at-table .table-stage .table-center.has-equity .table-hand-center>.board{order:2;flex:none}
+ .at-table .table-stage .table-center.has-equity .table-hand-center>.street-label{display:none}
+ .at-table .table-stage .table-center.has-equity .table-hand-center>.hand-result,.at-table .table-stage .table-center.has-equity .table-hand-center>.rabbit-note{order:3}
+}
+@media(max-width:360px){
+ .at-table .table-stage .seat[data-side=right] .seat-label{right:-11px}
+ .at-table .table-stage .seat[data-side=left] .seat-label{left:-11px}
+}
+
+/* The hero's category and payout share one line, clear of the action dock. */
+.at-table .table-stage .seat[data-edge=bottom] .seat-hand-info{top:calc(100% + 6px);max-width:200px;flex-wrap:nowrap}
+
+@media(max-width:360px){
+ /* The selected unit is already visible in the header. On the narrowest
+    phones remove only the repeated points suffix, never part of the amount. */
+ .at-table .table-stage .bet-chip[data-unit=points] .bet-unit{display:none}
+}
+
+/* Absolute right/left anchoring must not alter the size after measurement. */
+.at-table .table-stage .bet-chip{width:max-content}
+@media(max-width:360px){
+ /* The hero has the center lane to itself; only side wagers need half-width. */
+ .at-table .table-stage .seat[data-edge=bottom] .bet-chip.is-allin{max-width:110px}
+}
+@media(max-width:360px){
+ /* Completed hands keep long bomb/status text out of exposed side cards. */
+ .at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.seat-status-inline){max-width:72px}
+ .at-table .table-stage .seat-hand-info .seat-status-inline{max-width:100%}
+}
+
+/* Empty stacks ask for attention without opening a blocking form. */
+.table-topup.needs-chips .table-topup-button{border-color:#b96113;background:#ffdf9e;box-shadow:0 0 0 2px #efad4533}
+.table-topup.needs-chips .table-topup-status{color:#985012;font-weight:750}
+
+/* One compact, tappable room strip replaces the settings stack on the felt.
+   The two header rows stay in normal flow: modes cannot overlay seats/cards. */
+.at-table .room-status-bar{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;margin:0 0 1px;padding:2px 0;border-top:1px solid #c7d9ce70;font-variant-numeric:tabular-nums}
+.at-table .room-status-bar button{min-height:30px;min-width:0;margin:0;border:1px solid transparent;border-radius:8px;box-shadow:none;line-height:1.2;touch-action:manipulation;cursor:pointer}
+.at-table .room-status-main{display:flex;align-items:center;gap:10px;flex:0 1 auto;padding:4px 7px;background:#e0ece4a6;color:#3c5c4c;font-size:12px;white-space:nowrap;text-align:left}
+.at-table .room-status-main .table-blinds{font-size:inherit;font-weight:750;white-space:nowrap}
+.at-table .room-status-main .room-countdown{font-size:inherit;white-space:nowrap;color:#677a6e}
+.at-table .room-status-main .room-countdown.ending{color:#975911;font-weight:750}
+.at-table .room-status-bar .room-status-modes{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:5px;min-width:0;margin:0}
+.at-table .room-status-bar .game-mode{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:0;max-width:none;padding:4px 7px;white-space:nowrap;font-size:11px;line-height:1.2;font-weight:650}
+.at-table .room-status-bar .game-mode.squid{background:#eee2fc;border-color:#d3b4ed;color:#7742a4}
+.at-table .room-status-bar .game-mode.bomb{background:#f8eaca;border-color:#dfc185;color:#855e1f}
+.at-table .room-status-bar button:hover{border-color:#91b6a2;filter:brightness(.98)}
+.at-table .room-status-bar button:focus-visible{outline:2px solid #267bd2;outline-offset:2px}
+@media(max-width:760px){
+ .at-table .room-status-bar{gap:4px}
+ .at-table .room-status-bar button{min-height:28px;border-radius:7px}
+ .at-table .room-status-main{gap:6px;padding:4px 5px;font-size:10px}
+ .at-table .room-status-bar .room-status-modes{gap:4px}
+ .at-table .room-status-bar .game-mode{gap:3px;padding:4px 5px;font-size:10px}
+}
+@media(max-width:360px){
+ .at-table .room-status-bar{gap:3px}
+ .at-table .room-status-main{gap:4px;padding:4px;font-size:9px}
+ .at-table .room-status-bar .room-status-modes{gap:3px}
+ .at-table .room-status-bar .game-mode{padding:4px;font-size:9px}
+}
+
+.at-table .room-status-bar .room-status-main{min-width:max-content}
+
+/* Keep exposed nine-player cards apart on short desktop/tablet viewports. */
+@media(min-width:761px){
+ .at-table .table-stage:is([data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"]){min-height:640px;margin-top:30px}
+}
+@media(min-width:761px) and (max-width:1100px){
+ .at-table .table-stage .table-center{width:230px}
+ .at-table .table-center .board{gap:4px}
+ .at-table .table-center .card{width:40px;height:56px;font-size:27px}
+ .at-table .table-center .card span{font-size:25px}
+ .at-table .pot-total{gap:5px;padding:5px 9px}
+ .at-table .pot-total>strong{font-size:25px}
+ .at-table .table-stage .bet-chip{font-size:10px;line-height:16px;padding:2px 5px;gap:3px}
+ .at-table .table-stage .bet-chip .poker-chip{width:13px;height:13px;border-width:2px}
+}
+
+/* A dense All-in scene can use a brief chat bubble without covering chips.
+   The complete message always remains available in the chat drawer. */
+.at-table .seat-reaction[data-bubble-layout=compact]{flex-direction:row;align-items:center;max-width:110px;max-height:26px;padding:3px 6px;gap:4px;line-height:16px}
+.at-table .seat-reaction[data-bubble-layout=compact] small{flex:0 0 auto;max-width:32px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.at-table .seat-reaction[data-bubble-layout=compact]>span:not(.chat-emote){display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px}
+.at-table .seat-reaction[data-bubble-layout=compact] .chat-emote{font-size:20px;line-height:20px}
+
+/* Preserve readable cards and full-sized betting targets. Short/narrow
+   screens may scroll rather than collapse the space between nine players. */
+@media(max-width:760px){
+ .at-table .table-topup-status:not(.pending){line-height:12px}
+ .at-table .room-head{row-gap:3px}
+ .at-table .table-stage,.at-table .table-stage:is([data-seat-count]){height:clamp(520px,calc(100dvh - 366px),660px);min-height:520px;margin-top:26px;margin-bottom:29px}
+ .at-table .room-shell .table-bottom,.at-table .room-shell .table-bottom .action-dock{height:130px;min-height:130px;flex-basis:130px}
+ .at-table .room-shell .table-bottom .action-dock{padding-top:4px;padding-bottom:4px}
+ .at-table .room-shell .table-bottom .action-dock .decision{grid-template-rows:20px 44px 50px}
+ .at-table .room-shell .table-bottom .action-dock .turn-row{height:20px;min-height:20px}
+ .at-table .table-stage .seat .stack-value.stack-wide{grid-column:1/-1;justify-content:center;font-size:12px;letter-spacing:-.35px;gap:2px}
+ .at-table .table-stage .seat .seat-main:has(.stack-wide) .seat-identity .seat-avatar-button{grid-row:1;width:14px;height:14px}
+ .at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.equity-badge){flex-direction:row;flex-wrap:nowrap;gap:3px;max-width:94px}
+ .at-table .table-stage .seat[data-edge=top] .seat-hand-info{flex-direction:row;gap:3px;max-width:100px}
+ .at-table .table-stage[data-seat-count="9"] .seat[data-edge=top] .seat-hand-info{max-width:90px}
+ .at-table .table-stage>.table-center.has-equity{top:45%}
+}
+@media(max-width:360px){
+ .at-table .table-stage:is([data-seat-count="7"],[data-seat-count="8"],[data-seat-count="9"]){height:clamp(540px,calc(100dvh - 366px),660px);min-height:540px}
+ .at-table .table-stage .seat .stack-value.stack-wide{font-size:10px;letter-spacing:-.4px}
+ .at-table .table-stage .seat:is([data-edge=left],[data-edge=right]) .seat-hand-info:has(.equity-badge){flex-direction:column;gap:2px}
+ .at-table .table-stage>.table-center.has-equity{top:44%}
+}
+@media(max-width:340px){
+ .at-table .table-center .board{gap:2px}
+ .at-table .table-center .board .card{width:26px}
+}
+
+/* All-in uses the otherwise empty stack row, never another floating tag. */
+.at-table .table-stage .seat.is-allin .seat-main{border-color:#d7a7b2;background:#fffafb}
+.at-table .table-stage .seat .seat-allin-label{display:inline-block;color:#a13d5b;font-size:14px;line-height:22px;font-weight:800;letter-spacing:.01em;white-space:nowrap}
+.pot-total.has-details{font:inherit;cursor:pointer;margin:0;appearance:none;-webkit-appearance:none}
+.pot-total.has-details:hover{background:#eaf5ed;border-color:#82b494}
+.pot-total.has-details:focus-visible{outline:2px solid #267bd2;outline-offset:3px}
+@media(max-width:760px){
+ .at-table .table-stage .seat .seat-allin-label{font-size:11px;line-height:20px}
+}
+@media(max-width:360px){
+ .at-table .table-stage .seat .seat-allin-label{font-size:10px}
+}

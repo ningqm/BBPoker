@@ -16,8 +16,13 @@ export function createHistoryRefresh({ getContext, isVisible = () => true, fetch
       if (version !== epoch || getContext() !== context) return;
       if (!hand || hand.id !== context.hand.id || hand.roomCode !== context.hand.roomCode) return;
       // A delayed or stale response must not conceal a reveal already received.
-      if ((hand.rabbit?.board?.length || 0) < (context.hand.rabbit?.board?.length || 0)) return;
-      failures = 0; apply(context, hand);
+      if ((hand.rabbit?.board?.length || 0) < (context.hand.rabbit?.board?.length || 0)) {
+        // Ignore an older projection without silently abandoning the final
+        // cards. Treat repeated stale responses like bounded network failures.
+        failures++;
+      } else {
+        failures = 0; apply(context, hand);
+      }
     } catch {
       if (version !== epoch || getContext() !== context) return;
       failures++;

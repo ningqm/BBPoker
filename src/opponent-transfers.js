@@ -62,7 +62,8 @@ export function directHandTransfers(hand) {
   }
   const live = players.filter(p => !p.folded), matched = p => p.contributed-deadById.get(p.id);
   if (!live.length) return unavailable('no_eligible_player');
-  const levels = [...new Set(players.map(matched).filter(n => n > 0))].sort((a,b) => a-b), tiers = [];
+  const levels = [...new Set(players.map(matched).filter(n => n > 0))].sort((a,b) => a-b);
+  let tiers = [];
   let previous = 0;
   for (const level of levels) {
     const contributing = players.filter(p => matched(p) >= level), amount = level-previous; previous=level;
@@ -76,6 +77,19 @@ export function directHandTransfers(hand) {
   if ([...deadById.values()].some(n => n > 0)) {
     if (!tiers.length) tiers.push({ contribution:new Map(),eligibleIds:live.map(p => p.id) });
     for (const [id,n] of deadById) tiers[0].contribution.set(id,(tiers[0].contribution.get(id) ?? 0n)+BigInt(n));
+  }
+  // Current hands merge consecutive contribution levels with the same eligible
+  // live players into one real pot. Retain the exact old tier structure for
+  // historical archives: reconstruct their recorded payouts, never rewrite them.
+  if (tiers.length !== result.pots.length) {
+    const merged = [];
+    for (const tier of tiers) {
+      const prior = merged.at(-1);
+      if (prior && sameIds(prior.eligibleIds, tier.eligibleIds)) {
+        for (const [id, amount] of tier.contribution) prior.contribution.set(id, (prior.contribution.get(id) ?? 0n) + amount);
+      } else merged.push({ ...tier, contribution: new Map(tier.contribution) });
+    }
+    tiers = merged;
   }
   if (tiers.length !== result.pots.length) return unavailable('pot_tiers_mismatch');
   const paid = new Map(ids.map(id => [id,0n])), transfers = new Map(); let allocated = false;

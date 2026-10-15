@@ -51,13 +51,13 @@ export function planEntry(r, eligibleMembers, { bombPot = false } = {}) {
   const members = ordered(eligibleMembers.filter(m => seated(m) && m.stack > 0));
   const states = Object.fromEntries(Object.values(r.members).map(m => [m.id, entryState(r, m)]));
   const empty = { players: [], buttonSeat: null, posts: [], waiting: [], updates: states, orbit: r.blindOrbit ?? null, bombPot };
-  if (members.length < 2) return { ...empty, waiting: members.map(m => ({ playerId: m.id, reason: '等待至少两位玩家' })) };
+  if (members.length < 2) return { ...empty, waiting: members.map(m => ({ playerId: m.id, waitingFor: 'players', reason: '等待至少两位玩家' })) };
   const first = !r.handNumber;
   const oldOrbit = r.blindOrbit ?? { bigBlindSeat: r.hand?.bigBlindSeat, smallBlindSeat: r.hand?.smallBlindSeat };
   let players, bb, sb, button, waiting = [], posts = [];
   if (first || bombPot) {
     players = first ? members : members.filter(m => !needsEntry(r, m));
-    if (players.length < 2) return { ...empty, waiting: members.filter(m => needsEntry(r, m)).map(m => ({ playerId: m.id, reason: '等待普通手补盲' })) };
+    if (players.length < 2) return { ...empty, waiting: members.filter(m => needsEntry(r, m)).map(m => ({ playerId: m.id, waitingFor: 'ordinaryHand', reason: '等待普通手补盲' })) };
     button = after(players, r.buttonSeat ?? -1);
     const clockwise = [...players.filter(m => m.seat > button.seat), ...players.filter(m => m.seat <= button.seat)];
     sb = players.length === 2 ? button : clockwise[0]; bb = players.length === 2 ? clockwise[0] : clockwise[1];
@@ -69,7 +69,7 @@ export function planEntry(r, eligibleMembers, { bombPot = false } = {}) {
     const posters = members.filter(m => needsEntry(r, m) && states[m.id].mode === 'post' &&
       m.stack >= r.settings.bigBlind + (states[m.id].missedSmall ? r.settings.smallBlind : 0));
     if (!established.length && !posters.length) return { ...empty,
-      waiting: members.map(m => ({ playerId: m.id, reason: '所有人都在等大盲，需一人选择补盲加入' })) };
+      waiting: members.map(m => ({ playerId: m.id, waitingFor: 'allWaiting', reason: '所有人都在等大盲，需一人选择补盲加入' })) };
     // When a single established player remains, a waiting newcomer must get
     // the BB, never an unexpected SB. This also permits a heads-up restart.
     if (established.length === 1 && bb.id === established[0].id) bb = after(members.filter(m => m.id !== established[0].id), cursor ?? -1);
@@ -120,7 +120,8 @@ export function planEntry(r, eligibleMembers, { bombPot = false } = {}) {
     }
     waiting = members.filter(m => !players.some(p => p.id === m.id)).map(m => {
       const state = states[m.id], cost = (!state.played || state.missedBig ? r.settings.bigBlind : 0) + (state.missedSmall ? r.settings.smallBlind : 0);
-      return { playerId: m.id, reason: state.mode === 'wait' ? '等待大盲加入' : m.stack < cost ? '补盲积分不足，请补码或等大盲' : '等待过庄后补盲加入' };
+      const waitingFor = state.mode === 'wait' ? 'bigBlind' : m.stack < cost ? 'funds' : 'button';
+      return { playerId: m.id, waitingFor, reason: waitingFor === 'bigBlind' ? '等待大盲加入' : waitingFor === 'funds' ? '补盲积分不足，请补码或等大盲' : '等待过庄后补盲加入' };
     });
   }
   const ids = new Set(players.map(m => m.id));

@@ -163,7 +163,12 @@ function settlementPots(hand) {
     // last live hand if nobody remains eligible for that contribution tier.
     if (!eligible.length && contenders.length === 1) eligible = contenders;
     if (!eligible.length) throw new Error('底池没有可领奖玩家');
-    pots.push({ amount, eligibleIds: eligible.map(p => p.id) });
+    const eligibleIds = eligible.map(p => p.id), prior = pots.at(-1);
+    // Folded contributions add dead money to the same contest; they do not
+    // create a new side pot. Split only when the eligible live hands change,
+    // otherwise awarding each artificial tier's remainder pays odd chips twice.
+    if (prior && prior.eligibleIds.length === eligibleIds.length && prior.eligibleIds.every((id, i) => id === eligibleIds[i])) prior.amount += amount;
+    else pots.push({ amount, eligibleIds });
   }
   if (dead) {
     if (pots.length) pots[0].amount += dead;

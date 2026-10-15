@@ -21,8 +21,11 @@ const AUTO_DEAL_DELAY = 5000;
 const REBUY_GRACE_DELAY = 5000;
 const SQUID_BLOCK_GRACE = 90000, EMPTY_ROOM_TIMEOUT = 30 * 60000;
 const RABBIT_START_DELAY = 1000;
-const DEAL_PRESENTATION_DELAY = 1100, FLOP_PRESENTATION_DELAY = 900, STREET_PRESENTATION_DELAY = 700;
-export const transitionDelay = hand => hand.transition?.kind === 'award' ? 650 : hand.transition?.afterRunout || hand.transition?.revealed ? 700 : 900;
+// A short tail on the last action flows into the 520ms board flip; the 600ms
+// reveal guard still finishes before any action or time-card command is legal.
+const DEAL_PRESENTATION_DELAY = 1100, STREET_PRESENTATION_DELAY = 600;
+export const transitionDelay = hand => hand.transition?.kind === 'street' ? 300
+  : hand.transition?.kind === 'award' ? 650 : hand.transition?.afterRunout || hand.transition?.revealed ? 700 : 900;
 export const DEFAULTS = Object.freeze({ maxPlayers: 9, smallBlind: 5, bigBlind: 10,
   minBuyIn: 1000, maxBuyIn: 10000, minBuyInBB: BUYIN_MIN_BB, maxBuyInBB: BUYIN_MAX_BB, buyInStepBB: BUYIN_STEP_BB, maxTotalBuyInBB: null,
   actionSeconds: ACTION_SECONDS, approvalRequired: false, squid: false, squidMode: 'normal', squidExtraTokens: 3, squidUnit: 20, squidUnitBB: 2,
@@ -478,7 +481,10 @@ export class RoomService {
       const candidates=[...originals,...newcomers].map(m=>({...m,stack:m.stack-(debits[m.id]??0)})).sort((a,b)=>a.seat-b.seat);
       const entryPlan=planEntry(r,candidates);
       const excluded=newcomers.find(m=>!entryPlan.players.some(p=>p.id===m.id));
-      if (entryPlan.players.length<2 || excluded) return { status:'entry-blind',reason:entryPlan.waiting.find(p=>p.playerId===excluded?.id)?.reason ?? '等待至少两位玩家完成补盲后加入' };
+      if (entryPlan.players.length<2 || excluded) {
+        const waiting = entryPlan.waiting.find(p=>p.playerId===excluded?.id);
+        return { status:'entry-blind',entryWaitingFor:waiting?.waitingFor ?? 'players',reason:waiting?.reason ?? '等待至少两位玩家完成补盲后加入' };
+      }
       return { joinIds:newcomers.map(m=>m.id),debits,tokenBudget,candidates,entryPlan,waiting:{} };
     };
     // At most nine seats: choose the largest legal simultaneous cohort. This
@@ -494,7 +500,7 @@ export class RoomService {
       if(selected.joinIds.includes(m.id)) selected.waiting[m.id]=wait(m,'next-hand','已具备加入条件，从下一手加入本轮鱿鱼',selected.tokenBudget);
       else {
         const check=trial([...eligible.filter(p=>selected.joinIds.includes(p.id)),m]);
-        selected.waiting[m.id]=wait(m,check.status??'entry-blind',check.reason??'等待下一个可补盲的位置');
+        selected.waiting[m.id]={...wait(m,check.status??'entry-blind',check.reason??'等待下一个可补盲的位置'),entryWaitingFor:check.entryWaitingFor ?? null};
       }
     }
     return selected;
@@ -505,12 +511,33 @@ export class RoomService {
     if (r.mini.squid.active && !r.mini.squid.participants.includes(m.id)) return 'squid';
     return r.hand?.status === 'playing' && !r.hand.players.some(p => p.id === m.id) ? 'hand' : null;
   }
-  entryFor(r, m) {
+  entryFor(r, m, squidAdmission = null) {
     const info = projectEntry(r, m), state = entryState(r, m);
-    const candidates = Object.values(r.members).filter(p => p.seat !== null && !p.sittingOut && p.stack > 0 && this.online(r, p.id) && (!r.mini.squid.active || r.mini.squid.participants.includes(p.id)));
-    const reason = info.pending ? planEntry(r, candidates).waiting.find(p => p.playerId === m.id)?.reason : null;
-    return { ...info, required: info.pending, reason: state.played ? 'missed' : 'new',
-      waitingFor: info.pending ? info.mode === 'wait' ? 'bigBlind' : reason?.includes('过庄') ? 'button' : null : null };
+    const base = { ...info, required: info.pending, reason: state.played ? 'missed' : 'new',
+      waitingFor: info.pending && info.mode === 'wait' ? 'bigBlind' : null, naturalBigBlind: false, nextHandEligible: false,
+      estimated: r.hand?.status === 'playing' };
+    if (!info.pending || m.seat === null) return base;
+    if (m.pendingDeparture) return { ...base, waitingFor: 'departing' };
+    if (m.sittingOut) return { ...base, waitingFor: 'sittingOut' };
+    if (!this.online(r, m.id)) return { ...base, waitingFor: 'offline' };
+    if (m.stack <= 0) return { ...base, waitingFor: 'funds' };
+    // Current-hand entrants are already seated. Include them when projecting
+    // position restrictions; filtering the old squid roster hid their wait for
+    // the button and misleadingly advertised that posting would deal at once.
+    const candidates = Object.values(r.members).filter(p => p.seat !== null && !p.sittingOut && !p.pendingDeparture && p.stack > 0 && this.online(r, p.id));
+    let plan = planEntry(r, candidates), waiting = plan.waiting.find(p => p.playerId === m.id);
+    if (r.mini.squid.active && r.hand?.status !== 'playing') {
+      const admission = squidAdmission ?? this.squidJoinPlan(r), quote = admission.waiting[m.id];
+      if (quote && !['next-hand', 'entry-blind'].includes(quote.status)) return { ...base, waitingFor: quote.status };
+      // Between hands use the actual funded admission cohort. No hypothetical
+      // newcomer may change another player's displayed natural blind position.
+      plan = admission.entryPlan;
+      waiting = plan.waiting.find(p => p.playerId === m.id);
+      if (quote?.status === 'entry-blind') return { ...base, waitingFor: quote.entryWaitingFor ?? waiting?.waitingFor ?? 'bigBlind' };
+    }
+    const nextHandEligible = plan.players.some(p => p.id === m.id);
+    return { ...base, waitingFor: waiting?.waitingFor ?? (nextHandEligible ? null : 'players'),
+      nextHandEligible, naturalBigBlind: nextHandEligible && plan.orbit?.bigBlindSeat === m.seat };
   }
   handSquidRound(h) {
     return own(h, 'squidRound') ? h.squidRound : h.miniBefore?.squid?.active ? h.miniBefore.squid.round : null;
@@ -714,8 +741,7 @@ export class RoomService {
     }
     this.recordEquity(h);
     const previous = r.presentation?.handId === h.id ? r.presentation : null;
-    const revealDelay = !previous ? DEAL_PRESENTATION_DELAY : h.board.length > previous.boardCount
-      ? (h.board.length === 3 ? FLOP_PRESENTATION_DELAY : STREET_PRESENTATION_DELAY) : 0;
+    const revealDelay = !previous ? DEAL_PRESENTATION_DELAY : h.board.length > previous.boardCount ? STREET_PRESENTATION_DELAY : 0;
     const actionReadyAt = h.status === 'playing' && h.actingId ? timestamp + revealDelay : null;
     r.presentation = { handId: h.id, boardCount: h.board.length, actionReadyAt, turnStartedAt: actionReadyAt, readyPublished: revealDelay === 0 || actionReadyAt === null };
     for (const p of h.players) r.members[p.id].stack = p.stack;
@@ -1100,7 +1126,8 @@ export class RoomService {
       runout: h.runout ? { active: h.runout.active, nextAt: h.runout.active ? h.runout.nextAt : null } : null, equity: copy(h.equityFrames?.at(-1)?.equity ?? null),
       bombPot: h.bombPot ?? false, ante: h.ante ?? 0, timeBankUses: copy(h.timeBankUses ?? []), smallBlindSeat: h.smallBlindSeat, bigBlindSeat: h.bigBlindSeat, actingId: h.actingId, currentBet: h.currentBet,
       pot: h.players.reduce((n, p) => n + p.contributed, 0), actionSeq: h.log.length, log: copy(h.log), result: this.resultFor(h), commitment: h.audit.root, proofs: this.proofsFor(h, viewerId) } : null;
-    return { code: r.code, name: r.name, access: r.access === 'public' ? 'public' : 'invite', status: r.status, hostId: r.hostId, meId: viewerId, invite: r.invite, settings: { ...copy(currentSettings), approvalRequired: false }, nextBombAt, bombDue: nextBombAt !== null && timestamp >= nextBombAt, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
+    const acceptedCommandIds = Object.keys(r.commandIds ?? {}).filter(key => key.startsWith(`${viewerId}:`)).slice(-16).map(key => key.slice(viewerId.length + 1));
+    return { code: r.code, name: r.name, access: r.access === 'public' ? 'public' : 'invite', status: r.status, hostId: r.hostId, meId: viewerId, acceptedCommandIds, invite: r.invite, settings: { ...copy(currentSettings), approvalRequired: false }, nextBombAt, bombDue: nextBombAt !== null && timestamp >= nextBombAt, revision: r.revision, serverTime: Date.now(), deadline: r.deadline, createdAt: r.createdAt, startedAt: r.startedAt ?? null, endsAt: r.endsAt ?? null,
       expiryMode: expiry.mode, autoDeal: { paused: own(r, 'autoDealPaused') ? Boolean(r.autoDealPaused) : r.handNumber > 0, nextHandAt: r.nextHandAt ?? null, waitReason: this.autoBlockReason(r, timestamp), delaySeconds: AUTO_DEAL_DELAY / 1000, rebuyGrace: this.rebuyGraceState(r, timestamp) },
       miniGamesCutoffAt: r.endsAt == null ? null : r.endsAt - MINI_CUTOFF,
       timeBankResetAt: null,
@@ -1109,7 +1136,7 @@ export class RoomService {
         return { id: m.id, name: u?.name ?? '朋友', avatar: u?.avatar ?? 0, avatarImage: avatarImageId(u?.avatarImage), seat: m.seat, stack: m.stack, totalBuyIn: m.totalBuyIn, pendingBuyIn: this.pendingBuyIn(m),
           sessionProfit: m.stack + m.cashedOut + (r.mini.squid.reserves[m.id] ?? 0) - m.totalBuyIn,
           timeBankCardsRemaining: this.timeBankFor(r, m).remaining, sittingOut: m.sittingOut, connected: (this.connections.get(`${r.code}:${m.id}`) ?? 0) > 0,
-          entryBlind: this.entryFor(r, m), pendingDeparture: m.pendingDeparture ?? null, waitingFor: this.waitingFor(r, m), connectionWait: m.seat !== null && !this.online(r, m.id) ? '等待回到牌桌' : null,
+          entryBlind: this.entryFor(r, m, squidAdmission), pendingDeparture: m.pendingDeparture ?? null, waitingFor: this.waitingFor(r, m), connectionWait: m.seat !== null && !this.online(r, m.id) ? '等待回到牌桌' : null,
           squidWon: (mini.squid.counts[m.id] ?? 0) > 0, squidCount: mini.squid.counts[m.id] ?? 0, squidReserve: r.mini.squid.reserves[m.id] ?? 0,
           squidJoin: squidAdmission?.waiting[m.id] ?? null,
           squidMaxLoss: r.mini.squid.active && r.mini.squid.participants.includes(m.id) && !mini.squid.counts[m.id] ? mini.squid.tokenBudget * r.mini.squid.unit : 0,

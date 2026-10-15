@@ -10,6 +10,7 @@ import {createTableFunTracker} from '../public/table-fun.js';
 import {createTableFeedback} from '../public/table-feedback.js';
 import * as tableScene from '../public/table-scene.js';
 import * as tableControls from '../public/table-controls.js';
+import {patchStableControls} from '../public/stable-controls.js';
 
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a,start);return source.slice(a,b);}
@@ -26,7 +27,7 @@ function harness(){
     chatDraft:'',chatBusy:false,chatPending:null,chatOpen:false,chatUnread:0,chatMuted:false,reactionsMuted:false,reactions:{},funEffects:[],animations:true,sound:true,modal:null};
   let serial=0;
   const pending=(path,body)=>new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));
-  const context=vm.createContext({updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
+  const context=vm.createContext({patchStableControls,updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
     api:pending,fetch:(url,options)=>pending(url,options),apiUrl:path=>path,
     FormData:class{constructor(form){this.values=form.values;}get(name){return this.values[name]??null;}},
     document:{visibilityState:'visible',addEventListener:(type,fn)=>listeners.set(type,fn)},navigator:{onLine:true},
@@ -125,9 +126,12 @@ test('a nine-player late private snapshot for another identity is ignored',()=>{
 // real render/refresh functions run here; no browser click timing is simulated.
 class ViewNode {
   constructor({tag='div',className='',id='',dataset={},attrs={},text='',children=[]}={}){
-    Object.assign(this,{tagName:tag,className,id,dataset:{...dataset},attrs:{...attrs},text,parentElement:null,scrollTop:0,open:false,disabled:false,style:{cssText:''}});this.children=[];
+    Object.assign(this,{nodeType:1,tagName:tag,className,id,dataset:{...dataset},attrs:{...attrs},text,parentElement:null,scrollTop:0,open:false,disabled:false,style:{cssText:''}});this.children=[];
     for(const child of children)this.insertBefore(child instanceof ViewNode?child:new ViewNode(child),null);
   }
+  get childNodes(){return [...(this.text?[new ViewText(this)]:[]),...this.children];}
+  get attributes(){return Object.entries({...this.attrs,...(this.className?{class:this.className}:{}),...(this.id?{id:this.id}:{}),...Object.fromEntries(Object.entries(this.dataset).map(([key,value])=>['data-'+key.replace(/[A-Z]/g,c=>'-'+c.toLowerCase()),String(value)]))}).map(([name,value])=>({name,value}));}
+  get outerHTML(){return JSON.stringify(this.descriptor());}
   get firstElementChild(){return this.children[0]||null;}
   get nextElementSibling(){const siblings=this.parentElement?.children||[];return siblings[siblings.indexOf(this)+1]||null;}
   get textContent(){return this.text+this.children.map(c=>c.textContent).join('');}
@@ -141,14 +145,22 @@ class ViewNode {
   remove(){if(!this.parentElement)return;const list=this.parentElement.children;list.splice(list.indexOf(this),1);this.parentElement=null;}
   insertBefore(node,anchor){if(node===anchor)return;node.remove();const i=anchor?this.children.indexOf(anchor):this.children.length;assert.ok(i>=0);this.children.splice(i,0,node);node.parentElement=this;}
   replaceWith(node){const parent=this.parentElement,anchor=this.nextElementSibling;this.remove();parent.insertBefore(node,anchor);}
-  append(node){this.insertBefore(node,null);}
+  append(node){if(node.nodeType===3){const value=node.nodeValue;node.remove();this.text+=value;}else this.insertBefore(node,null);}
   focus(){}
   matches(selector){if(selector.startsWith('.'))return this.className.split(' ').includes(selector.slice(1));if(selector.startsWith('#'))return this.id===selector.slice(1);if(selector==='[data-action]')return Boolean(this.dataset.action);return this.tagName===selector;}
   querySelectorAll(selector){const direct=selector.startsWith(':scope > ');if(direct)selector=selector.slice(9);const result=[];for(const c of this.children){if(c.matches(selector))result.push(c);if(!direct)result.push(...c.querySelectorAll(selector));}return result;}
   querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
-  getAttribute(key){return this.attrs[key]??null;}
-  setAttribute(key,value){this.attrs[key]=String(value);}
-  removeAttribute(key){delete this.attrs[key];}
+  getAttribute(key){if(key==='class')return this.className||null;if(key==='id')return this.id||null;if(key.startsWith('data-'))return this.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]??null;return this.attrs[key]??null;}
+  hasAttribute(key){return this.getAttribute(key)!==null;}
+  setAttribute(key,value){if(key==='class')this.className=String(value);else if(key==='id')this.id=String(value);else if(key.startsWith('data-'))this.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=String(value);else this.attrs[key]=String(value);}
+  removeAttribute(key){if(key==='class')this.className='';else if(key==='id')this.id='';else if(key.startsWith('data-'))delete this.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())];else delete this.attrs[key];}
+}
+class ViewText {
+  constructor(parent){this.nodeType=3;this.parentElement=parent;}
+  get nodeValue(){return this.parentElement?.text||'';}
+  set nodeValue(value){if(this.parentElement)this.parentElement.text=String(value);}
+  remove(){if(this.parentElement)this.parentElement.text='';this.parentElement=null;}
+  replaceWith(node){const parent=this.parentElement;this.remove();if(node.nodeType===3)parent.text=node.nodeValue;else parent.insertBefore(node,parent.firstElementChild);}
 }
 function infoView(room){return JSON.stringify({children:[
   {dataset:{tableInfo:'chips'},children:[{text:`带入${room.players[0].totalBuyIn||0};筹码${room.players[0].stack}`},{tag:'details',id:'chip-explanation',children:[{tag:'summary',text:'筹码说明'},{text:'说明'}]}]},
@@ -184,7 +196,7 @@ test('nine chat-only snapshots leave table details and its expanded content unto
   assert.equal(c.paints,0);assert.deepEqual(c.body.children,nodes);assert.equal(c.body.querySelector('details'),details);assert.equal(details.open,true);
 });
 function roomScene(state){return JSON.stringify({children:[{className:'topbar'},{className:'room-shell',dataset:{room:state.room.code},children:[
-  {className:'room-head',text:state.room.name||'九人桌'},{className:'game-grid',children:[{className:'table-column',children:[{className:'table-stage',text:`筹码${state.room.players[0].stack}`},{className:'table-bottom'}]}]},
+  {className:'room-head',text:state.room.name||'九人桌',children:[{tag:'button',id:'probe-topup',dataset:{action:'buyin'},text:'补码'}]},{className:'game-grid',children:[{className:'table-column',children:[{className:'table-stage',children:[{className:'seat',dataset:{playerId:'p0'},children:[{className:'seat-main',dataset:{action:'player-stats',player:'p0'},children:[{className:'stack-value',text:`筹码${state.room.players[0].stack}`}]},{className:'seat-time-tools',children:[{tag:'button',id:'probe-timebank',dataset:{action:'timebank'},text:'+30秒 · 6张'}]}]}]},{className:'table-bottom',dataset:{turn:`${state.room.hand.id}:${state.room.hand.actionSeq}`},children:[{tag:'button',id:'probe-bet',attrs:state.busy||!state.connected||state.feedbackResync?{disabled:''}:{},dataset:{action:'raise-preset',amount:String(state.room.actions?.minRaiseTo||20)},text:`加至 ${state.room.actions?.minRaiseTo||20}`}]}]}]},
   {tag:'nav',className:'table-toolbar',children:[{tag:'button',id:'chat-toggle',dataset:{action:'toggle-chat'},attrs:{'aria-expanded':String(state.chatOpen),'aria-controls':'chat-drawer'},text:`聊天${state.chatUnread||''}`},{tag:'button',dataset:{action:'history'},text:'牌谱'}]},
   ...(state.chatOpen?[{className:'chat-card',text:'聊天已打开'}]:[]),
 ]}]});}
@@ -202,6 +214,34 @@ test('same-table updates keep the pressed chat and history buttons attached whil
   assert.equal(chat.textContent,'聊天9');assert.match(c.app.querySelector('.table-stage').textContent,/筹码1910/);
 });
 
+test('same-turn chat snapshots retain the actual bet button and its target amount',()=>{
+  const c=renderHarness();c.render();const bet=c.app.querySelector('#probe-bet'),dock=c.app.querySelector('.table-bottom');
+  for(let i=1;i<=9;i++){c.state.chatUnread=i;c.state.room.players[1].connected=i%2===0;c.render();assert.equal(c.app.querySelector('#probe-bet'),bet);assert.equal(bet.isConnected,true);assert.equal(c.app.querySelector('.table-bottom'),dock);}
+  assert.equal(bet.dataset.amount,'20');
+});
+test('real room patches retain top-up, time-card and pressed player-card nodes through repeated snapshots',()=>{
+  const c=renderHarness();c.render();
+  const selectors=['#probe-topup','#probe-timebank','.seat-main','.stack-value'];
+  const pressed=selectors.map(selector=>c.app.querySelector(selector));
+  for(let i=1;i<=9;i++){
+    c.state.chatUnread=i;c.state.room.players[0].stack=2000-i*10;c.render();
+    selectors.forEach((selector,index)=>{assert.equal(c.app.querySelector(selector),pressed[index]);assert.equal(pressed[index].isConnected,true);});
+  }
+  assert.equal(c.app.querySelector('.stack-value').textContent,'筹码1910');
+});
+test('busy, disconnect and resync changes still replace stale actionable controls',()=>{
+  for(const [property,value] of [['busy',true],['connected',false],['feedbackResync',true]]) {
+    const c=renderHarness();c.render();const bet=c.app.querySelector('#probe-bet');c.state[property]=value;c.render();
+    const blocked=c.app.querySelector('#probe-bet');assert.notEqual(blocked,bet);assert.equal(blocked.getAttribute('disabled'),'');
+    c.state[property]=!value;c.render();const enabled=c.app.querySelector('#probe-bet');assert.notEqual(enabled,blocked);assert.equal(enabled.getAttribute('disabled'),null);
+  }
+});
+test('a changed quote or new action sequence detaches stale bet buttons instead of silently repricing them',()=>{
+  const c=renderHarness();c.render();const original=c.app.querySelector('#probe-bet');
+  c.state.room.actions.minRaiseTo=40;c.render();const repriced=c.app.querySelector('#probe-bet');
+  assert.notEqual(repriced,original);assert.equal(original.isConnected,false);assert.equal(repriced.dataset.amount,'40');
+  c.state.room.hand.actionSeq++;c.render();assert.notEqual(c.app.querySelector('#probe-bet'),repriced);assert.equal(repriced.isConnected,false);
+});
 test('the preserved chat button still opens and closes its drawer exactly once per action',async()=>{
   const c=renderHarness(),chat=c.app.querySelector('#chat-toggle');c.state.chatUnread=8;c.render();
   await c.act('toggle-chat');assert.equal(c.state.chatOpen,true);assert.equal(c.state.chatUnread,0);assert.ok(c.app.querySelector('.chat-card'));
@@ -215,15 +255,40 @@ test('moving to a different room replaces the old toolbar rather than retaining 
   assert.equal(c.app.querySelector('.room-shell').dataset.room,'654321');
 });
 
-test('deferred audio is consumed silently if a render happens after disconnect, hiding or leaving the table',()=>{
-  for(const transition of ['disconnect','hidden','resync','leave']){
+test('live action audio is consumed while a non-chat IME pauses DOM rendering, with no overwrite or replay',()=>{
+  const c=renderHarness(),initial=nineRoom();c.state.room=null;c.normalizeState(initial);
+  c.sounds.length=0;
+  const stage=c.app.querySelector('.table-stage');
+  c.state.composing=true;c.context.document.activeElement={id:'player-search'};
+  const checked=nineRoom(2);checked.hand.actingId='p2';checked.hand.actionSeq=1;checked.hand.log=[{seq:1,type:'check',playerId:'p1',street:'flop'}];
+  c.normalizeState(checked);
+  const actions=()=>c.sounds.filter(sound=>sound.animations?.some(event=>event.type==='action'));
+  assert.equal(c.state.renderDeferred,true,'the composition still prevents DOM replacement');
+  assert.equal(c.app.querySelector('.table-stage'),stage);
+  assert.equal(actions().length,1,'a live check must not wait for the input method to finish');
+  assert.equal(actions()[0].animations.find(event=>event.type==='action').seq,1);
+  assert.equal(c.state.pendingFeedback,null,'the sound cannot remain for a chat snapshot to overwrite');
+  const chat=clone(checked);chat.revision=3;chat.chat=[{id:'during-ime',playerId:'p4',kind:'text',text:'你好',at:new Date().toISOString()}];
+  c.normalizeState(chat);assert.equal(actions().length,1,'chat has no new action audio');
+  const next=clone(chat);next.revision=4;next.hand.actingId='p3';next.hand.actionSeq=2;next.hand.log.push({seq:2,type:'check',playerId:'p2',street:'flop'});
+  c.normalizeState(next);
+  assert.deepEqual(actions().map(sound=>sound.animations.find(event=>event.type==='action').seq),[1,2],'consecutive live actions survive the paused render');
+  assert.equal(c.state.pendingFeedback,null);assert.equal(c.app.querySelector('.table-stage'),stage);
+  c.state.composing=false;c.context.document.activeElement=null;c.render();
+  assert.equal(actions().length,2,'finishing composition never repeats already consumed feedback');
+});
+
+test('deferred audio is consumed silently after mute, disconnect, hiding or leaving, including paused IME rendering',()=>{
+  for(const composing of [false,true])for(const transition of ['mute','disconnect','hidden','resync','leave']){
     const c=renderHarness();c.state.pendingFeedback={eventId:'123456:p0:h1:4',sound:'chip',speech:'raise'};
+    c.state.composing=composing;c.context.document.activeElement=composing?{id:'player-search'}:null;
+    if(transition==='mute')c.state.sound=false;
     if(transition==='disconnect')c.state.connected=false;
     if(transition==='hidden')c.context.document.visibilityState='hidden';
     if(transition==='resync')c.state.feedbackResync=true;
     if(transition==='leave')c.state.page='welcome';
     c.render();assert.equal(c.sounds.length,0,transition);assert.equal(c.state.pendingFeedback,null,transition);
-    c.state.page='room';c.state.connected=true;c.state.feedbackResync=false;c.context.document.visibilityState='visible';
+    c.state.page='room';c.state.sound=true;c.state.connected=true;c.state.feedbackResync=false;c.state.composing=false;c.context.document.activeElement=null;c.context.document.visibilityState='visible';
     c.render();assert.equal(c.sounds.length,0,'returning must not replay the skipped action');
   }
 });

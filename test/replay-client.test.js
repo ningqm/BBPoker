@@ -40,6 +40,7 @@ function harness({unit='bb',historicalBlind=10,realCards=false}={}){
     section('function eventText(', 'async function historyModal('),
     section('function stopLobbyPolling(', 'async function loadLobby('),
     section('function renderReplay(){','async function replayLastHand('),
+    section('function finishComposition(', 'function flushTableFeedback('),
     section('function closeModal(){',"dialog.addEventListener('cancel'"),
     section("document.addEventListener('input'", "document.addEventListener('invalid'"),
     section("document.addEventListener('visibilitychange'", 'bindNativeLifecycle('),

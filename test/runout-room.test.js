@@ -9,6 +9,7 @@ import { RoomService } from '../src/room.js';
 import { EncryptedStore } from '../src/store.js';
 import { verifyProof } from '../src/fairness.js';
 import { calculateEquity } from '../src/equity.js';
+import { availableActions } from '../src/poker.js';
 import { replaySnapshot } from '../public/replay.js';
 import { exportPhh } from '../src/phh.js';
 import { createApp } from '../server.js';
@@ -189,14 +190,30 @@ for (const resumeAt of [1, 2, 3]) test(`encrypted runout restart after ${resumeA
   assert.equal(room.hand.audit.root, f.room.hand.audit.root); assert.equal(app.store.data.hands.length, 1);
 });
 
-test('nine all-in players publish one complete flop and only three street equity updates with side pots', t => {
+test('nine-player all-in runout publishes one complete flop and only three street equity updates with side pots', t => {
   const f = fixture(t, 9);
   for (let i = 1; i < 9; i++) f.cmd(i, 'buyin', { amountBB: 100 + i * 50 });
   const total = Object.values(f.room.members).reduce((sum, p) => sum + p.stack, 0);
   f.cmd(0, 'start');
-  for (let i = 0; f.room.hand.actingId; i++) { assert.ok(i < 12); f.act('allin'); }
+  let coveredCalls = 0;
+  for (let i = 0; f.room.hand.actingId; i++) {
+    assert.ok(i < 12);
+    const hand = f.room.hand, actions = availableActions(hand, hand.actingId);
+    // The deepest stack cannot raise above 5,500: every other remaining
+    // opponent is already all-in or has a total stack below that wager.
+    if (!actions.canAllIn) {
+      assert.ok(actions.callAmount > 0);
+      assert.equal(hand.players.some(p => p.id !== hand.actingId && !p.folded && p.bet + p.stack > hand.currentBet), false);
+      coveredCalls++;
+    }
+    f.act(actions.canAllIn ? 'allin' : 'call');
+  }
   const h = f.room.hand, anchor = structuredClone(h.allInLock), root = h.audit.root;
+  assert.equal(coveredCalls, 1);
   assert.equal(anchor.players.length, 9); assert.ok(anchor.pots.length > 1);
+  assert.deepEqual(anchor.pots.map(p => p.amount), [9000,12000,3500,3000,2500,2000,1500,1000]);
+  assert.equal(h.players.filter(p => p.stack === 0).length, 8);
+  assert.equal(h.players.find(p => p.id === f.users[8].id).stack, 500);
   for (const count of [3, 4, 5]) {
     f.nextCard();
     const state = f.service.state(f.room, f.users[9].id);

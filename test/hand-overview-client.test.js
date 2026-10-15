@@ -29,7 +29,7 @@ test('explicit replay remains available and hidden pages never start its timer',
 });
 test('current turn notice follows actual table actor without replacing filter inputs',()=>{
   const notice={hidden:true},clock={textContent:'',classList:{toggle(){}}};
-  const state={room:{hand:{status:'playing',actingId:'me'},meId:'me',deadline:Date.now()+15000,settings:{}},timeOffset:0};
+  const state={room:{hand:{status:'playing',actingId:'me'},meId:'me',actions:{canAct:true},deadline:Date.now()+15000,settings:{}},timeOffset:0,connected:true,feedbackResync:false};
   const document={querySelectorAll(selector){return selector==='[data-history-turn]'?[notice]:selector==='[data-turn-clock]'?[clock]:[];}};
   const context=vm.createContext({...tableScene,state,document,Date,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},syncRebuyPrompt(){}});vm.runInContext(section('function tick(){','setInterval(tick,400);')+';globalThis.tick=tick',context);
   context.tick();assert.equal(notice.hidden,false);assert.match(clock.textContent,/1[45]s/);

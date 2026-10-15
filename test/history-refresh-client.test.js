@@ -27,3 +27,15 @@ test('completed or malformed rabbit data does not trigger polling and wrong hand
  const f=fixture();f.current.hand.rabbit.active=false;f.controller.watch();assert.equal(f.jobs.size,0);
  f.current.hand.rabbit.active=true;f.controller.watch();f.tick();f.requests[0].resolve({id:'secret-other',roomCode:'123',rabbit:{active:false,board:['Ks']}});await f.flush();assert.equal(f.applied.length,0);
 });
+test('a stale reveal response keeps public cards and retries the final cards without reopening',async()=>{
+ const f=fixture();f.current.hand.rabbit.board.push('4s');f.controller.watch();f.tick();
+ f.requests[0].resolve({...f.current.hand,rabbit:{active:true,board:['As','2h','3c']}});await f.flush();
+ assert.deepEqual(f.current.hand.rabbit.board,['As','2h','3c','4s']);assert.equal(f.applied.length,0);assert.equal(f.jobs.size,1);
+ f.tick();f.requests[1].resolve({...f.current.hand,rabbit:{active:false,board:['As','2h','3c','4s','5h']}});await f.flush();
+ assert.equal(f.current.hand.rabbit.board.length,5);assert.equal(f.applied.length,1);assert.equal(f.jobs.size,0);
+});
+test('repeated stale reveal responses are bounded and cannot roll the display backwards',async()=>{
+ const f=fixture();f.current.hand.rabbit.board.push('4s');f.controller.watch();
+ for(let i=0;i<3;i++){f.tick();f.requests[i].resolve({...f.current.hand,rabbit:{active:true,board:['As','2h','3c']}});await f.flush();}
+ assert.equal(f.requests.length,3);assert.equal(f.jobs.size,0);assert.equal(f.applied.length,0);assert.equal(f.current.hand.rabbit.board.length,4);
+});

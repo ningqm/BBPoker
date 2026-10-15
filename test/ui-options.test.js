@@ -205,7 +205,7 @@ test('expiry clock follows server squid extension and recovery window rather tha
 });
 
 test('elapsed clock does not disable start during a server-authorized squid extension',()=>{
-  const start={disabled:false},clock={dataset:{},classList:{toggle(){}}};
+  const start={disabled:false},clock={dataset:{},classList:{toggle(){}},setAttribute(){}};
   const document={querySelectorAll:selector=>selector==='[data-action="start"]'?[start]:selector==='[data-room-clock]'?[clock]:[]};
   const c=harness({document});c.state.room={status:'playing',endsAt:Date.now()-1000,settings:{squid:true},expiryMode:'finish-squid'};
   c.tick();assert.equal(start.disabled,false);assert.equal(clock.dataset.squidExpiry,'true');assert.match(clock.textContent,/打完本轮鱿鱼/);
@@ -234,45 +234,36 @@ function rebuyRoom(c){
   Object.assign(c.state,{room,page:'room',connected:true,busy:false,timeOffset:6000-Date.now()});return room;
 }
 
-test('automatic rebuy prompts once in the extra window, never submits money, and dismissing it does not extend time',()=>{
-  const c=harness(),room=rebuyRoom(c),before=JSON.stringify(room.autoDeal.rebuyGrace);
-  c.syncRebuyPrompt(room,4999);assert.equal(c.modals.length,0);
-  c.syncRebuyPrompt(room,6000);assert.equal(c.modals.length,1);assert.equal(c.state.modal.autoRebuyHand,'busted-hand');assert.match(c.modals[0].body,/data-rebuy-countdown/);assert.equal(c.commands.length,0);
-  c.state.modal=null;c.syncRebuyPrompt(room,7000);assert.equal(c.modals.length,1);assert.equal(JSON.stringify(room.autoDeal.rebuyGrace),before);
-  c.syncRebuyPrompt(room,10000);assert.equal(c.modals.length,1);assert.equal(c.commands.length,0);
+test('rebuy grace highlights the header without opening a dialog or submitting money',()=>{
+  const status={textContent:''},container={classList:{toggle(name,on){this[name]=on;}}};
+  const c=harness({document:{querySelectorAll:s=>s==='[data-topup-status]'?[status]:s==='.table-topup'?[container]:[]}}),room=rebuyRoom(c),before=JSON.stringify(room.autoDeal.rebuyGrace);
+  c.syncRebuyPrompt(room,4999);assert.match(status.textContent,/点击补码/);
+  c.syncRebuyPrompt(room,6000);assert.equal(c.modals.length,0);assert.equal(container.classList['needs-chips'],true);assert.equal(status.textContent,'补码等待 4 秒');
+  c.syncRebuyPrompt(room,10000);assert.match(status.textContent,/点击补码/);assert.equal(c.modals.length,0);assert.equal(c.commands.length,0);assert.equal(JSON.stringify(room.autoDeal.rebuyGrace),before);
 });
 
-test('rebuy prompt defers behind other dialogs and hidden/offline states, then closes only its own expired dialog',()=>{
-  const v=harness({document:{visibilityState:'hidden'}}),r=rebuyRoom(v);
-  v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);
-  v.state.connected=false;v.document.visibilityState='visible';v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);
-  v.state.connected=true;v.state.modal={kind:'hand-library'};v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,0);assert.equal(v.state.modal.kind,'hand-library');
-  v.state.modal=null;v.syncRebuyPrompt(r,6000);assert.equal(v.modals.length,1);
-  v.syncRebuyPrompt(r,10000);assert.equal(v.state.modal,null);
-  v.state.modal={kind:'buyin'};v.syncRebuyPrompt(r,11000);assert.equal(v.state.modal.kind,'buyin');
+test('manual rebuy stays editable when grace expires or another hand begins',()=>{
+  const notice={textContent:''},c=harness({document:{querySelectorAll:s=>s==='[data-rebuy-countdown]'?[notice]:[]}}),room=rebuyRoom(c);
+  c.buyinModal();const modal=c.state.modal;assert.equal(modal.kind,'buyin');assert.match(c.modals[0].body,/data-rebuy-countdown/);
+  c.syncRebuyPrompt(room,10000);assert.equal(c.state.modal,modal);assert.match(notice.textContent,/已结束/);
+  room.hand={id:'next-hand',status:'playing'};c.syncRebuyPrompt(room,11000);assert.equal(c.state.modal,modal);assert.equal(c.commands.length,0);
 });
 
-test('rebuy prompt waits for a fresh snapshot and does not consume its one-time prompt while resynchronizing',()=>{
-  const c=harness(),room=rebuyRoom(c);
-  c.state.feedbackResync=true;c.syncRebuyPrompt(room,6000);
-  assert.equal(c.modals.length,0);assert.equal(c.state.rebuyPrompted,undefined);
-  c.state.feedbackResync=false;c.state.busy=true;c.syncRebuyPrompt(room,6500);
-  assert.equal(c.modals.length,0);assert.equal(c.state.rebuyPrompted,undefined);
-  c.state.busy=false;c.syncRebuyPrompt(room,7000);
-  assert.equal(c.modals.length,1);assert.equal(c.state.modal.autoRebuyHand,'busted-hand');
-  assert.equal(c.commands.length,0);
-});
-
-test('expired automatic rebuy dialogs close even while disconnected, hidden, busy or waiting for a fresh snapshot',()=>{
+test('rebuy never interrupts other dialogs, resyncs or background states',()=>{
   for(const blocked of [{connected:false},{busy:true},{feedbackResync:true},{hidden:true}]){
-    const c=harness(),room=rebuyRoom(c);c.syncRebuyPrompt(room,6000);
-    assert.equal(c.state.modal.autoRebuyHand,'busted-hand');
-    Object.assign(c.state,blocked);if(blocked.hidden)c.document.visibilityState='hidden';
-    c.syncRebuyPrompt(room,10000);assert.equal(c.state.modal,null,JSON.stringify(blocked));
-    assert.equal(c.commands.length,0);
-    c.state.modal={kind:'buyin'};c.syncRebuyPrompt(room,11000);
-    assert.equal(c.state.modal.kind,'buyin','a manually opened dialog is not timed out');
+    const c=harness(),room=rebuyRoom(c);Object.assign(c.state,blocked);if(blocked.hidden)c.document.visibilityState='hidden';
+    c.syncRebuyPrompt(room,6000);assert.equal(c.modals.length,0);
+    c.state.modal={kind:'hand-library'};c.syncRebuyPrompt(room,7000);assert.equal(c.state.modal.kind,'hand-library');assert.equal(c.modals.length,0);assert.equal(c.commands.length,0);
   }
+});
+
+test('queued or completed topups clear empty-stack attention and retain their status',()=>{
+  const status={textContent:''},container={classList:{toggle(name,on){this[name]=on;}}};
+  const c=harness({document:{querySelectorAll:s=>s==='[data-topup-status]'?[status]:s==='.table-topup'?[container]:[]}}),room=rebuyRoom(c);
+  c.syncRebuyPrompt(room,6000);assert.equal(container.classList['needs-chips'],true);
+  room.players[0].pendingBuyIn=2000;c.syncRebuyPrompt(room,6500);assert.equal(container.classList['needs-chips'],false);assert.match(status.textContent,/待加 2,000 积分 · 下一手/);
+  room.players[0].pendingBuyIn=0;room.players[0].stack=2000;c.syncRebuyPrompt(room,7000);assert.equal(container.classList['needs-chips'],false);assert.match(status.textContent,/筹码 2,000/);
+  room.players[0].stack=0;room.status='closed';c.syncRebuyPrompt(room,8000);assert.equal(container.classList['needs-chips'],false);
 });
 
 test('sit and rebuy confirmations cannot submit from disconnected or resynchronizing table data',async()=>{
@@ -318,4 +309,14 @@ test('unlimited fish options preserve disabled choices and reveal only applicabl
   form.fields.get('squidMode').value='normal';c.updateSettingConstraints(form);assert.equal(extra.hidden,true);assert.equal(form.fields.get('squidExtraTokens').disabled,true);assert.match(rule.textContent,/已有鱼不再增加/);
   form.fields.get('squid').checked=false;form.fields.get('squidMode').value='unlimited';c.updateSettingConstraints(form);
   settings=c.readSettings(form);assert.equal(settings.squid,false);assert.equal(settings.squidMode,'unlimited');assert.equal(settings.squidExtraTokens,0);assert.equal(form.fields.get('squidMode').disabled,true);
+});
+
+
+test('compact summary clock stays compact after ticking while details retain the full explanation',()=>{
+ const makeClock=compact=>({dataset:{roomClock:compact?'compact':''},attrs:{},classList:{toggle(){}},setAttribute(k,v){this.attrs[k]=v;}}),summary=makeClock(true),detail=makeClock(false);
+ const document={querySelectorAll:s=>s==='[data-room-clock]'?[summary,detail]:[]},c=harness({document});
+ c.state.room={status:'playing',endsAt:Date.now()+55000,settings:{durationMinutes:60},players:[]};c.tick();
+ assert.match(summary.textContent,/^0:5[45]$/);assert.match(detail.textContent,/^剩余 0:5[45]$/);assert.equal(summary.attrs['aria-label'],detail.textContent);
+ c.state.room.endsAt=Date.now()-1000;c.state.room.expiryMode='finish-squid';c.tick();assert.equal(summary.textContent,'鱿鱼加时');assert.equal(detail.textContent,'已到时 · 打完本轮鱿鱼');
+ c.state.room.endsAt=null;c.tick();assert.equal(summary.textContent,'未开始');assert.match(detail.textContent,/首手开始计时/);
 });

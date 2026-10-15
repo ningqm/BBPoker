@@ -27,17 +27,18 @@ function harness(){
   vm.runInContext([
     'const requests=createRequestGuard();',section('const state=','const num='),
     section('function captureRoomChanges(','function normalizeState('),
+    section('function flushTableFeedback(','function render('),
     section('const emotes=','const layouts='),
     section('async function replayModal(','function renderReplay('),
+    section('function finishComposition(', 'function flushTableFeedback('),
     section('function closeModal(','dialog.addEventListener('),
-    'globalThis.client={state,requests,captureRoomChanges,sendChat,chatPanel,loadLibrary,handLibrary,favoriteHand,replayModal,closeModal};',
+    'globalThis.client={state,requests,captureRoomChanges,flushTableFeedback,sendChat,chatPanel,loadLibrary,handLibrary,favoriteHand,replayModal,closeModal};',
   ].join('\n'),context);
   client=context.client;client.state.connected=true;client.state.user={id:'me',name:'Me'};client.state.room={code:'123456',meId:'me',chat:[]};client.state.page='room';
   // A room delivery captures changes and then renders them. Execute the exact
-  // post-render consumer as well: capture alone intentionally never plays audio.
+  // render-entry consumer as well: capture alone intentionally never plays audio.
   // The complete DOM render/identity race is covered in combined-client-events.
-  vm.runInContext('globalThis.consumeRenderedFeedback=()=>{'+section('if(state.pendingFeedback){','mountFunEffects(app.querySelector')+'}',context);
-  return {...client,calls,toasts,draws,audioFeedback,captureRoomChanges(previous,room){client.captureRoomChanges(previous,room);context.consumeRenderedFeedback();}};
+  return {...client,calls,toasts,draws,audioFeedback,captureRoomChanges(previous,room){client.captureRoomChanges(previous,room);client.flushTableFeedback();}};
 }
 function deferredRoom(chat=[]){return {code:'123456',meId:'me',chat,hand:{id:'hand1',number:1,status:'playing',board:[],actingId:'me',actionSeq:0,log:[]}};}
 

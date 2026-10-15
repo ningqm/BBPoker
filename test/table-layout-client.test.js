@@ -15,23 +15,25 @@ function harness({realBoardCards=false}={}){
     avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI,formatAction:a=>a.type||a,
     boardCard:()=>'<span class="board-slot"></span>',streetNames:{flop:'翻牌'},
     autoDealText:()=> '5 秒后自动发下一手',actionArea:()=>'<div class="action-area"></div>',chatPanel:()=>'',errorPage:()=>''});
-  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const card=','const feedback='),realBoardCards?section('function boardCard(','async function playerStatsModal('):'',section('const layouts=','function boardCard('),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.client={state,seatView,seatHoleCards,tableCenter,roomView,gameModeMarkers,miniPanel,seatTimeBankEnabled};'].join('\n'),context);
+  vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const card=','const feedback='),realBoardCards?section('function boardCard(','async function playerStatsModal('):'',section('const layouts=','function boardCard('),section('function tableCenter(','function seatActions('),section('function roomView(){','function tableInfoModal('),section('function miniPanel(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.client={state,seatView,seatHoleCards,tableCenter,roomView,roomStatusBar,gameModeMarkers,miniPanel,seatTimeBankEnabled};'].join('\n'),context);
   return context.client;
 }
 function room(count=9){return {code:'fixture',name:'本地验收桌',status:'waiting',hostId:'p0',meId:'p0',settings:{maxPlayers:count,smallBlind:5,bigBlind:10,durationMinutes:60,squid:true,squidUnit:20,squidUnitBB:2,bombPot:true,bombAnte:30,bombAnteBB:3,bombIntervalMinutes:10},players:Array.from({length:count},(_,i)=>({id:'p'+i,name:'玩家昵称'+i,seat:i,stack:2000,connected:true})),mini:{squid:{active:false}},actions:{}};}
 
-test('idle table shows core settings inside the felt while the header keeps title, connection and invite',()=>{
+test('idle table moves settings into the compact header and reserves the felt for play',()=>{
   setDisplayUnit('points');const c=harness(),r=room(2);c.state.room=r;const html=c.roomView(),head=html.slice(0,html.indexOf('<div class="game-grid"')),center=c.tableCenter(r);
-  assert.match(head,/本地验收桌/);assert.match(head,/data-connection/);assert.match(head,/data-action="invite"/);assert.doesNotMatch(head,/data-room-clock|game-mode-markers|table-blinds/);
-  assert.match(center,/table-config/);assert.match(center,/5 \/ 10 积分/);assert.match(center,/60 分钟 · 首手开始计时/);assert.match(center,/20 积分\/人/);assert.match(center,/30 积分\/人/);assert.match(center,/title="1 BB = 10 积分"/);
+  assert.match(head,/本地验收桌/);assert.match(head,/data-connection/);assert.match(head,/data-action="invite"/);assert.match(head,/room-status-bar/);
+  assert.match(head,/5 \/ 10 积分/);assert.match(head,/data-room-clock="compact"/);assert.match(head,/>未开始</);assert.match(head,/60 分钟 · 首手开始计时/);assert.match(head,/每条 20 积分/);assert.match(head,/每人前注 30 积分/);assert.match(head,/title="1 BB = 10 积分"/);
+  assert.doesNotMatch(center,/table-config|game-mode-markers|table-blinds|data-room-clock/);assert.match(center,/朋友已就位/);
 });
 
-test('core settings and live countdown hooks survive active, completed, rabbit and all-in hand views',()=>{
+test('compact header retains live mode counts through active, completed, rabbit and all-in states',()=>{
   setDisplayUnit('bb');const c=harness(),r=room();c.state.room=r;r.endsAt=Date.now()+60000;
   const hand={id:'h',number:1,status:'playing',street:'flop',board:['As','Kh','2d'],pot:990,bombPot:true,squidRound:2};
   r.mini.squid={active:true,round:2,unit:40,participants:r.players.map(p=>p.id),won:['p1','p2']};
   for(const extras of [{},{status:'complete',result:{mainWinnerIds:['p0'],pots:[{amount:990}]}},{rabbit:{board:['As','Kh','2d','3c','4s'],originalCount:3}},{equity:{pots:[{amount:990}]},runout:{active:true}}]){
-    r.hand={...hand,...extras};const html=c.tableCenter(r);assert.equal((html.match(/data-room-clock/g)||[]).length,1);assert.equal((html.match(/class="board-slot"/g)||[]).length,5);assert.match(html,/0\.5 \/ 1 BB/);assert.match(html,/4 BB\/人/);assert.match(html,/2\/9 有鱼/);assert.match(html,/>99 BB</);
+    r.hand={...hand,...extras};const html=c.tableCenter(r),header=c.roomStatusBar(r);assert.doesNotMatch(html,/data-room-clock|table-blinds|game-mode-markers/);assert.equal((html.match(/class="board-slot"/g)||[]).length,5);
+    assert.equal((header.match(/data-room-clock/g)||[]).length,1);assert.match(header,/0\.5 \/ 1 BB/);assert.match(header,/每条 4 BB/);assert.match(header,/>鱿鱼 2\/9</);assert.match(header,/2\/9 有鱼/);assert.match(html,/>99 BB</);
   }
   setDisplayUnit('points');
 });
@@ -46,15 +48,68 @@ test('every seat count and rotated viewpoint preserves unique seats and names ou
 });
 
 test('long player names and status descriptions are escaped, with all-in and position markers retained',()=>{
-  const c=harness(),r=room(2),p=r.players[1];c.state.room=r;p.name='<img src=x onerror=alert(1)>';p.inHand=true;p.cards=['As','Kd'];p.allIn=true;p.bet=1234;p.squidWon=true;
+  const c=harness(),r=room(2),p=r.players[1];c.state.room=r;p.name='<img src=x onerror=alert(1)>';p.inHand=true;p.cards=['As','Kd'];p.allIn=true;p.stack=0;p.bet=1234;p.squidWon=true;
   r.hand={id:'h',status:'playing',buttonSeat:1,smallBlindSeat:1,bigBlindSeat:0};const html=c.seatView(1,r);
-  assert.doesNotMatch(html,/<img/);assert.match(html,/title="&lt;img/);assert.match(html,/aria-label="查看 &lt;img/);assert.match(html,/title="庄家"/);assert.match(html,/title="小盲"/);assert.match(html,/squid-mark/);assert.match(html,/class="bet-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/class="seat-status[^>]*>All-in</);assert.match(html,/1,234 积分/);
+  assert.doesNotMatch(html,/<img/);assert.match(html,/title="&lt;img/);assert.match(html,/aria-label="查看 &lt;img/);assert.match(html,/title="庄家"/);assert.match(html,/title="小盲"/);assert.match(html,/squid-mark/);assert.match(html,/class="seat-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/bet-allin-label|class="seat-status[^>]*>All-in</);assert.match(html,/1,234 积分/);
 });
 
 test('unit display changes rendered amounts without modifying seat, pot or settings values',()=>{
   const c=harness(),r=room(2);r.hand={id:'h',status:'playing',number:1,street:'flop',pot:35,board:[]};r.players[0].inHand=true;r.players[0].bet=15;c.state.room=r;const before=JSON.stringify(r);
-  setDisplayUnit('bb');const bb=c.seatView(0,r)+c.tableCenter(r);assert.match(bb,/200 <small class="stack-unit">BB<\/small>/);assert.match(bb,/1\.5 BB/);assert.match(bb,/3\.5 BB/);assert.match(bb,/1 BB = 10 积分/);
-  setDisplayUnit('points');const points=c.seatView(0,r)+c.tableCenter(r);assert.match(points,/class="stack-value">2,000<\/div>/);assert.match(points,/15 积分/);assert.match(points,/35 积分/);assert.equal(JSON.stringify(r),before);
+  setDisplayUnit('bb');const bb=c.seatView(0,r)+c.tableCenter(r)+c.roomStatusBar(r);assert.match(bb,/200 <small class="stack-unit">BB<\/small>/);assert.match(bb,/1\.5 BB/);assert.match(bb,/3\.5 BB/);assert.match(bb,/1 BB = 10 积分/);
+  setDisplayUnit('points');const points=c.seatView(0,r)+c.tableCenter(r)+c.roomStatusBar(r);assert.match(points,/class="stack-value">2,000<\/div>/);assert.match(points,/15 积分/);assert.match(points,/35 积分/);assert.equal(JSON.stringify(r),before);
+});
+
+test('nine-way runout removes repeated wagers while preserving every public hand, category and main-pot equity',()=>{
+  setDisplayUnit('points');const c=harness(),r=room(9);c.state.room=r;r.status='playing';
+  const hands=[['As','Ad'],['Ks','Kd'],['Qs','Qd'],['Js','Jd'],['Ts','Td'],['9s','9d'],['8s','8d'],['7s','7d'],['6s','6d']];
+  r.hand={id:'nine-compact',number:8,status:'playing',street:'preflop',board:[],pot:900,runout:{active:true},equity:{method:'monte-carlo',players:r.players.map((p,i)=>({id:p.id,equity:i===0?20:10})),pots:[]}};
+  r.players.forEach((p,i)=>Object.assign(p,{inHand:true,allIn:true,stack:0,bet:100,contributed:100,cards:hands[i],handCategory:'一对'}));
+  const before=JSON.stringify(r);
+  for(const state of [{runout:{active:true},transition:null},{runout:{active:false},transition:{kind:'showdown',revealed:true}}]){
+    Object.assign(r.hand,state);const html=r.players.map((_,i)=>c.seatView(i,r)).join('');
+    assert.equal((html.match(/class="seat-allin-label"/g)||[]).length,9);
+    assert.equal((html.match(/class="hole-cards/g)||[]).length,9);assert.equal(elements(markupTree(html)).filter(node=>hasClass(node,'card')).length,18);
+    assert.equal((html.match(/class="equity-badge/g)||[]).length,9);assert.equal((html.match(/data-hand-category="pair"/g)||[]).length,9);
+    assert.doesNotMatch(html,/class="bet-chip|bet-allin-label/);
+    assert.match(html,/主池权益/);assert.match(html,/含平分份额/);assert.match(html,/此百分比不代表各边池权益/);
+  }
+  Object.assign(r.hand,{runout:{active:true}});delete r.hand.transition;assert.equal(JSON.stringify(r),before,'compacting the display never sweeps or modifies chips locally');
+});
+
+test('deep callers, folded players and newly seated players never inherit a zero-stack All-in marker',()=>{
+  setDisplayUnit('points');const c=harness(),r=room(3);c.state.room=r;r.hand={id:'live',status:'playing',board:[],street:'flop',runout:{active:true}};
+  const p=r.players[1];Object.assign(p,{inHand:true,allIn:false,stack:500,bet:100,contributed:300});
+  let html=c.seatView(1,r);assert.match(html,/class="stack-value">500<\/div>/);assert.doesNotMatch(html,/seat-allin-label|class="bet-chip/);
+  p.allIn=true;assert.doesNotMatch(c.seatView(1,r),/seat-allin-label/,'inconsistent old All-in flag must not hide real remaining chips');
+  p.stack=0;assert.match(c.seatView(1,r),/class="seat-allin-label">All-in<\/span>/);
+  p.folded=true;assert.doesNotMatch(c.seatView(1,r),/seat-allin-label/);p.folded=false;p.inHand=false;assert.doesNotMatch(c.seatView(1,r),/seat-allin-label/);
+  p.inHand=true;r.hand.status='complete';r.hand.result={payouts:{[p.id]:500}};p.stack=500;html=c.seatView(1,r);
+  assert.doesNotMatch(html,/seat-allin-label|class="bet-chip/);assert.match(html,/class="stack-value">500<\/div>/);assert.match(html,/收池 500 积分/);
+});
+
+test('a live betting round retains the wager amount and only the card shows All-in',()=>{
+  setDisplayUnit('points');const c=harness(),r=room(3);c.state.room=r;r.hand={id:'betting',status:'playing',actingId:'p2',board:[],street:'preflop'};
+  const p=r.players[1];Object.assign(p,{inHand:true,allIn:true,stack:0,bet:150,contributed:150});
+  let html=c.seatView(1,r);assert.match(html,/class="seat-allin-label">All-in<\/span>/);assert.match(html,/class="bet-chip/);assert.match(html,/本轮已投入 150 积分，All-in/);assert.match(html,/class="bet-value">150/);assert.doesNotMatch(html,/bet-allin-label/);
+  p.bet=0;html=c.seatView(1,r);assert.match(html,/seat-allin-label/);assert.doesNotMatch(html,/class="bet-chip/,'previous street All-in does not create an empty wager label');
+});
+
+test('the total pot opens equity details on demand without a separate table button or losing side pots',()=>{
+  setDisplayUnit('points');const c=harness(),r=room(3);c.state.room=r;r.hand={id:'pots',number:1,status:'playing',street:'flop',board:['As','Kh','2d'],pot:800,pots:[{amount:300,eligibleIds:['p0','p1','p2']},{amount:500,eligibleIds:['p1','p2']}]};r.players[0].inHand=true;r.players[0].allIn=true;
+  let html=c.tableCenter(r);assert.match(html,/<div class="pot-total">/);assert.doesNotMatch(html,/data-action="equity-details"/);
+  r.hand.equity={players:[],pots:[]};html=c.tableCenter(r);
+  assert.equal((html.match(/data-action="equity-details"/g)||[]).length,1);assert.match(html,/<button[^>]*data-action="equity-details"[^>]*aria-label="查看主池及各边池胜率"[^>]*class="pot-total/);
+  assert.doesNotMatch(html,/equity-runout|>胜率详情</);assert.match(html,/总底池<\/span><strong>800 积分/);assert.match(html,/主池<b>300 积分/);assert.match(html,/边池 1<b>500 积分/);
+});
+
+test('on-demand equity details retain eligible side-pot players and explain the seat percentage',()=>{
+  setDisplayUnit('points');const r=room(3),rows=[{id:'p0',equity:20,winPct:15,tiePct:10},{id:'p1',equity:35,winPct:35,tiePct:0},{id:'p2',equity:45,winPct:45,tiePct:0}];
+  r.hand={board:['As','Kh','2d'],equity:{method:'exact',samples:990,players:rows,pots:[{amount:300,eligibleIds:['p0','p1','p2'],players:rows},{amount:500,eligibleIds:['p1','p2'],players:[{id:'p0',equity:99},{id:'p1',equity:40},{id:'p2',equity:60}]}]}};
+  let opened;const context=vm.createContext({state:{room:r},dialog:{scrollTop:12,querySelector:()=>null},card:()=>'',formatChips,num:String,openModal:(title,body,kind)=>{opened={title,body,kind};}});
+  vm.runInContext([section('const esc=','const fmtDate='),section('function equityDetails(','function miniPanel('),'equityDetails();'].join('\n'),context);
+  assert.equal(opened.title,'全下胜率');assert.equal(opened.kind,'equity');assert.match(opened.body,/座位上的百分比为主池权益，平局按分得的份额计入/);
+  const potSections=[...opened.body.matchAll(/<section class="table-info-section">([\s\S]*?)<\/section>/g)].map(match=>match[1]);assert.equal(potSections.length,2);
+  assert.match(potSections[0],/玩家昵称0/);assert.doesNotMatch(potSections[1],/玩家昵称0|99\.0%/);assert.match(potSections[1],/玩家昵称1[\s\S]*40\.0%/);assert.match(potSections[1],/玩家昵称2[\s\S]*60\.0%/);assert.equal(context.dialog.scrollTop,12);
 });
 
 test('narrow-screen rules keep badges beside the identity card and retain reachable play and reveal controls',()=>{
@@ -101,7 +156,7 @@ test('identity data controls retain separate own-card reveals and empty seats',(
   assert.doesNotMatch(own,/seat-interaction-hit/);r.players.pop();assert.doesNotMatch(c.seatView(2,r),/data-action="player-stats"/);
 });
 
-test('blind badges remain while routine action and All-in labels stay off the player card', () => {
+test('blind badges remain while routine actions stay hidden and All-in replaces the empty stack', () => {
   const c=harness(),r=room(2);c.state.room=r;
   r.hand={id:'h',status:'playing',buttonSeat:0,smallBlindSeat:0,bigBlindSeat:1};
   for (const [i,type] of [[0,'smallBlind'],[1,'bigBlind']]) {
@@ -113,8 +168,8 @@ test('blind badges remain while routine action and All-in labels stay off the pl
   assert.match(c.seatView(0,r), /class="dealer-button" title="庄家" aria-label="庄家"/);
   r.players[0].lastAction={type:'raise',to:50};
   assert.doesNotMatch(c.seatView(0,r), /title="raise"/);
-  r.players[0].lastAction=null;r.players[0].allIn=true;r.players[0].bet=100;
-  const html=c.seatView(0,r);assert.match(html,/class="bet-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/class="seat-status[^>]*>All-in</);
+  r.players[0].lastAction=null;r.players[0].allIn=true;r.players[0].stack=0;r.players[0].bet=100;
+  const html=c.seatView(0,r);assert.match(html,/class="seat-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/bet-allin-label|class="seat-status[^>]*>All-in</);
 });
 
 test('nine-player unlimited and bomb markers retain exact fish counts for every viewpoint',()=>{
@@ -122,7 +177,7 @@ test('nine-player unlimited and bomb markers retain exact fish counts for every 
   r.mini.squid={active:true,mode:'unlimited',round:2,unit:20,extraTokens:3,tokenBudget:12,participants:r.players.map(p=>p.id),counts:Object.fromEntries(r.players.map((p,i)=>[p.id,i===4?3:i===5?1:0])),won:['p4','p5']};
   r.players[4].squidCount=3;r.players[5].squidCount=1;
   r.hand={id:'nine',number:8,status:'playing',street:'flop',board:['As','2h','3c'],pot:270,bombPot:true,buttonSeat:4,smallBlindSeat:5,bigBlindSeat:6,squidRound:2};
-  const markers=c.gameModeMarkers(r);assert.match(markers,/无限/);assert.match(markers,/余 8\/12 · 7人无鱼/);assert.match(markers,/本手炸弹池/);assert.match(markers,/2 BB\/鱼/);
+  const markers=c.gameModeMarkers(r);assert.match(markers,/无限/);assert.match(markers,/余 8\/12 · 7人无鱼/);assert.match(markers,/本手炸弹池/);assert.match(markers,/每条 2 BB/);
   for(const me of ['p0','p4','p8']){r.meId=me;for(let seat=0;seat<9;seat++){const html=c.seatView(seat,r);assert.doesNotMatch(html,/title="小盲"|title="大盲"/);if(seat===4){assert.match(html,/title="庄家"/);assert.match(html,/本轮已获 3 条鱼/);assert.match(html,/>鱼×3</);}}}
   const panel=c.miniPanel(r);assert.match(panel,/本轮 12 条鱼，剩余 8 条；7 人还没鱼/);assert.equal((panel.match(/<span class="(?:has-fish|no-fish)">/g)||[]).length,9);assert.match(panel,/未发出的鱼不计费/);
   setDisplayUnit('points');
@@ -189,24 +244,23 @@ function thinkingRoom(){
   r.deadline=Date.now()+19900;r.actions={canAct:true,canUseTimeBank:true,timeBankCards:6};return r;
 }
 
-test('All-in is beside the actual inward wager, never in the player identity or on its hole cards',()=>{
+test('All-in occupies the zero-stack line while the actual inward wager contains only its amount',()=>{
   setDisplayUnit('points');const c=harness(),r=room(9),p=r.players[1];c.state.room=r;
-  Object.assign(p,{inHand:true,allIn:true,bet:1100,contributed:1500,cards:['As','Kh']});r.hand={status:'playing'};
+  Object.assign(p,{inHand:true,allIn:true,stack:0,bet:1100,contributed:1500,cards:['As','Kh']});r.hand={status:'playing'};
   for(const viewer of ['p0','p1','p4','p8']){
-    r.meId=viewer;const tree=markupTree(c.seatView(1,r)),chip=oneClass(tree,'bet-chip'),label=oneClass(tree,'bet-allin-label'),main=oneClass(tree,'seat-main');
-    assert.equal(label.parent,chip);assert.equal(chip.parent,main.parent);assert.equal(label.text,'All-in');
-    assert.equal(oneClass(chip,'bet-value').text,'1,100 积分');assert.doesNotMatch(main.text,/All-in/);
-    assert.match(chip.attrs['aria-label'],/本轮.*1,100/);assert.equal((elements(tree).filter(el=>hasClass(el,'bet-allin-label'))).length,1);
+    r.meId=viewer;const tree=markupTree(c.seatView(1,r)),chip=oneClass(tree,'bet-chip'),label=oneClass(tree,'seat-allin-label'),main=oneClass(tree,'seat-main');
+    assert.equal(label.parent,oneClass(main,'stack-value'));assert.equal(chip.parent,main.parent);assert.equal(label.text,'All-in');
+    assert.equal(oneClass(chip,'bet-value').text,'1,100 积分');assert.doesNotMatch(chip.text,/All-in/);assert.doesNotMatch(oneClass(main,'hole-cards').text,/All-in/);
+    assert.match(chip.attrs['aria-label'],/本轮.*1,100.*All-in/);assert.equal(elements(tree).filter(el=>hasClass(el,'seat-allin-label')).length,1);assert.equal(oneClass(tree,'bet-allin-label'),undefined);
   }
 });
 
 test('after the street sweeps chips in, All-in stays visible without inventing a second cumulative wager',()=>{
   setDisplayUnit('points');const c=harness(),r=room(9),p=r.players[1];c.state.room=r;
-  Object.assign(p,{inHand:true,allIn:true,bet:0,contributed:1500});r.hand={status:'playing',runout:{active:true}};
+  Object.assign(p,{inHand:true,allIn:true,stack:0,bet:0,contributed:1500});r.hand={status:'playing',runout:{active:true}};
   const before=JSON.stringify(r),tree=markupTree(c.seatView(1,r)),chip=oneClass(tree,'bet-chip');
-  assert.ok(oneClass(chip,'poker-chip'));assert.equal(oneClass(chip,'bet-allin-label').text,'All-in');
-  assert.equal(oneClass(chip,'bet-value'),undefined);assert.doesNotMatch(chip.text,/1,500|0 积分/);
-  assert.match(chip.attrs['aria-label'],/1,500/);assert.match(chip.attrs['aria-label'],/底池|累计|本手/);assert.equal(JSON.stringify(r),before);
+  assert.equal(chip,undefined);assert.equal(oneClass(tree,'seat-allin-label').text,'All-in');
+  assert.doesNotMatch(tree.text,/1,500|0 积分/);assert.equal(JSON.stringify(r),before);
   p.folded=true;assert.equal(oneClass(markupTree(c.seatView(1,r)),'bet-chip'),undefined);
   p.folded=false;r.hand.status='complete';assert.equal(oneClass(markupTree(c.seatView(1,r)),'bet-chip'),undefined);
 });
@@ -332,4 +386,70 @@ test('side-seat winners keep one compact payout alongside the category without s
   assert.match(c.seatView(3,r),/seat-status-inline[\s\S]*离线/);
   r.players[3].handCategory=null;const hidden=c.seatView(3,r);
   assert.doesNotMatch(hidden,/seat-status-inline|hand-category/);assert.match(hidden,/离线/);
+});
+
+
+test('mode settings live outside the felt in every hand state and cannot crowd the board',()=>{
+ const c=harness(),r=room(9);c.state.room=r;
+ for(const hand of [null,{id:'a',status:'playing',number:1,board:[],pot:50},{id:'a',status:'complete',number:1,board:['As','Ks','Qs','Js','Ts'],pot:300,result:{payouts:{p0:300}}}]){
+  r.hand=hand;const tree=markupTree(c.roomView()),head=oneClass(tree,'room-head'),stage=oneClass(tree,'table-stage');
+  assert.ok(oneClass(head,'room-status-bar'));assert.ok(oneClass(head,'game-mode-markers'));assert.ok(oneClass(stage,'table-center'));
+  assert.equal(oneClass(stage,'room-status-bar'),undefined);assert.equal(oneClass(stage,'game-mode-markers'),undefined);assert.equal(oneClass(tree,'table-config'),undefined);
+  assert.equal(elements(tree).filter(el=>hasClass(el,'room-status-bar')).length,1);
+ }
+});
+
+test('the next player is neutral until dealing and authoritative readiness finish',()=>{
+ const c=harness(),r=room(9);c.state.room=r;r.status='playing';r.hand={id:'first',status:'playing',actingId:'p0',actionReadyAt:Date.now()-1000};r.deadline=Date.now()+19000;
+ r.actions={turnAvailable:true,canAct:false};let tree=markupTree(c.seatView(0,r));
+ assert.equal(hasClass(oneClass(tree,'seat'),'acting'),false);assert.ok(oneClass(tree,'is-preparing'));assert.match(oneClass(tree,'seat-turn').text,/发牌中/);
+ r.actions.canAct=true;tree=markupTree(c.seatView(0,r));assert.ok(hasClass(oneClass(tree,'seat'),'acting'));assert.equal(oneClass(tree,'is-preparing'),undefined);
+ r.meId='p1';r.actions={turnAvailable:false,canAct:false};tree=markupTree(c.seatView(0,r));assert.ok(hasClass(oneClass(tree,'seat'),'acting'));
+});
+
+test('hero payout and hand category share one information line instead of overlapping below the identity',()=>{
+ const c=harness(),r=room(9);r.status='playing';c.state.room=r;
+ Object.assign(r.players[0],{inHand:true,cards:['As','Kd'],handCategory:'两对'});
+ r.hand={id:'hero-result',status:'complete',board:['Ah','Kh','7c','2s','3h'],result:{payouts:{p0:120}}};
+ const tree=markupTree(c.seatView(0,r)),main=oneClass(tree,'seat-main'),info=oneClass(tree,'seat-hand-info');
+ assert.equal(oneClass(main,'seat-status'),undefined);assert.ok(oneClass(info,'seat-status-inline'));assert.ok(oneClass(info,'hand-category'));
+ assert.equal(elements(tree).filter(el=>hasClass(el,'seat-status')).length,1);
+});
+
+// A compact mobile suffix must never shorten the amount or its accessible unit.
+test('compact wager units preserve complete point and BB values, All-in state and accessible descriptions',()=>{
+ const c=harness(),r=room(9);c.state.room=r;r.hand={id:'unit-wager',status:'playing'};
+ const player=r.players[0];Object.assign(player,{inHand:true,stack:0,bet:2760,contributed:2760,allIn:true});
+ const before=JSON.stringify(r);
+ for(const [unit,amount,suffix] of [['points','2,760','积分'],['bb','276','BB']]){
+  setDisplayUnit(unit);const tree=markupTree(c.seatView(0,r)),chip=oneClass(tree,'bet-chip');
+  assert.equal(chip.attrs['data-unit'],unit);assert.equal(oneClass(chip,'bet-value').text,`${amount} ${suffix}`);
+  assert.equal(oneClass(chip,'bet-unit').text,` ${suffix}`);assert.equal(oneClass(tree,'seat-allin-label').text,'All-in');assert.equal(oneClass(chip,'bet-allin-label'),undefined);
+  assert.match(chip.attrs['aria-label'],new RegExp(`${amount} ${suffix}，All-in`));assert.equal(chip.attrs.title,chip.attrs['aria-label']);
+ }
+ assert.equal(JSON.stringify(r),before);setDisplayUnit('points');
+});
+
+
+test('top-seat receipts use the above-seat information lane with or without public cards in every rotated layout',()=>{
+ setDisplayUnit('bb');const c=harness();let checked=0;
+ for(let count=2;count<=9;count++)for(let viewer=0;viewer<count;viewer++){
+  const r=room(count);r.meId='p'+viewer;r.status='playing';c.state.room=r;
+  for(const player of r.players){
+   if(scene.seatPlacement(r,player.seat).edge!=='top')continue;
+   for(const category of [null,'葫芦']){
+    Object.assign(player,{inHand:true,cards:category?['Kh','Qd']:[null,null],handCategory:category});
+    r.hand={id:'top-result',status:'complete',result:{payouts:{[player.id]:300}}};
+    const tree=markupTree(c.seatView(player.seat,r)),main=oneClass(tree,'seat-main'),info=oneClass(tree,'seat-hand-info'),receipt=oneClass(info,'seat-status-inline');
+    assert.equal(oneClass(main,'seat-status'),undefined,`${count} seats, viewer ${viewer}: receipt must not live in downward card lane`);
+    assert.ok(receipt);assert.equal(receipt.attrs.title,'收池 30 BB');assert.match(receipt.text,/＋30 BB/);
+    assert.equal(elements(tree).filter(el=>hasClass(el,'seat-status')).length,1);assert.equal(Boolean(oneClass(info,'hand-category')),Boolean(category));assert.ok(oneClass(main,'hole-cards'));
+    assert.equal(oneClass(tree,'seat-turn'),undefined);checked++;
+   }
+   // The same lane also protects top-seat hole cards on disconnect during play.
+   player.connected=false;player.handCategory=null;r.hand={id:'top-playing',status:'playing'};
+   const tree=markupTree(c.seatView(player.seat,r));assert.equal(oneClass(oneClass(tree,'seat-main'),'seat-status'),undefined);assert.match(oneClass(oneClass(tree,'seat-hand-info'),'seat-status-inline').text,/离线/);player.connected=true;
+  }
+ }
+ assert.ok(checked>100);setDisplayUnit('points');
 });

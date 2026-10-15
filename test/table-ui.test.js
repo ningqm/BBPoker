@@ -6,11 +6,11 @@ import {formatChips,chipInputValue,getDisplayUnit,unitLabel} from '../public/mon
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { betPresetOptions, betActionLabel, normalizeBetAmount, betAmountFromSlider, betSliderFromAmount, betSelection, syncBetControls, betSliderKeyPosition, betActionEnabled, revealOptions } from '../public/table-controls.js';
+import { betPresetOptions, betActionLabel, betTurnKey, normalizeBetAmount, betAmountFromSlider, betSliderFromAmount, betSelection, syncBetControls, betSliderKeyPosition, betActionEnabled, revealOptions } from '../public/table-controls.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(){
-  const context=vm.createContext({...scene,renderHandCategory,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betSliderKeyPosition,betActionEnabled,revealOptions,Date,formatChips,chipInputValue,getDisplayUnit,unitLabel,boardCard:()=>'<span class="fixture-board-card"></span>',streetNames:{preflop:'翻前',flop:'翻牌'},
+  const context=vm.createContext({...scene,renderHandCategory,lifecycle,betPresetOptions,betActionLabel,betTurnKey,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betSliderKeyPosition,betActionEnabled,revealOptions,Date,formatChips,chipInputValue,getDisplayUnit,unitLabel,boardCard:()=>'<span class="fixture-board-card"></span>',streetNames:{preflop:'翻前',flop:'翻牌'},
     state:{connected:true,busy:false,raise:20,timeOffset:0,chatOpen:false,chatUnread:0},
     cards:()=>'<span class="fixture-card"></span>',tableCenter:()=>'<div class="table-center"></div>',seatView:()=>'<div class="seat"></div>',chatPanel:()=>'',roomClock:()=> '剩余 59:59',errorPage:()=>'',
   });
@@ -119,21 +119,21 @@ test('table tool strip keeps play-related tools and removes general data and leg
   for(const action of ['toggle-chat','interact','history','table-info','room-menu'])assert.match(html,new RegExp('data-action="'+action+'"'));
 });
 
-test('seat lifecycle status remains separate from live All-in chips and completed payouts',()=>{
+test('seat lifecycle status remains separate from the zero-stack All-in marker and completed payouts',()=>{
   const context=vm.createContext({...scene,renderHandCategory,lifecycle,formatChips,chipInputValue,getDisplayUnit,unitLabel,revealOptions,betActionEnabled,state:{},avatar:()=>'',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI:{renderEquityBadge:()=>''},formatAction:action=>({call:'跟注',check:'过牌',raise:'加注',timeout:'超时'})[action]||String(action)});
   vm.runInContext([section('const esc=','const fmtDate='),section('const btn=','const avatar='),section('const layouts=','function boardCard('),'globalThis.draw=seatView;'].join('\n'),context);
-  const r=room(),p=r.players[1];r.hand={status:'playing',actingId:'me'};p.connected=true;p.inHand=true;p.allIn=true;p.bet=100;p.contributed=100;
-  let html=context.draw(1,r);assert.match(html,/class="bet-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/class="seat-status[^>]*>All-in</);
-  p.connected=false;html=context.draw(1,r);assert.match(html,/data-tone="waiting">离线/);assert.match(html,/class="bet-allin-label"[^>]*>All-in</,'a disconnected participant still has its actual All-in committed');
+  const r=room(),p=r.players[1];r.hand={status:'playing',actingId:'me'};p.connected=true;p.inHand=true;p.allIn=true;p.stack=0;p.bet=100;p.contributed=100;
+  let html=context.draw(1,r);assert.match(html,/class="seat-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/bet-allin-label|class="seat-status[^>]*>All-in</);assert.match(html,/本轮已投入 100 积分，All-in/);
+  p.connected=false;html=context.draw(1,r);assert.match(html,/data-tone="waiting">离线/);assert.match(html,/class="seat-allin-label"[^>]*>All-in</,'a disconnected participant still has its actual All-in committed');
   p.connected=true;p.sittingOut=true;assert.match(context.draw(1,r),/data-tone="waiting">暂离/);
   r.mini={squid:{active:true,round:2,mode:'normal',participants:['me','away','third'],counts:{me:0,away:1,third:0},tokenBudget:2}};
   p.sittingOut=false;p.waitingFor='squid';p.inHand=false;
   p.squidJoin={status:'next-hand',round:2,reason:'本手结束后核对预留与补盲，满足条件的下一手以 0 鱼加入',requiredReserve:60,tokenBudgetAfterJoin:3};
-  html=context.draw(1,r);assert.match(html,/data-tone="waiting">待入本轮/);assert.doesNotMatch(html,/class="bet-allin-label"|等待下一轮/);
-  p.inHand=true;assert.match(context.draw(1,r),/class="bet-allin-label"[^>]*>All-in</);
+  html=context.draw(1,r);assert.match(html,/data-tone="waiting">待入本轮/);assert.doesNotMatch(html,/seat-allin-label|bet-allin-label|等待下一轮/);
+  p.inHand=true;assert.match(context.draw(1,r),/class="seat-allin-label"[^>]*>All-in</);
   p.allIn=false;p.waitingFor=null;p.lastAction='call';assert.doesNotMatch(context.draw(1,r),/>跟注<|data-tone="call"/);
   p.lastAction='timeout';assert.doesNotMatch(context.draw(1,r),/>超时</);
-  r.hand={status:'complete',result:{mainWinnerIds:[p.id],payouts:{[p.id]:100}}};p.connected=false;assert.match(context.draw(1,r),/data-tone="win">收池 100 积分/);
+  r.hand={status:'complete',result:{mainWinnerIds:[p.id],payouts:{[p.id]:100}}};p.connected=false;p.allIn=true;p.stack=100;html=context.draw(1,r);assert.match(html,/data-tone="win">收池 100 积分/);assert.doesNotMatch(html,/seat-allin-label|bet-allin-label/);
 });
 
 test('the last available chips are labeled all-in both for a call and the raise amount controls',()=>{
@@ -144,7 +144,7 @@ test('the last available chips are labeled all-in both for a call and the raise 
   c.state.raise=20;assert.match(c.actionArea(r,me,true),/data-action="raise"[^>]*data-allin="false"[^>]*>加至 20/);
   const nodes=new Map(['#raise-button','#raise-range','#raise-amount'].map(id=>[id,{dataset:{},setAttribute(){}}]));
   c.state.room=r;
-  const context=vm.createContext({...scene,renderHandCategory,state:c.state,$:id=>nodes.get(id),document:{querySelectorAll:()=>[]},betActionLabel,betPresetOptions,normalizeBetAmount,betSliderFromAmount,betSelection,betActionEnabled,chipInputValue,unitLabel,esc:String,chips:value=>formatChips(value,r.settings.bigBlind),num:value=>String(value)});
+  const context=vm.createContext({...scene,renderHandCategory,state:c.state,$:id=>nodes.get(id),document:{querySelectorAll:()=>[]},betActionLabel,betPresetOptions,betTurnKey,normalizeBetAmount,betSliderFromAmount,betSelection,betActionEnabled,chipInputValue,unitLabel,esc:String,chips:value=>formatChips(value,r.settings.bigBlind),num:value=>String(value)});
   vm.runInContext(section('function setRaise(','document.addEventListener(')+';globalThis.adjust=setRaise;',context);
   context.adjust(1000);assert.equal(nodes.get('#raise-button').dataset.allin,'true');assert.match(nodes.get('#raise-button').textContent,/All-in/);
   context.adjust(25);assert.equal(nodes.get('#raise-button').dataset.allin,'false');assert.match(nodes.get('#raise-amount').innerHTML,/加至 <b>30 积分/);assert.match(nodes.get('#raise-button').textContent,/加至 30/);
@@ -154,9 +154,9 @@ test('rounded or clamped fraction presets remain enabled and short all-ins do no
   const c=harness(),r=room();c.state.room=r;r.hand={status:'playing',currentBet:50,pot:105};r.players[0].bet=20;
   r.actions={canAct:true,canFold:true,canCheck:false,callAmount:30,canRaise:true,minRaiseTo:100,maxRaiseTo:150};
   const html=c.actionArea(r,r.players[0],true);
-  assert.match(html,/<button[^>]*data-preset="third"[^>]*title="加至 100 积分"[^>]*>/);
-  assert.match(html,/<button[^>]*data-preset="pot"[^>]*title="All-in 150 积分"[^>]*>/);
-  assert.match(html,/<button[^>]*data-preset="half"[^>]*title="加至 120 积分"[^>]*>/);
+  assert.match(html,/<button[^>]*data-preset="third"[^>]*aria-label="1\/3池，加至 100 积分，点击直接下注"[^>]*>/);
+  assert.match(html,/<button[^>]*data-preset="pot"[^>]*aria-label="满池，All-in 150 积分，点击直接下注"[^>]*>/);
+  assert.match(html,/<button[^>]*data-preset="half"[^>]*aria-label="1\/2池，加至 120 积分，点击直接下注"[^>]*>/);
   assert.doesNotMatch(html,/<button[^>]*data-preset="[^"]+"[^>]*disabled/);
   r.actions={...r.actions,canRaise:false,canAllIn:true,maxRaiseTo:70};
   const short=c.actionArea(r,r.players[0],true);assert.doesNotMatch(short,/id="raise-range"|data-action="raise"/);assert.match(short,/data-action="allin"/);

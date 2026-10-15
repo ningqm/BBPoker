@@ -21,7 +21,7 @@ function harness(){
     FormData:class{constructor(form){this.form=form;}get(key){return this.form.elements?.namedItem(key)?.value??this.form.values?.[key]??null;}},
     tableCenter:()=>'',seatView:()=>'',actionArea:()=>'',chatPanel:()=>'',errorPage:()=>'',
   });
-  vm.runInContext([section('const esc=','const profitClass='),section('const btn=','const avatar='),section('function buyinModal(','function inviteModal('),section('async function command(','function stopStream('),section("document.addEventListener('submit'",'function resetPrivateView('),section('function roomView(){','function tableInfoModal('),'globalThis.testClient={buyinModal,roomView,refreshBuyinStatus,updateBuyinSummary};'].join('\n'),context);
+  vm.runInContext([section('const esc=','const profitClass='),section('const btn=','const avatar='),section('function buyinModal(','function inviteModal('),section('async function command(','function stopStream('),section("document.addEventListener('submit'",'function resetPrivateView('),section('function roomView(){','function tableInfoModal('),section('function bombStatus(','function autoDealText('),section('function roomClock(','function tick('),'globalThis.testClient={buyinModal,roomView,refreshBuyinStatus,updateBuyinSummary};'].join('\n'),context);
   function form(amount=100){const submit={disabled:false,isConnected:true};return {id:'buyin-form',dataset:{seat:''},values:{amountBB:String(amount)},querySelector:()=>submit,submit};}
   return {state,modals,toasts,calls,...context.testClient,form,attachForm(form){activeForm=form;},submit:form=>listeners.get('submit')({target:form,preventDefault(){}}),resolve(next=state.room){pending.resolve({room:next});},reject(error){pending.reject(error);}};
 }

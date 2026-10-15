@@ -26,7 +26,8 @@ const clientSource = [
   section('function usernameField(', 'function errorPage('),
   section('function profileModal(', 'function roomMenu('),
   section('function resetPrivateView(', 'function resumeTable('),
-  section('function resumeTable(', "window.addEventListener('hashchange'"),
+  section('function finishComposition(', 'function flushTableFeedback('),
+    section('function resumeTable(', "window.addEventListener('hashchange'"),
   'globalThis.client={state,requests,api,connectStream,route,welcome,recoveryPage,profileModal,saveProfile,bindAccountModal,changePasswordModal,recoverModal,restoreModal,submitAccount,acceptAccount,logout,adoptIdentity,expireIdentity};',
 ].join('\n');
 

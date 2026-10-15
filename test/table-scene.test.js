@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {seatPlacement,seatCommitment,chipPots,payoutAwards,liveReactions,actorClock,mountPotAwards,layoutTableBubbles} from '../public/table-scene.js';
+import {seatPlacement,seatCommitment,chipPots,payoutAwards,liveReactions,actorClock,POT_AWARD_DURATION,mountPotAwards,layoutTableBubbles} from '../public/table-scene.js';
 test('all seats rotate with self; nine-player seats have distinct positions and inward edge',()=>{
  for(let n=2;n<=9;n++)for(let self=0;self<n;self++){const r={settings:{maxPlayers:n},meId:'me',players:[{id:'me',seat:self}]};const positions=Array.from({length:n},(_,i)=>seatPlacement(r,i));assert.equal(positions[self].relative,0);assert.equal(positions[self].edge,'bottom');assert.equal(new Set(positions.map(p=>p.x+':'+p.y)).size,n);}
 });
@@ -15,6 +15,28 @@ test('chat and emoji show once, no old replay after reconnect or background, usi
 });
 test('actor gets full twenty seconds after board reveal and orange warning at seven seconds',()=>{
  const r={settings:{actionSeconds:20},hand:{status:'playing',actingId:'a',actionReadyAt:1000,turnStartedAt:1000},deadline:21000};assert.deepEqual(actorClock(r,500),{playerId:'a',waiting:true,remaining:20,ratio:1,urgent:false});assert.equal(actorClock(r,14000).remaining,7);assert.equal(actorClock(r,14000).urgent,true);assert.equal(actorClock({...r,hand:{status:'complete'}},14000),null);
+});
+test('first actor waits for the ready snapshot rather than showing an actionable timer ahead of disabled controls',()=>{
+ const r={meId:'a',settings:{actionSeconds:20},hand:{id:'first-turn',status:'playing',actingId:'a',actionReadyAt:1100,turnStartedAt:1100},deadline:21100,actions:{turnAvailable:true,canAct:false}};
+ const frozen=structuredClone(r);
+ for(const now of [0,1099,1100,1500,14100]){
+  const clock=actorClock(r,now);assert.equal(clock.waiting,true);assert.equal(clock.urgent,false);
+ }
+ assert.deepEqual(r,frozen,'displaying a turn never grants action permission locally');
+ const ready={...r,actions:{...r.actions,canAct:true}};
+ assert.deepEqual(actorClock(ready,1100),{playerId:'a',waiting:false,remaining:20,ratio:1,urgent:false});
+ assert.equal(actorClock(ready,14100).urgent,true);
+});
+test('another player gets their timer after reveal even though the viewer cannot act',()=>{
+ const r={meId:'spectator',settings:{actionSeconds:20},hand:{status:'playing',actingId:'a',actionReadyAt:900,turnStartedAt:900},deadline:20900,actions:{turnAvailable:false,canAct:false}};
+ assert.equal(actorClock(r,899).waiting,true);
+ assert.equal(actorClock(r,900).waiting,false);
+ assert.equal(actorClock(r,13900).remaining,7);
+});
+test('All-in runout never keeps an actor clock from an older action frame',()=>{
+ const r={meId:'a',settings:{actionSeconds:20},hand:{status:'playing',actingId:'a',actionReadyAt:900,turnStartedAt:900,runout:{active:true}},deadline:20900,actions:{turnAvailable:true,canAct:true}};
+ assert.equal(actorClock(r,1000),null);
+ r.hand.runout.active=false;assert.equal(actorClock(r,1000).playerId,'a');
 });
 
 // Geometry double implements the browser primitives consumed by the actual
@@ -44,18 +66,21 @@ test('collection motion routes actual main-pot, side-pot and tied awards to ever
  const hand={status:'complete',result:{mainWinnerIds:['a','b'],payouts:{a:45,b:145,c:50,loser:0}},log:[{type:'refund',playerId:'loser',amount:20}]};
  mountPotAwards(stage,{at:1000,awards:payoutAwards(hand)},{now:1000});
  const layer=stage.querySelector('.pot-flight-layer');assert.equal(layer.attributes['aria-hidden'],'true');assert.equal(layer.children.length,3);
- assert.deepEqual(layer.children.map(icon=>icon.children.length),[3,3,3]);
- assert.match(layer.children[0].style.cssText,/left:400px;top:275px;--award-x:-310px;--award-y:205px/);
- assert.match(layer.children[1].style.cssText,/--award-x:-10px/);assert.match(layer.children[2].style.cssText,/--award-x:290px/);
+ assert.deepEqual(layer.children.map(group=>group.dataset.playerId),['a','b','c']);
+ for(const group of layer.children){assert.equal(group.querySelectorAll('.pot-flight').length,3);assert.equal(group.querySelectorAll('.pot-arrival-ring').length,1);assert.deepEqual(group.querySelectorAll('.pot-flight').map(icon=>icon.children.length),[3,3,3]);}
+ assert.match(layer.children[0].children[1].style.cssText,/left:400px;top:272px;--award-x:-310px;--award-y:208px/);
+ assert.match(layer.children[1].children[1].style.cssText,/--award-x:-10px/);assert.match(layer.children[2].children[1].style.cssText,/--award-x:290px/);
+ assert.match(layer.children[0].querySelector('.pot-arrival-ring').style.cssText,/left:47px;top:447px;width:86px;height:66px;animation-delay:800ms/);
  assert.deepEqual(payoutAwards(hand).map(award=>award.amount),[45,145,50]);
 });
 
 test('chat rerenders resume collection age instead of stacking or restarting the animation',()=>{
  const {stage,add}=sceneFixture();add('pot-cluster',box(450,450,100,50));add('seat',box(150,650,80,60),{playerId:'a'});
  const motion={at:1000,awards:[{playerId:'a',amount:200}]};
- mountPotAwards(stage,motion,{now:1200});const first=stage.querySelector('.pot-flight-layer');assert.match(first.children[0].style.cssText,/animation-delay:-200ms/);
- mountPotAwards(stage,motion,{now:1700});const next=stage.querySelector('.pot-flight-layer');assert.notEqual(first,next);assert.equal(first.parentElement,null);assert.equal(stage.querySelectorAll('.pot-flight-layer').length,1);assert.match(next.children[0].style.cssText,/animation-delay:-700ms/);
- mountPotAwards(stage,motion,{now:2400});assert.equal(stage.querySelector('.pot-flight-layer'),null,'expired collection is removed, never restarted');
+ mountPotAwards(stage,motion,{now:1200});const first=stage.querySelector('.pot-flight-layer');assert.match(first.querySelector('.pot-flight').style.cssText,/animation-delay:-200ms/);
+ mountPotAwards(stage,motion,{now:1700});const next=stage.querySelector('.pot-flight-layer');assert.notEqual(first,next);assert.equal(first.parentElement,null);assert.equal(stage.querySelectorAll('.pot-flight-layer').length,1);assert.match(next.querySelector('.pot-flight').style.cssText,/animation-delay:-700ms/);
+ assert.match(next.querySelector('.pot-arrival-ring').style.cssText,/animation-delay:100ms/);
+ mountPotAwards(stage,motion,{now:1000+POT_AWARD_DURATION});assert.equal(stage.querySelector('.pot-flight-layer'),null,'expired collection is removed, never restarted');
 });
 
 test('disabled or cleared motion removes old collection nodes and missing seats never redirect winnings',()=>{
@@ -97,14 +122,46 @@ test('an unfinished street or showdown has no actor clock, even if an old actor 
 });
 
 
-test('seat commitments distinguish street wagers from swept All-in chips without double-counting the pot',()=>{
- const room={status:'playing',hand:{status:'playing',runout:{active:true},pot:3000}},player={id:'p',inHand:true,bet:500,contributed:1500,allIn:true,folded:false};
+test('seat commitments retain real street wagers but hide collected amounts throughout runout and showdown',()=>{
+ const room={status:'playing',hand:{status:'playing',pot:3000}},player={id:'p',inHand:true,bet:500,contributed:1500,allIn:true,folded:false};
  const before=JSON.stringify({room,player});assert.deepEqual(seatCommitment(room,player),{amount:500,allIn:true,contributed:1500});assert.equal(JSON.stringify({room,player}),before);
- player.bet=0;assert.deepEqual(seatCommitment(room,player),{amount:null,allIn:true,contributed:1500});assert.equal(room.hand.pot,3000);
+ room.hand.runout={active:true};assert.equal(seatCommitment(room,player),null,'runout lock hides wagers before the first board reveal clears bet');
+ assert.equal(player.bet,500);assert.equal(player.contributed,1500);assert.equal(room.hand.pot,3000,'display compaction never changes settled amounts');
+ room.hand.runout.active=false;room.hand.transition={kind:'showdown',revealed:false};assert.equal(seatCommitment(room,player),null,'river showdown must not flash wagers back');
+ room.hand.transition.revealed=true;assert.equal(seatCommitment(room,player),null);
+ room.hand.transition={kind:'street'};assert.deepEqual(seatCommitment(room,player),{amount:500,allIn:true,contributed:1500},'normal street animation retains its final wagers');
+ room.hand.transition=null;player.bet=0;assert.equal(seatCommitment(room,player),null,'an All-in whose wager was swept has no empty chip label');
  player.allIn=false;assert.equal(seatCommitment(room,player),null);player.bet=200;assert.deepEqual(seatCommitment(room,player),{amount:200,allIn:false,contributed:1500});
  player.folded=true;assert.deepEqual(seatCommitment(room,player),{amount:200,allIn:false,contributed:1500},'a fold does not remove already committed street chips');
  player.bet=0;player.allIn=true;assert.equal(seatCommitment(room,player),null,'stale All-in must not revive folded chips');
  player.folded=false;player.contributed=0;assert.equal(seatCommitment(room,player),null,'zero commitments cannot invent a chip');
  player.bet=100;player.contributed=100;player.inHand=false;assert.equal(seatCommitment(room,player),null);
  player.inHand=true;room.hand.status='complete';assert.equal(seatCommitment(room,player),null);
+});
+
+
+test('all nine paid seats receive their own route and arrival within the result pause',()=>{
+ const {stage,add}=sceneFixture();add('pot-cluster',box(450,450,100,100));add('pot-total',box(470,450,80,30));
+ const awards=Array.from({length:9},(_,index)=>({playerId:'p'+index,amount:100+index}));
+ for(const [index,award] of awards.entries()){
+  const seat=add('seat',box(150+index*70,650,80,90),{playerId:award.playerId});
+  add('seat-main',box(150+index*70,650,80,60),{},seat);
+ }
+ mountPotAwards(stage,{at:1000,awards},{now:1000});
+ const groups=stage.querySelector('.pot-flight-layer').children;assert.equal(groups.length,9);
+ for(const [index,group] of groups.entries()){
+  assert.equal(group.dataset.playerId,awards[index].playerId);
+  const flights=group.querySelectorAll('.pot-flight'),ring=group.querySelector('.pot-arrival-ring');
+  assert.equal(flights.length,3);assert.match(flights[1].style.cssText,new RegExp(`left:410px;top:262px;--award-x:${-320+index*70}px;--award-y:218px`),'route starts at total-pot center and lands inside identity panel, not card/receipt bounding box');
+  const delays=flights.map(f=>Number(f.style.cssText.match(/animation-delay:(-?\d+)ms/)[1]));assert.deepEqual(delays,[index*60,index*60+130,index*60+260]);
+  const arrival=Number(ring.style.cssText.match(/animation-delay:(-?\d+)ms/)[1]);assert.ok(arrival>=delays[0]+750);assert.ok(arrival+1800<POT_AWARD_DURATION,'last winner pulse finishes before effect expires');
+  assert.match(ring.style.cssText,/height:66px/,'ring hugs seat panel without expanding into hole cards');
+ }
+});
+
+test('malformed time, empty awards and refunds cannot create a payout effect',()=>{
+ const {stage,add}=sceneFixture();add('pot-cluster',box(450,450,100,50));add('seat',box(150,650,80,60),{playerId:'a'});
+ for(const motion of [{at:1100,awards:[{playerId:'a',amount:100}]},{at:NaN,awards:[{playerId:'a',amount:100}]},{at:1000,awards:[]},{at:1000,awards:[{playerId:'a',amount:0},{playerId:'a',amount:-100},{playerId:'a',amount:NaN}]}]){
+  mountPotAwards(stage,motion,{now:1000});assert.equal(stage.querySelector('.pot-flight-layer'),null);
+ }
 });

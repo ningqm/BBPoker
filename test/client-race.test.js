@@ -29,7 +29,8 @@ const clientSource = [
   section('async function api(', 'async function connectStream('),
   section('async function loadMe(', 'function navigate('),
   section('function resetPrivateView(', 'function resumeTable('),
-  section('function resumeTable(', "window.addEventListener('hashchange'"),
+  section('function finishComposition(', 'function flushTableFeedback('),
+    section('function resumeTable(', "window.addEventListener('hashchange'"),
   section('async function boot(', '\nboot();'),
   'globalThis.client={state,api,command,normalizeState,loadMe,route,adoptIdentity,resumeTable,boot,stopStream};',
 ].join('\n');

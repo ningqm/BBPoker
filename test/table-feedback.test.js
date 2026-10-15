@@ -76,7 +76,8 @@ test('board and winner cues combine meaningful animations but select only one so
   assert.equal(next.sound, 'board');
   assert.deepEqual(next.animations.find(event => event.type === 'board'), { type: 'board', from: 0 });
   const end = tracker.update(room({ revision: 3, log: [...log, { seq: 5, type: 'fold', playerId: 'a' }, { seq: 6, type: 'payout', playerId: 'b', amount: 20 }], board, actor: null, status: 'complete', result: { mainWinnerIds: ['b'] } }));
-  assert.equal(end.sound, 'win');
+  assert.equal(end.sound, 'collect');
+  assert.equal(end.chips, false, 'settlement uses one collection recording');
   assert.deepEqual(end.animations.at(-1), { type: 'win', playerIds: ['b'] });
 });
 
@@ -132,6 +133,8 @@ function audioFixture() {
     async resume() { this.state = 'running'; }
     async suspend() { stats.suspended++; this.state = 'suspended'; }
     async close() { stats.closed++; this.state = 'closed'; }
+    createBuffer(channels, count, rate) { return {duration:count/rate,getChannelData:()=>new Float32Array(count)}; }
+    createBufferSource() { return {connect(){},disconnect(){stats.disconnected++;},start(){stats.started++;},stop(){stats.stopped++;}}; }
     createOscillator() { return { frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() { stats.disconnected++; }, start() { stats.started++; }, stop() { stats.stopped++; } }; }
     createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() { stats.disconnected++; } }; }
   }
@@ -236,6 +239,6 @@ test('river reveal metadata and chat do not replay tail call or announce a win b
   const shown=structuredClone(tail);shown.revision=3;shown.hand.transition={kind:'showdown',nextAt:1600,revealed:true};shown.players=[{id:'a',cards:['As','Ah']}];
   quiet(tracker.update(shown));quiet(tracker.update({...shown,revision:4,chat:[{id:'x'}]}));
   const won=room({revision:5,actor:null,board,status:'complete',log:[...tail.hand.log,{seq:4,type:'payout',playerId:'a',amount:30}],result:{mainWinnerIds:['a']}});
-  const result=tracker.update(won);assert.equal(result.sound,'win');assert.equal(result.speech,undefined);assert.equal(result.chips,undefined);
+  const result=tracker.update(won);assert.equal(result.sound,'collect');assert.equal(result.speech,undefined);assert.equal(result.chips,false);
   assert.deepEqual(result.animations,[{type:'win',playerIds:['a']}]);quiet(tracker.update(won));
 });

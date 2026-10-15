@@ -27,6 +27,8 @@ function readClip(type) {
 const chipClip = readClip('chips');
 const chips = (underVoice = false) => Float32Array.from(chipClip, value => value * (underVoice ? TABLE_AUDIO_MIX.chipsUnderVoice : TABLE_AUDIO_MIX.chips));
 silence(0.15); marks.push({ label: '筹码', seconds: cursor / rate }); push(chips()); silence(0.6);
+marks.push({ label: '过牌 · 敲桌', seconds: cursor / rate });
+push(Float32Array.from(readClip('check-knock'), value => value * TABLE_AUDIO_MIX.check)); silence(0.45);
 for (const type of TABLE_VOICE_CUES) {
   const voice = readClip(type), lead = Math.round(rate * TABLE_AUDIO_MIX.voiceLead);
   const contact = ['bet', 'raise', 'reraise', 'call', 'allin'].includes(type) ? chips(true) : new Float32Array();

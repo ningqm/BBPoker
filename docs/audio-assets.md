@@ -114,8 +114,8 @@ The new voice is generated speech; whether its timbre is preferable remains a
 listening decision for the user, not something unit tests can establish.
 
 
-## Original check knock and collection playback (0.22.0)
+## Recorded check knock and collection playback (0.23.0)
 
-The live check cue is now an original, locally synthesized 360 ms double table knock from `public/check-knock.js`. It does not use a third-party recording, a commercial platform sample or a network service. `public/audio/check-knock.wav` is a reproducible preview of that same runtime algorithm; rebuild it with `node scripts/build-check-knock.mjs`. The legacy `check.wav` remains for compatibility but is not the live check cue. See [check-knock provenance and hashes](check-knock-sound.md).
+The live check cue uses two actual wood-table impacts recorded by Rvgerxini (Freesound sound 462317, CC0), cropped and filtered to 360 ms. The resulting PCM is embedded in `public/check-knock.js` and matches `public/audio/check-knock.wav` sample by sample; the first live check does not wait for an audio fetch. Rebuild the WAV from the module with `node scripts/build-check-knock.mjs`, or rebuild from the separately acquired licensed input with `scripts/build-recorded-check-knock.py`. The legacy `check.wav` remains for compatibility but is not the live check cue. See [check-knock provenance, permission and hashes](check-knock-sound.md).
 
 Actual pot awards reuse the existing CC0 chips recording at the configured collection gain and playback rate. Split and side pots do not stack multiple collection sounds; refunds do not create an award cue. Check events are deduplicated by hand/action, independent of generic prompt throttling. Mute, background, disconnect and reconnect suppression still applies. Browser autoplay restrictions still require the user's initial gesture and may require another gesture after a system interruption.

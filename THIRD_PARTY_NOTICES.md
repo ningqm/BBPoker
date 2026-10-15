@@ -14,13 +14,17 @@
 
 如后续复制或重新分发第三方代码、文档或二进制，应按对应版本的许可证保留版权与许可声明。本说明不替代第三方许可证。
 
-## 中文动作语音与筹码音效
+## 中文动作语音、筹码录音与过牌敲桌
 
-`public/audio/` 的七段 WAV 是离线生成的固定中文动作提示。使用 [hexgrad/Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) 模型（模型卡标注 Apache-2.0）、`zf_001` 声音和 1.05 语速。它们不是竞品音效，也不是对用户个人声音的录制或克隆。
+`public/audio/{bet,raise,reraise,call,check,fold,allin}.wav` 是离线生成的固定动作提示。使用 [hexgrad/Kokoro-82M-v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) 模型（模型卡标注 Apache-2.0），当前声音为 `zm_009`、语速 1.08；All-in 使用中文“凹印”读法。它们不是竞品音效，也不是用户声音的录制或克隆。
 
-生成时使用 [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx/blob/main/LICENSE)（MIT，版权声明为 2025 github.com/thewh1teagle）和 [Misaki](https://github.com/hexgrad/misaki/blob/main/LICENSE)（Apache-2.0）。本仓库仅包含生成的短音频与本项目编写的重建脚本；不分发模型权重、训练数据、上述依赖的代码或二进制。运行网站无需安装语音模型或调用在线语音服务。模型与工具的许可声明不代表这些第三方对 BBPoker 的背书。
+生成工具为 [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx/blob/main/LICENSE)（MIT，版权为 2025 github.com/thewh1teagle）和 [Misaki](https://github.com/hexgrad/misaki/blob/main/LICENSE)（Apache-2.0）。本仓库仅包含生成的短音频和本项目重建脚本，不分发模型权重、训练数据、上述依赖代码或二进制。运行网站无需语音模型或在线语音服务。
 
-筹码音效由本项目程序生成，没有下载第三方采样。输入文件哈希、依赖版本和生成步骤见 [音频素材说明](docs/audio-assets.md)。若自行重建或分发工具／模型，请另行遵循对应版本的完整许可证。
+`public/audio/chips.wav` 来源为 Joma86 的 [AllInPushChips.wav](https://freesound.org/people/Joma86/sounds/532861/)，按作者公开 HQ MP3 预览解码并线性衰减，许可为 [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)。来源、输入及输出哈希、处理方式和复现步骤见 [筹码声音素材](docs/chip-sound-source.md)。未提取任何商业扑克平台的音轨，也不表示作者对 BBPoker 的背书。
+
+当前过牌使用 BBPoker 原创合成双敲桌算法；`public/audio/check-knock.wav` 是同一运行时算法的复现产物，不含外部采样。旧 `check.wav` 保留兼容，但不再作为局内过牌声音。详见 [过牌音效](docs/check-knock-sound.md) 与 [全部音频说明](docs/audio-assets.md)。
+
+工具及模型许可证不等于第三方背书；自行重建或分发依赖／模型时应保留其完整许可和版权要求。
 
 ## 实验性客户端相关项目
 

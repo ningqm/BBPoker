@@ -406,3 +406,52 @@
  .at-table .table-stage .seat .stack-value.stack-wide{grid-column:1/-1;justify-content:center}
  .at-table .table-stage .seat .seat-main:has(.stack-wide) .seat-identity .seat-avatar-button{grid-row:1;width:18px;height:18px}
 }
+
+/* An opponent's clock stays inside the existing identity-card footprint.
+   Reserve the footer even when it is not their turn: names and stacks do not
+   move, and no timer can protrude toward the board or the next player's cards.
+   Own time cards keep their separate, reachable control group. */
+.at-table #app .table-stage .seat:not(.mine) .seat-main[data-action="player-stats"]{grid-template-rows:18px 22px 12px;padding:4px 7px}
+.at-table #app .table-stage .seat:not(.mine).acting .seat-main[data-action="player-stats"]{padding:3px 6px}
+.at-table #app .table-stage .seat:not(.mine) .seat-main>.name{visibility:visible;line-height:18px}
+.at-table #app .table-stage .seat:not(.mine) .seat-identity .seat-turn{position:relative;inset:auto;transform:none;grid-column:1/-1;grid-row:3;align-self:stretch;justify-self:stretch;justify-content:center;width:auto;min-width:0;max-width:100%;height:12px;min-height:0;margin:0;padding:0 2px;border:0;border-radius:4px;font-size:10px;line-height:11px;gap:3px;box-shadow:none;pointer-events:none}
+.at-table #app .table-stage .seat:not(.mine) .seat-turn:after{left:2px;right:2px;bottom:0;height:2px;border-radius:1px}
+.at-table #app .table-stage .seat:not(.mine) .seat-turn .turn-dot{width:3px;height:3px}
+.at-table #app .table-stage .seat:not(.mine) .seat-turn.is-preparing .turn-dot{display:none}
+/* Fish and the clock share the reserved footer. Position markers stay outside
+   the identity, without a fish counter extending their stack over hole cards. */
+.at-table #app .table-stage .seat:not(.mine) .seat-label{display:contents}
+.at-table #app .table-stage .seat:not(.mine) .seat-label>b:not(.squid-count){position:absolute;top:3px;left:var(--seat-marker-left,auto);right:var(--seat-marker-right,-29px)}
+.at-table #app .table-stage .seat:not(.mine) .seat-label>.dealer-button+.blind{top:32px}
+.at-table #app .table-stage .seat:not(.mine):is([data-side=left],[data-relative-seat="4"][data-edge=top]){--seat-marker-left:-29px;--seat-marker-right:auto}
+.at-table #app .table-stage .seat .seat-label .squid-count{width:25px;max-width:100%;padding:0;font-size:8px;transform:none}
+.at-table #app .table-stage .seat:not(.mine) .seat-label .squid-count{position:static;grid-column:1/-1;grid-row:3;justify-self:end;align-self:center;height:12px;line-height:12px;border:0;border-radius:4px}
+.at-table #app .table-stage .seat:not(.mine):has(.squid-count) .seat-identity .seat-turn{justify-self:start;width:calc(100% - 27px)}
+@media(max-width:760px){
+ .at-table #app .table-stage .seat:not(.mine) .seat-main[data-action="player-stats"]{grid-template-rows:13px 17px 11px;padding:3px 3px}
+ .at-table #app .table-stage .seat:not(.mine).acting .seat-main[data-action="player-stats"]{padding:2px 2px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-main>.name{line-height:13px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-main>.stack-value{line-height:17px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-identity .seat-turn{height:11px;font-size:9px;line-height:10px}
+ .at-table #app .table-stage .seat .seat-label .squid-count{font-size:7px}
+ .at-table #app .table-stage .seat:not(.mine){--seat-marker-right:-18px}
+ .at-table #app .table-stage .seat:not(.mine):is([data-side=left],[data-relative-seat="4"][data-edge=top]){--seat-marker-left:-18px;--seat-marker-right:auto}
+ .at-table #app .table-stage .seat:not(.mine) .seat-label>.dealer-button+.blind{top:27px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-label .squid-count{height:11px;line-height:11px}
+}
+@container poker-table (max-height:440px){
+ .at-table #app .table-stage .seat:not(.mine) .seat-main[data-action="player-stats"]{grid-template-rows:11px 13px 10px;padding:2px 4px}
+ .at-table #app .table-stage .seat:not(.mine).acting .seat-main[data-action="player-stats"]{padding:1px 3px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-main>.name{line-height:11px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-main>.stack-value{font-size:13px;line-height:13px}
+ .at-table #app .table-stage .seat:not(.mine) .seat-identity .seat-turn{height:10px;font-size:9px;line-height:9px}
+ .at-table #app .table-stage .seat:not(.mine){--seat-marker-right:-21px}
+ .at-table #app .table-stage .seat:not(.mine):is([data-side=left],[data-relative-seat="4"][data-edge=top]){--seat-marker-left:-21px;--seat-marker-right:auto}
+ .at-table #app .table-stage .seat:not(.mine) .seat-label .squid-count{height:10px;line-height:10px}
+}
+@container poker-table (max-height:340px){
+ .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine) .seat-main[data-action="player-stats"]{grid-template-rows:10px 12px 10px;padding:1px 4px}
+ .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine).acting .seat-main[data-action="player-stats"]{padding:0 3px}
+ .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine) .seat-main>.name{line-height:10px}
+ .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine) .seat-main>.stack-value{line-height:12px}
+}

@@ -227,7 +227,7 @@ const tones = {
 export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'fold', 'allin']);
 export const TABLE_VOICE_LABELS = Object.freeze({ bet: '下注', raise: '加注', reraise: '再加注', call: '跟注', check: '过牌', fold: '弃牌', allin: 'All-in' });
 // Versioned separately from the app release so replaced media never uses an old cache.
-const AUDIO_ASSET_VERSION = '20261015-allin-aoyin-v7';
+const AUDIO_ASSET_VERSION = '20261015-real-table-taps-v8';
 export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, collect: 0.78, collectRate: 0.92, check: 0.85, voice: 0.8, voiceLead: 0.025 });
 
 /** Same-origin recorded cues and synthesized effects; never a delayed action queue. */
@@ -336,7 +336,7 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
   function knock() {
     if (!ready() || !context.createBufferSource || !context.createBuffer) return false;
     try {
-      // Built locally on the first gesture/action: no download race can swallow
+      // Embedded real table taps: no download race can swallow
       // an early check. A short bounded burst separates coalesced live checks;
       // there is no timer queue and suspend/disconnect stops every source.
       if (!buffers.has('check-knock')) buffers.set('check-knock', createCheckKnockBuffer(context));

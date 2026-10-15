@@ -76,14 +76,42 @@ export function entryBlindView(room, player) {
   const entry = player?.entryBlind;
   if (!entry?.required || room.status === 'closed' || room.hand?.status === 'playing' && player.inHand) return null;
   const live = Math.max(0, Number(entry.live) || 0), dead = Math.max(0, Number(entry.dead) || 0);
-  const mode = entry.mode === 'post' ? 'post' : 'wait';
-  const waitingFor = entry.waitingFor === 'button' ? 'button' : 'bigBlind';
-  const label = mode === 'wait' ? '等待大盲加入' : waitingFor === 'button' ? '已选补盲 · 等待过庄' : '已选补盲 · 等待发牌';
-  const note = mode === 'wait' ? '轮到大盲后自动参与，等待期间不发牌、不扣盲。'
-    : waitingFor === 'button' ? '此座位需要等庄位经过；到可参与的下一手才补盲，等待时不扣。'
-    : '从符合位置条件的下一手参与，发牌时才补盲。自然轮到大盲不会重复扣。';
-  return { mode, live, dead, total: live + dead, waitingFor, label, note, seatLabel: mode === 'wait' ? '等大盲' : waitingFor === 'button' ? '等过庄' : '待补盲',
+  const mode = entry.mode === 'post' ? 'post' : 'wait', waitingFor = entry.waitingFor || null;
+  const naturalBigBlind = entry.naturalBigBlind === true, estimated = entry.estimated === true;
+  let label = naturalBigBlind ? `${estimated ? '预计' : ''}下一手大盲加入` : mode === 'wait' ? '等待大盲加入'
+    : waitingFor === 'button' ? '已选补盲 · 等待过庄' : '已选补盲 · 等待发牌';
+  let seatLabel = naturalBigBlind ? '下手大盲' : mode === 'wait' ? '等大盲' : waitingFor === 'button' ? '等过庄' : '待补盲';
+  let note = naturalBigBlind ? '已入座。轮到自然大盲时只交一份大盲，不重复补交；漏小盲按所选方式处理，实际发牌前不扣。'
+    : mode === 'wait' ? '已入座。轮到大盲后自动参与，等待期间不发牌、不扣盲；可切换为补盲加入。'
+    : waitingFor === 'button' ? '已入座，补盲选择已保存。此座位在庄位或小盲保护区，等庄位经过后自动参与；等待时不扣盲。'
+    : '已入座，补盲选择已保存。从符合位置条件的下一手参与，发牌时才补盲。自然轮到大盲不会重复扣。';
+  const blocked = {
+    funds: ['等待补码', '等补码', '已入座，现有积分不足以完成入桌补盲。请先补码；等待时不发牌、不扣盲。'],
+    players: ['等待其他玩家', '等玩家', '已入座，选择已保存。至少两位可参与玩家就绪后才发牌。'],
+    allWaiting: ['全桌正在等盲', '等开牌', '已入座。全员选择等大盲，至少一人切换为补盲加入后才能开牌。'],
+    ordinaryHand: ['等待普通手补盲', '等补盲', '已入座。炸弹池不会抵消入桌补盲，下一手普通德州再按选择参与。'],
+    reserve: ['等待补足鱿鱼预留', '等预留', '已入座，选择已保存。满足本轮鱿鱼预留后才能拿牌，等待时不扣盲。'],
+    expired: ['已到时 · 不再加入本轮', '已到时', '已入座，但牌桌已到时，仅收尾原轮。'],
+    capacity: ['本轮暂不可增加参与者', '等下轮', '已入座，本轮参与人数已达上限，等待本轮结束。'],
+    offline: ['等待连接恢复', '离线', '座位与参与方式已保存，连接恢复后再参与。'],
+    sittingOut: ['已暂离', '暂离', '座位与参与方式已保留，返回牌桌后再参与。'],
+    departing: ['等待取消离开安排', '待离开', '已安排离座或暂离；请先取消安排，再修改参与方式。'],
+  }[waitingFor];
+  if (blocked) [label, seatLabel, note] = blocked;
+  if (estimated && !blocked) note += ' 本手仍在进行，最终以结束后的座位和积分为准。';
+  return { mode, modeLabel: mode === 'wait' ? '等大盲加入' : '补盲加入', live, dead, total: live + dead, waitingFor, label, note, seatLabel,
+    naturalBigBlind, estimated, nextHandEligible: entry.nextHandEligible === true,
     missed: entry.reason === 'missed', canChoose: player.seat != null && !player.pendingDeparture && !player.sittingOut };
+}
+
+// A successful change needs visible acknowledgement even when a position or
+// squid reserve still prevents dealing. Never promise insertion into a live hand.
+export function entryChoiceFeedback(room, player) {
+  const entry = entryBlindView(room, player);
+  if (!entry) return participation(room, player).label;
+  const squid = squidJoinView(room, player);
+  const status = squid && !['next-hand', 'entry-blind'].includes(squid.status) ? squid.label : entry.label;
+  return `已保存：${entry.modeLabel} · ${status}`;
 }
 
 // The server projects admission against the next legal deal. The client does not
@@ -137,9 +165,9 @@ export function buyinTiming(room, isSit = true, player = null, now = Date.now())
     : '立即到账，下次发牌前可用。';
   const original = room.mini?.squid?.active && room.mini.squid.participants?.includes(player?.id);
   if (isSit && squidAdmissionClosed(room, player, now)) return '牌桌已到时，仅收尾本轮；新玩家不能再入座参加本轮，可留在房间观战。';
-  if (isSit && original) return '本轮鱿鱼资格、已有鱼与预留都保留，重新入座不重复增加鱼数或收一份入轮预留；漏盲仍按提示处理。';
-  if (isSit && room.mini?.squid?.active) return '可中途加入本轮。符合等盲或补盲及预留条件后，从符合条件的下一手以 0 鱼加入，总鱼数加 1；实际拿牌时才收预留，等待时不扣盲。';
-  if (isSit && room.hand?.status === 'playing') return '这手已经开始，入座后等待后续符合条件的手牌。';
+  if (isSit && original) return '确认后立即入座。本轮鱿鱼资格、已有鱼与预留都保留，重新入座不重复增加鱼数或收一份入轮预留；漏盲仍按提示处理。';
+  if (isSit && room.mini?.squid?.active) return '确认后立即入座，可中途加入本轮。符合等盲或补盲及预留条件后，从符合条件的下一手以 0 鱼加入，总鱼数加 1；实际拿牌时才收预留，等待时不扣盲。';
+  if (isSit && room.hand?.status === 'playing') return '确认后立即入座。这手已经开始，等待后续符合条件的手牌，等待时不扣盲。';
   return '确认后立即入座，无需房主审核。';
 }
 

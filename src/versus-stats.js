@@ -38,6 +38,9 @@ function replayWagers(hand, mine, opponent) {
     const simulation = createHand({ id: 'public-wager-replay', players: hand.players.map(p => ({ id: p.id, seat: p.seat, stack: p.startingStack })),
       buttonSeat: hand.buttonSeat, smallBlind: hand.smallBlind, bigBlind: hand.bigBlind, ante: hand.ante ?? 0, bombPot: hand.bombPot ?? false,
       entryPosts: [...posts.values()], deck: DUMMY_DECK, deferredRunout: hand.log.some(e => e.type === 'runoutCard') || hand.deferredRunout === true });
+    // An old valid archive may contain a covered raise that was refunded.
+    // Replay its original policy without rewriting actions or chip amounts.
+    simulation.bettingRulesVersion = hand.bettingRulesVersion ?? 1;
     const result = { mine: responses(), opponent: responses(), threeBet: { mine: { count: 0, opportunities: 0 }, opponent: { count: 0, opportunities: 0 } } };
     let street = simulation.street, lastAggressor = null, firstRaiser = null, raises = 0;
     for (const e of hand.log.filter(e => ACTIONS.has(e.type))) {

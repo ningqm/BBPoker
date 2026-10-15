@@ -294,6 +294,9 @@ export function createHand({ id, players, buttonSeat, smallBlind, bigBlind, ante
   if (shuffled.length !== 52 || new Set(shuffled).size !== 52 || shuffled.some(c => !CARDS.includes(c))) throw new Error('牌堆必须含 52 张不同扑克牌');
   const hand = {
     id, status: 'playing', street: 'preflop', buttonSeat, smallBlind, bigBlind, ante, bombPot, deferredRunout, deferredTransitions,
+    // Server-owned policy, never a room/client option. Existing saved hands
+    // without this marker finish under v1; every newly dealt hand uses v2.
+    bettingRulesVersion: 2,
     smallBlindSeat: null, bigBlindSeat: null, board: [], boardIndices: [],
     deck: Object.freeze(shuffled), deckCursor: 0, burnIndices: [],
     players: players.map(p => ({ id: p.id, name: p.name ?? '', seat: p.seat,
@@ -397,7 +400,13 @@ export function availableActions(hand, playerId) {
   const maxRaiseTo = p.bet + p.stack;
   const minRaiseTo = hand.currentBet + hand.minRaise;
   const reopened = !p._acted || hand.currentBet >= p.reopenAt;
-  const mayIncrease = reopened && responder;
+  // A player who has not yet called may still hold chips while being covered
+  // by the existing wager. Such a short caller cannot contest any raise;
+  // avoid offering a phantom side pot that would immediately be refunded.
+  const raiseResponder = hand.players.some(q => q.id !== p.id && !q.folded && !q.allIn
+    && q.bet + q.stack > hand.currentBet);
+  const legacyCoveredRaises = (hand.bettingRulesVersion ?? 1) === 1;
+  const mayIncrease = reopened && (legacyCoveredRaises ? responder : raiseResponder);
   return { canAct, canCheck: callAmount === 0, canFold: true, callAmount,
     canRaise: mayIncrease && maxRaiseTo >= minRaiseTo, minRaiseTo, maxRaiseTo,
     canAllIn: p.stack > 0 && (maxRaiseTo <= hand.currentBet || mayIncrease),

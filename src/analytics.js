@@ -63,7 +63,8 @@ export function handTendencies(hand, userId) {
     const target = finite(event.to) ? event.to : p.bet + (event.amount ?? 0);
     const isRaise = ['raise', 'allin'].includes(event.type) && target > currentBet;
     if (!hand.bombPot && p.id === userId) {
-      const responder = [...players.values()].some(other => other.id !== p.id && !other.folded && other.stack > 0);
+      const responder = [...players.values()].some(other => other.id !== p.id && !other.folded
+        && other.stack > 0 && ((hand.bettingRulesVersion ?? 1) === 1 || other.bet + other.stack > currentBet));
       // A legal short all-in is also a raise opportunity. An un-reopened wager is not.
       const canIncrease = (!p.acted || currentBet >= p.reopenAt) && responder && p.bet + p.stack > currentBet;
       if (['call', 'raise', 'allin'].includes(event.type) && event.amount > 0) out.vpip = true;

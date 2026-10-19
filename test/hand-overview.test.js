@@ -281,3 +281,15 @@ test('grouped all-in runout labels distinguish the three-card flop, turn and riv
   ];
   const html=renderHandOverview(hand,'a');assert.match(html,/跑牌 · 发出翻牌（三张）/);assert.match(html,/跑牌 · 发出转牌/);assert.match(html,/跑牌 · 发出河牌/);assert.doesNotMatch(html,/跑牌 · 发出一张公共牌/);
 });
+
+test('compact hand keeps each raise, hides private cards and separates mini results',async()=>{
+ const {renderCompactHand}=await import('../public/hand-overview.js');const h=basic();
+ h.log.splice(2,0,{type:'raise',playerId:'a',street:'preflop',amount:20,to:25},{type:'raise',playerId:'b',street:'preflop',amount:40,to:50},{type:'raise',playerId:'a',street:'preflop',amount:60,to:85});
+ const html=renderCompactHand(h,'a');assert.match(html,/加至 2.5bb/);assert.match(html,/加至 5bb/);assert.match(html,/加至 8.5bb/);assert.match(html,/未公开底牌/);assert.match(html,/小游戏/);assert.match(html,/德州/);assert.doesNotMatch(html,/底池.*20/);
+});
+test('compact view rejects internal hands and does not use rabbit cards as action streets',async()=>{
+ const {renderCompactHand}=await import('../public/hand-overview.js');const h=basic();
+ assert.throws(()=>renderCompactHand({...h,deck:['As']},'a'));
+ h.players[0].name='<img onerror=x>';h.rabbit={board:['2c','3d','4h','Qc','Jc']};
+ const html=renderCompactHand(h,'a');assert.doesNotMatch(html,/<img|梅花 Q|梅花 J/);assert.match(html,/&lt;img/);
+});

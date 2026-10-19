@@ -20,7 +20,7 @@ class Element {
   append(...nodes){for(const node of nodes){node.remove();node.parentNode=this;this.children.push(node);}}
   prepend(node){node.remove();node.parentNode=this;this.children.unshift(node);}
   remove(){if(!this.parentNode)return;const parent=this.parentNode;parent.children=parent.children.filter(node=>node!==this);this.parentNode=null;}
-  querySelectorAll(selector){const matches=node=>selector==='.toast'?node.classList.contains('toast'):selector==='.modal-body'?node.classList.contains('modal-body'):false;return this.children.flatMap(node=>[...(matches(node)?[node]:[]),...node.querySelectorAll(selector)]);}
+  querySelectorAll(selector){const matches=node=>selector==='.toast'?node.classList.contains('toast'):selector==='.modal-body'?node.classList.contains('modal-body'):selector==='.admin-account-fields'?node.classList.contains('admin-account-fields'):false;return this.children.flatMap(node=>[...(matches(node)?[node]:[]),...node.querySelectorAll(selector)]);}
   querySelector(selector){return this.querySelectorAll(selector)[0]??null;}
   addEventListener(name,callback){this.events.set(name,callback);}
   scrollIntoView(options){this.scrolls.push(options);}
@@ -131,4 +131,12 @@ test('turn urgency removes stale browser tooltips while keeping accessible timeo
   context.tick();assert.equal(button.getAttribute('title'),null);assert.equal(button.getAttribute('aria-label'),'弃牌');assert.equal(button.getAttribute('aria-description'),'超时将自动弃牌');assert.equal(button.classList.contains('timeout-warning'),true);
   state.room.actions.canCheck=true;context.tick();assert.equal(button.getAttribute('aria-description'),'超时将自动过牌');
   urgent=false;context.tick();assert.equal(button.getAttribute('aria-description'),'');assert.equal(button.classList.contains('timeout-warning'),false);assert.equal(button.getAttribute('title'),null);
+});
+
+test('account errors and credential copy feedback stay in scrollable fields and leave the fixed footer in place',()=>{
+  const h=harness(),fields=new Element(),footer=new Element();fields.className='admin-account-fields';h.modalBody.append(fields,footer);
+  h.open({kind:'admin-account-create'});h.toast('结果尚未确认',true);
+  assert.equal(h.notices()[0].parentNode,fields);assert.equal(h.modalBody.children.at(-1),footer);assert.equal(h.globalHost.children.length,0);
+  h.open({kind:'admin-account-credentials'});h.toast('账号和密码已复制');
+  assert.equal(h.notices()[0].parentNode,fields);assert.equal(h.notices()[0].getAttribute('role'),'status');assert.equal(h.modalBody.children.at(-1),footer);
 });

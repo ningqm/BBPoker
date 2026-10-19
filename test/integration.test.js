@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
@@ -13,7 +14,7 @@ async function setup(t) {
   let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
   const setTime=value=>{timestamp=value;};
   const dir = mkdtempSync(join(tmpdir(), 'tongzhuo-test-'));
-  let app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+  let app = createApp({ dataDir: dir, actionTickMs: 1000000 });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const base = () => `http://127.0.0.1:${app.server.address().port}`;
   async function api(user, path, data, expected = 200) {
@@ -22,7 +23,7 @@ async function setup(t) {
     assert.equal(res.status, expected, JSON.stringify(value)); return value;
   }
   const users = [];
-  for (const name of ['雨后','山川','南风','旁观']) users.push(await api(null, '/api/session', { name }, 201));
+  for (const name of ['雨后','山川','南风','旁观']) users.push(seedLegacyAccount(app, { name }));
   const room = (await api(users[0], '/api/rooms', { name: '测试朋友局', settings: {} }, 201)).room;
   for (const u of users.slice(1)) await api(u, `/api/rooms/${room.code}/join`, { invite: room.invite });
   const ready=()=>{readyRoomAction(app.service,app.store.data.rooms[room.code],setTime);app.store.save();};
@@ -53,7 +54,7 @@ async function setup(t) {
     return s;
   }
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { api, users, room, cmd, state, seat, win, dir, base, get app() { return app; }, async restart() { await app.close(); app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 }); await new Promise(r => app.server.listen(0, '127.0.0.1', r)); } };
+  return { api, users, room, cmd, state, seat, win, dir, base, get app() { return app; }, async restart() { await app.close(); app = createApp({ dataDir: dir, actionTickMs: 1000000 }); await new Promise(r => app.server.listen(0, '127.0.0.1', r)); } };
 }
 
 test('invite, instant seating, game, selective proofs, voluntary show and all export formats work end to end', async t => {
@@ -101,7 +102,7 @@ test('invite, instant seating, game, selective proofs, voluntary show and all ex
 
 test('illegal actions, duplicate commands and unauthorized users cannot mutate points', async t => {
   const f = await setup(t); await f.seat(2);
-  const outsider = await f.api(null, '/api/session', { name: '陌生人' }, 201);
+  const outsider = seedLegacyAccount(f.app, { name: '陌生人' });
   await f.api(outsider, `/api/rooms/${f.room.code}`, undefined, 403);
   await f.api(outsider, `/api/rooms/${f.room.code}/join`, { invite: 'wrong' }, 403);
   await f.api(outsider, `/api/export?room=${f.room.code}`, undefined, 403);

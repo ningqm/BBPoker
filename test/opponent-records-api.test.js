@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,7 +12,7 @@ import { commitDeck } from '../src/fairness.js';
 // No production tokens, archives or network services are used by this fixture.
 test('personal opponent history keeps an authorized, filtered cohort across reports and pagination', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-opponent-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 1000000 });
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(0, '127.0.0.1', resolve); });
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -22,7 +23,7 @@ test('personal opponent history keeps an authorized, filtered cohort across repo
     const body = await response.json(); assert.equal(response.status, expected, JSON.stringify(body)); return body;
   };
   const users = [];
-  for (const name of ['本人验收', '旧昵称对手', '另一个对手', '只旁观', '未交手外人']) users.push(await request('/api/session', null, { name }, 201));
+  for (const name of ['本人验收', '旧昵称对手', '另一个对手', '只旁观', '未交手外人']) users.push(seedLegacyAccount(app, { name }));
   const [hero, opponentA, opponentB, observer, outsider] = users, me = hero.user.id, aid = opponentA.user.id, bid = opponentB.user.id;
   const room = (await request('/api/rooms', hero, {}, 201)).room;
   for (const user of [opponentA, opponentB, observer]) await request(`/api/rooms/${room.code}/join`, user, { invite: room.invite });

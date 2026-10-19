@@ -7,9 +7,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../server.js';
 import { EncryptedStore } from '../src/store.js';
-import { RoomService } from '../src/room.js';
-import { digest, secret, hashPassword, verifyPassword } from '../src/auth.js';
-import { readyRoomAction } from './helpers/room-clock.js';
+import { digest, secret, password, hashPassword, verifyPassword } from '../src/auth.js';
 
 const PASSWORD = 'test-only-password-1', NEW_PASSWORD = 'test-only-password-2';
 async function setup(t, seed) {
@@ -33,7 +31,15 @@ async function setup(t, seed) {
     await reader.read();
     return reader;
   }
-  return { api, base, stream, directory, get app() { return app; }, register: (name = 'player_one') => api('/api/account/register', { username: name, password: PASSWORD, name: '朋友' }, null, 201), async restart() { await app.close(); app = createApp({ dataDir: directory, trustProxy: 'loopback' }); await listen(); } };
+  return { api, base, stream, directory, get app() { return app; }, async register(name = 'player_one') {
+    // Existing-account fixture: production has no public registration endpoint.
+    const token = secret(), recoveryCode = secret(), id = randomUUID();
+    const u = { id, username: name.trim().toLowerCase(), name: '朋友', avatar: 0, passwordHash: await hashPassword(PASSWORD), recoveryHash: digest(recoveryCode), credentialVersion: 1 };
+    app.store.data.users[id] = u;
+    app.store.data.sessions[digest(token)] = { userId: id, version: 1, createdAt: Date.now(), expiresAt: Date.now() + 86400000 };
+    app.store.save();
+    return { token, user: { id, username: u.username, name: u.name }, recoveryCode };
+  }, async restart() { await app.close(); app = createApp({ dataDir: directory, trustProxy: 'loopback' }); await listen(); } };
 }
 
 async function revoked(reader) {
@@ -54,14 +60,52 @@ test('password hashing uses unique salts, rejects malformed values and verifies 
   assert.equal(await verifyPassword(NEW_PASSWORD, a), false);
   assert.equal(await verifyPassword(PASSWORD, undefined), false);
   assert.equal(await verifyPassword({ password: PASSWORD }, a), false);
-  await assert.rejects(hashPassword('short'), /10–128/);
+  await assert.rejects(hashPassword('short'), /6–128/);
 });
 
-test('register/login/logout use normalized accounts and private revocable session tokens', async t => {
+test('password policy accepts 6 through 128 characters without trimming and rejects invalid boundaries', async () => {
+  for (const value of [undefined, null, 123456, {}, '', 'five!', 'x'.repeat(129)]) {
+    assert.throws(() => password(value), /6–128/);
+  }
+  for (const value of ['abc123', 'eight123', PASSWORD, 'x'.repeat(128), ' abc12']) {
+    assert.equal(password(value), value);
+    const hash = await hashPassword(value);
+    assert.equal(await verifyPassword(value, hash), true);
+    assert.equal(await verifyPassword(value + 'x', hash), false);
+  }
+  assert.equal(await verifyPassword('five!', await hashPassword('abc123')), false);
+});
+
+test('six and eight character passwords work for login, password changes and recovery while shorter requests leave credentials intact', async t => {
+  const f = await setup(t), original = await f.register('boundary_player');
+  // Existing long credentials remain valid after lowering the minimum.
+  await f.api('/api/account/login', { username: 'boundary_player', password: PASSWORD });
+  const before = structuredClone(f.app.store.data);
+  const rejectedChange = await f.api('/api/account/password', { currentPassword: PASSWORD, newPassword: 'five!' }, original.token, 400);
+  assert.match(rejectedChange.error, /6–128/);
+  assert.deepEqual(f.app.store.data, before);
+
+  const six = await f.api('/api/account/password', { currentPassword: PASSWORD, newPassword: 'abc123' }, original.token);
+  await f.api('/api/me', undefined, original.token, 401);
+  await f.api('/api/account/login', { username: 'boundary_player', password: 'abc123' });
+  await f.api('/api/account/login', { username: 'boundary_player', password: 'abc12' }, null, 401);
+
+  const beforeRecovery = structuredClone(f.app.store.data);
+  const rejectedRecovery = await f.api('/api/account/recover', { username: 'boundary_player', recoveryCode: six.recoveryCode, newPassword: 'five!' }, null, 400);
+  assert.match(rejectedRecovery.error, /6–128/);
+  assert.deepEqual(f.app.store.data, beforeRecovery);
+  const eight = await f.api('/api/account/recover', { username: 'boundary_player', recoveryCode: six.recoveryCode, newPassword: 'eight123' });
+  await f.api('/api/me', undefined, six.token, 401);
+  await f.api('/api/account/login', { username: 'boundary_player', password: 'eight123' });
+  await f.api('/api/account/login', { username: 'boundary_player', password: 'abc123' }, null, 401);
+  assert.equal(eight.user.id, original.user.id);
+});
+
+test('existing assigned accounts login/logout use private revocable session tokens', async t => {
   const f = await setup(t);
-  await f.api('/api/session', { name: 'guest' }, null, 410);
-  await f.api('/api/account/register', { username: 'x', password: PASSWORD }, null, 400);
-  await f.api('/api/account/register', { username: 'valid_name', password: 'short' }, null, 400);
+  await f.api('/api/session', { name: 'guest' }, null, 403);
+  await f.api('/api/account/register', { username: 'x', password: PASSWORD }, null, 403);
+  await f.api('/api/account/register', { username: 'valid_name', password: 'short' }, null, 403);
   const registered = await f.register('Player_One');
   assert.equal(registered.user.username, 'player_one');
   assert.equal(registered.token.length, 43); assert.equal(registered.recoveryCode.length, 43);
@@ -71,7 +115,7 @@ test('register/login/logout use normalized accounts and private revocable sessio
   assert.equal(readFileSync(f.app.store.file).includes(Buffer.from('player_one')), false);
   const me = await f.api('/api/me', undefined, registered.token);
   assert.deepEqual(Object.keys(me.user).sort(), ['avatar', 'avatarImage', 'id', 'name', 'username']);
-  await f.api('/api/account/register', { username: 'PLAYER_ONE', password: PASSWORD }, null, 409);
+  await f.api('/api/account/register', { username: 'PLAYER_ONE', password: PASSWORD }, null, 403);
   const login = await f.api('/api/account/login', { username: ' PLAYER_ONE ', password: PASSWORD });
   assert.equal(login.user.id, registered.user.id); assert.notEqual(login.token, registered.token); assert.equal(login.recoveryCode, undefined);
   const wrong = await f.api('/api/account/login', { username: 'player_one', password: NEW_PASSWORD }, null, 401);
@@ -82,40 +126,14 @@ test('register/login/logout use normalized accounts and private revocable sessio
   await f.api('/api/me', undefined, registered.token);
 });
 
-test('legacy binding keeps exact player, room, hand and ledger ownership while retiring old bearer recovery', async t => {
-  let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
-  const setTime=value=>{timestamp=value;};
-  const legacyToken = secret(); let legacy, roomCode;
-  const f = await setup(t, store => {
-    legacy = { id: 'legacy-owner', name: '原来的朋友', avatar: 2 };
-    const peer = { id: 'legacy-peer', name: '另一位朋友', avatar: 3 };
-    store.data.users[digest(legacyToken)] = legacy; store.data.users[digest(secret())] = peer;
-    const service = new RoomService(store), room = service.create(legacy, { settings: { approvalRequired: false } }); roomCode = room.code;
-    service.join(peer, room.code, room.invite);
-    for (const [i, user] of [legacy, peer].entries()) service.command(user, room.code, { type: 'sit', seat: i, amount: 1000, commandId: randomUUID() });
-    for (const user of [legacy, peer]) service.connections.set(`${room.code}:${user.id}`, 1);
-    service.command(legacy, room.code, { type: 'start', commandId: randomUUID() });
-    readyRoomAction(service,room,setTime);
-    service.command(service.user(room.hand.actingId), room.code, { type: 'fold', handId: room.hand.id, actionSeq: room.hand.log.length, commandId: randomUUID() });
-    readyRoomAction(service,room,setTime);
-    // This test isolates account ownership; opening/revoking a stream must not
-    // independently start or cancel an automatic-deal countdown during the snapshot.
-    service.command(legacy, room.code, { type: 'autoDeal', paused: true, commandId: randomUUID() });
-  });
+test('existing legacy identities retain ownership but cannot self-register or bind a new account', async t => {
+  const legacyToken = secret(), legacy = { id: 'legacy-owner', name: '原来的朋友', avatar: 2 };
+  const f = await setup(t, store => { store.data.users[digest(legacyToken)] = legacy; });
+  const before = structuredClone(f.app.store.data);
   assert.equal((await f.api('/api/session/restore', { token: legacyToken })).user.username, null);
-  const before = structuredClone({ rooms: f.app.store.data.rooms, hands: f.app.store.data.hands, ledger: f.app.store.data.ledger });
-  const reader = await f.stream(legacyToken, roomCode);
-  const bound = await f.api('/api/account/bind', { username: 'old_friend', password: PASSWORD }, legacyToken);
-  assert.equal(bound.user.id, legacy.id); assert.equal(bound.user.name, legacy.name);
-  assert.deepEqual({ rooms: f.app.store.data.rooms, hands: f.app.store.data.hands, ledger: f.app.store.data.ledger }, before);
-  await revoked(reader);
-  await f.api('/api/me', undefined, legacyToken, 401);
-  await f.api('/api/session/restore', { token: legacyToken }, null, 401);
-  const me = await f.api('/api/me', undefined, bound.token);
-  assert.equal(me.stats.hands, 1); assert.equal(me.rooms[0].code, roomCode);
-  const login = await f.api('/api/account/login', { username: 'old_friend', password: PASSWORD });
-  const exported = await f.api('/api/export?format=json', undefined, login.token);
-  assert.equal(exported.hands.length, 1); assert.equal(exported.viewerId, legacy.id);
+  await f.api('/api/account/bind', { username: 'old_friend', password: PASSWORD }, legacyToken, 403);
+  assert.deepEqual(f.app.store.data, before);
+  assert.equal((await f.api('/api/me', undefined, legacyToken)).user.id, legacy.id);
 });
 
 test('password changes revoke every prior session and their already-open private SSE streams', async t => {
@@ -153,13 +171,8 @@ test('recovery code is single-use, sessions persist through restart and expiry i
   await f.api('/api/me', undefined, login.token);
 });
 
-test('concurrent registration and recovery cannot double-claim username or reuse recovery code', async t => {
-  const f = await setup(t);
-  const register = () => fetch(f.base() + '/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'same_user', password: PASSWORD }) });
-  const responses = await Promise.all([register(), register()]);
-  assert.deepEqual(responses.map(r => r.status).sort(), [201, 409]);
-  const original = await responses.find(r => r.status === 201).json();
-  assert.equal(Object.values(f.app.store.data.users).filter(u => u.username === 'same_user').length, 1);
+test('concurrent recovery cannot reuse the same recovery code', async t => {
+  const f = await setup(t), original = await f.register('same_user');
   const recover = () => fetch(f.base() + '/api/account/recover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'same_user', recoveryCode: original.recoveryCode, newPassword: NEW_PASSWORD }) });
   const resets = await Promise.all([recover(), recover()]);
   assert.deepEqual(resets.map(r => r.status).sort(), [200, 401]);

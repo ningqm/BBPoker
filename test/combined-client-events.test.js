@@ -1,4 +1,6 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
+import { createTurnRecovery } from '../public/turn-recovery.js';
 import {updateHandCategoryMotion} from '../public/hand-category.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +11,7 @@ import * as money from '../public/money.js';
 import {createRequestGuard} from '../public/platform.js';
 import {createTableFunTracker} from '../public/table-fun.js';
 import {createTableFeedback} from '../public/table-feedback.js';
+import {createTableModeTracker} from '../public/table-mode-events.js';
 import * as tableScene from '../public/table-scene.js';
 import * as tableControls from '../public/table-controls.js';
 import {patchStableControls} from '../public/stable-controls.js';
@@ -28,7 +31,7 @@ function harness(){
     chatDraft:'',chatBusy:false,chatPending:null,chatOpen:false,chatUnread:0,chatMuted:false,reactionsMuted:false,reactions:{},funEffects:[],animations:true,sound:true,modal:null};
   let serial=0;
   const pending=(path,body)=>new Promise((resolve,reject)=>calls.push({path,body,resolve,reject}));
-  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,patchStableControls,updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
+  const context=vm.createContext({sameRoomSnapshot,createRoomClock,isOlderRoomSnapshot,patchStableControls,updateHandCategoryMotion,...money,...tableScene,...tableControls,lifecycle,state,requests,Date,URLSearchParams,
     api:pending,fetch:(url,options)=>pending(url,options),apiUrl:path=>path,
     FormData:class{constructor(form){this.values=form.values;}get(name){return this.values[name]??null;}},
     document:{visibilityState:'visible',addEventListener:(type,fn)=>listeners.set(type,fn)},navigator:{onLine:true},
@@ -38,6 +41,12 @@ function harness(){
     tableInfoModal(){infoPaint.push(clone(state.room));state.modal={kind:'table-info'};},roomMenu(){state.modal={kind:'room-menu'};},
     connectStream(){state.connected=false;},readSettings:()=>({bigBlind:10}),saveExport:async file=>{saved.push(file);return {canceled:false};},navigate:path=>navigated.push(path),
     fairnessSourceLinks:()=>'',
+  });
+  // Production normalization gets transport freshness from the recovery
+  // controller; the display clock alone cannot decide whether to play effects.
+  state.turnRecovery=createTurnRecovery({
+    getContext:()=>({room:state.room,identity:state.token,now:state.clock.now()}),
+    fetchRoom(){},apply(){},reconnect(){},
   });
   vm.runInContext([
     section('const esc=','const fmtDate='),section('const btn=','const avatar='),
@@ -197,7 +206,7 @@ test('nine chat-only snapshots leave table details and its expanded content unto
   assert.equal(c.paints,0);assert.deepEqual(c.body.children,nodes);assert.equal(c.body.querySelector('details'),details);assert.equal(details.open,true);
 });
 function roomScene(state){return JSON.stringify({children:[{className:'topbar'},{className:'room-shell',dataset:{room:state.room.code},children:[
-  {className:'room-head',text:state.room.name||'九人桌',children:[{tag:'button',id:'probe-topup',dataset:{action:'buyin'},text:'补码'}]},{className:'game-grid',children:[{className:'table-column',children:[{className:'table-stage',children:[{className:'seat',dataset:{playerId:'p0'},children:[{className:'seat-main',dataset:{action:'player-stats',player:'p0'},children:[{className:'stack-value',text:`筹码${state.room.players[0].stack}`}]},{className:'seat-time-tools',children:[{tag:'button',id:'probe-timebank',dataset:{action:'timebank'},text:'+30秒 · 6张'}]}]}]},{className:'table-bottom',dataset:{turn:`${state.room.hand.id}:${state.room.hand.actionSeq}`},children:[{tag:'button',id:'probe-bet',attrs:state.busy||!state.connected||state.feedbackResync?{disabled:''}:{},dataset:{action:'raise-preset',amount:String(state.room.actions?.minRaiseTo||20)},text:`加至 ${state.room.actions?.minRaiseTo||20}`}]}]}]},
+  {className:'room-head',text:state.room.name||'九人桌',children:[{tag:'button',id:'probe-topup',dataset:{action:'buyin'},text:'补码'}]},{className:'game-grid',children:[{className:'table-column',children:[{className:'table-stage',children:[{className:'seat',dataset:{playerId:'p0'},children:[{className:'seat-main',dataset:{action:'player-stats',player:'p0'},children:[{className:'stack-value',text:`筹码${state.room.players[0].stack}`}]},{className:'seat-time-tools',children:[{tag:'button',id:'probe-timebank',dataset:{action:'timebank'},text:'+30秒 · 6张'}]}]}]},{className:'table-bottom',dataset:{turn:`${state.room.hand?.id||''}:${state.room.hand?.actionSeq||0}`},children:[{tag:'button',id:'probe-bet',attrs:state.busy||!state.connected||state.feedbackResync?{disabled:''}:{},dataset:{action:'raise-preset',amount:String(state.room.actions?.minRaiseTo||20)},text:`加至 ${state.room.actions?.minRaiseTo||20}`}]}]}]},
   {tag:'nav',className:'table-toolbar',children:[{tag:'button',id:'chat-toggle',dataset:{action:'toggle-chat'},attrs:{'aria-expanded':String(state.chatOpen),'aria-controls':'chat-drawer'},text:`聊天${state.chatUnread||''}`},{tag:'button',dataset:{action:'history'},text:'牌谱'}]},
   ...(state.chatOpen?[{className:'chat-card',text:'聊天已打开'}]:[]),
 ]}]});}
@@ -322,11 +331,11 @@ test('real room snapshots keep transition, flip and readiness feedback separate 
  c.normalizeState(tail);assert.equal(c.sounds.filter(s=>s.speech==='call').length,1);assert.equal(c.state.potMotion,null);
  const chat=clone(tail);chat.revision=3;chat.serverTime=now+500;chat.chat=[{id:'chat',playerId:'p3',kind:'text',text:'好牌',at:new Date(now+500).toISOString()}];c.normalizeState(chat);
  const flop=clone(chat);flop.revision=4;flop.serverTime=now+901;Object.assign(flop.hand,{board:['As','Kd','2c'],actingId:'p0',actionReadyAt:now+1801,transition:null,log:[...tail.hand.log,{seq:2,type:'street',street:'flop'}],actionSeq:2});flop.actions={canAct:false};
- c.normalizeState(flop);assert.equal(c.sounds.filter(s=>s.sound==='board').length,1);assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,0);assert.ok(c.state.boardMotion);assert.equal(c.state.motion.actor,null);
+ c.normalizeState(flop);assert.equal(c.sounds.filter(s=>s.sound==='board').length,1);assert.equal(c.sounds.filter(s=>s.yourTurnId).length,0);assert.ok(c.state.boardMotion);assert.equal(c.state.motion.actor,null);
  const ready=clone(flop);ready.revision=5;ready.serverTime=now+1801;ready.actions.canAct=true;c.normalizeState(ready);
- assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,1);assert.equal(c.sounds.filter(s=>s.speech==='call').length,1);assert.deepEqual(clone(c.state.motion.actions),[]);
+ assert.equal(c.sounds.filter(s=>s.yourTurnId).length,1);assert.equal(c.sounds.filter(s=>s.speech==='call').length,1);assert.deepEqual(clone(c.state.motion.actions),[]);
  const ids=c.sounds.filter(s=>s.eventId).map(s=>s.eventId);assert.equal(new Set(ids).size,ids.length);
- c.normalizeState(clone(ready));assert.equal(c.sounds.filter(s=>s.sound==='yourturn').length,1);
+ c.normalizeState(clone(ready));assert.equal(c.sounds.filter(s=>s.yourTurnId).length,1);
 });
 
 test('expired room delivery suppresses all visual and sound effects together and cannot replay them later',()=>{
@@ -341,4 +350,81 @@ test('expired room delivery suppresses all visual and sound effects together and
  const restored=clone(old);restored.revision=3;restored.serverTime=now;c.normalizeState(restored);
  for(const field of ['boardMotion','potMotion','revealMotion','motion'])assert.equal(c.state[field],null,field);
  assert.equal(c.sounds.filter(s=>s.sound||s.speech).length,0);
+});
+
+
+function modeClientFixture() {
+  const c = renderHarness();
+  const baseTime = 1800000000000;
+  c.state.clock = createRoomClock({ monotonicNow: () => 0, wallNow: () => baseTime });
+  c.state.modeTracker = createTableModeTracker(); c.state.modeEffects = []; c.state.room = null;
+  const idle = nineRoom(1); idle.serverTime = baseTime; idle.hand = null; idle.status = 'waiting';
+  Object.assign(idle.mini.squid, { active: false, round: 0, won: [], counts: {}, tokenBudget: 0 });
+  c.normalizeState(idle);
+  const opening = nineRoom(2); opening.serverTime = baseTime;
+  Object.assign(opening.hand, { at: new Date(baseTime).toISOString(), actionReadyAt: baseTime + 1100, ante: 20 });
+  return { c, baseTime, opening };
+}
+
+test('actual client capture keeps one combined opening through render, chat and buy-in updates without extending its duration', () => {
+  const { c, baseTime, opening } = modeClientFixture();
+  const untouched = JSON.stringify(opening); c.normalizeState(opening);
+  assert.equal(JSON.stringify(opening), untouched);
+  assert.deepEqual(Array.from(c.state.modeEffects, e => e.type), ['bomb-start', 'squid-start']);
+  const first = clone(c.state.modeEffects);
+  for (let i = 0; i < 5; i++) c.render();
+  assert.deepEqual(clone(c.state.modeEffects), first);
+  for (let i = 3; i <= 8; i++) {
+    const next = clone(opening); next.revision = i; next.serverTime = baseTime + i * 100;
+    next.chat = [{ id: `mode-chat-${i}`, playerId: 'p2', kind: 'text', text: '你好', at: new Date(baseTime).toISOString() }];
+    next.players[0].pendingBuyIn = i * 100;
+    c.normalizeState(next); c.render();
+    assert.deepEqual(clone(c.state.modeEffects), first);
+  }
+  assert.equal(c.calls.length, 0, 'transitions submit no table commands or extra waits');
+  const expired = clone(opening); expired.revision = 9; expired.serverTime = baseTime + 1100;
+  c.normalizeState(expired); assert.equal(c.state.modeEffects.length, 0);
+  expired.revision++; expired.serverTime++; c.normalizeState(expired); assert.equal(c.state.modeEffects.length, 0);
+});
+
+test('actual client switching tables discards old mode effects and treats the other table as a silent baseline', () => {
+  const { c, opening } = modeClientFixture(); c.normalizeState(opening);
+  assert.equal(c.state.modeEffects.length, 2);
+  const other = clone(opening); other.code = '654321'; other.revision = 1;
+  c.normalizeState(other); assert.equal(c.state.modeEffects.length, 0);
+  c.normalizeState(opening); assert.equal(c.state.modeEffects.length, 0);
+  assert.equal(c.calls.length, 0);
+});
+
+test('actual stopStream clears mounted mode effects and reconnect cannot replay them', () => {
+  const { c, opening } = modeClientFixture(); c.normalizeState(opening);
+  const mounts = [], aborts = [];
+  Object.assign(c.context, { clearTimeout, turnCountdown: { reset() {} },
+    mountTableModeEffects: (...args) => mounts.push(args),
+  });
+  vm.runInContext(section('function stopStream(', 'async function connectStream('), c.context);
+  c.state.modeMounted = true; c.state.stream = { abort() { aborts.push(true); } };
+  c.context.stopStream();
+  assert.equal(c.state.modeEffects.length, 0); assert.equal(c.state.modeMounted, false);
+  assert.equal(mounts.length, 1); assert.equal(mounts[0][2].enabled, false);
+  assert.equal(aborts.length, 1); assert.equal(c.state.feedbackResync, true);
+  c.state.connected = true; c.normalizeState(clone(opening));
+  assert.equal(c.state.modeEffects.length, 0); c.render(); assert.equal(c.state.modeEffects.length, 0);
+  assert.equal(c.calls.length, 0);
+});
+
+test('actual client hidden snapshots and restoration do not replay a squid settlement', () => {
+  const { c, baseTime, opening } = modeClientFixture(); c.normalizeState(opening);
+  c.context.document.visibilityState = 'hidden';
+  const finished = clone(opening); finished.revision = 3; finished.serverTime = baseTime + 100;
+  finished.status = 'waiting'; finished.hand.status = 'complete';
+  Object.assign(finished.mini.squid, { active: false, lastResult: {
+    round: 1, roundSettlementId: 'synthetic-mode-settlement', settledAt: new Date(baseTime + 100).toISOString(),
+    handId: finished.hand.id, mode: 'unlimited', amount: 120, unit: 20, counts: { p0: 6 },
+    changes: { p0: 120 }, tokensAwarded: 6, winnerIds: ['p0'], loserIds: ['p1'],
+  } });
+  const before = JSON.stringify(finished); c.normalizeState(finished);
+  assert.equal(c.state.modeEffects.length, 0); assert.equal(JSON.stringify(finished), before);
+  c.context.document.visibilityState = 'visible'; c.normalizeState(clone(finished));
+  assert.equal(c.state.modeEffects.length, 0); assert.equal(c.calls.length, 0);
 });

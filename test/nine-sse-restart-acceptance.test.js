@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +18,7 @@ async function fixture(t, buyins = Array(9).fill(200)) {
   let app, base;
   const sockets = new Map();
   async function boot() {
-    app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+    app = createApp({ dataDir: dir, actionTickMs: 1000000 });
     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${app.server.address().port}`;
   }
@@ -29,7 +30,7 @@ async function fixture(t, buyins = Array(9).fill(200)) {
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   const users = [];
-  for (let i = 0; i < 10; i++) users.push(await api(null, '/api/session', { name: `SSE验收${i}` }, 201));
+  for (let i = 0; i < 10; i++) users.push(seedLegacyAccount(app, { name: `SSE验收${i}` }));
   const created = (await api(users[0], '/api/rooms', { name: '九人连接与重启验收', settings: {
     maxPlayers: 9, smallBlind: 5, bigBlind: 10, durationMinutes: 60,
     squid: true, squidMode: 'unlimited', squidExtraTokens: 3, squidUnitBB: 2,
@@ -85,7 +86,7 @@ async function fixture(t, buyins = Array(9).fill(200)) {
   };
   const conserve = () => {
     const r = room(), ms = Object.values(r.members);
-    const actual = ms.reduce((sum, m) => sum + m.stack + m.cashedOut, 0)
+    const actual = ms.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0)
       + Object.values(r.mini.squid.reserves).reduce((sum, n) => sum + n, 0)
       + (r.hand?.status === 'playing' ? r.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0);
     assert.equal(actual, ms.reduce((sum, m) => sum + m.totalBuyIn, 0));
@@ -191,13 +192,13 @@ test('nine actual SSE players: concurrent chats/top-up, disconnect, three-way al
   }
   const h = f.room().hand;
   assert.deepEqual(h.board, ['Ac','Kd','Qc','2s','3d']);
-  assert.deepEqual(h.result.pots.map(p => p.amount), [2295,1000]);
+  assert.deepEqual(h.result.pots.map(p => p.amount), [3015,1000]);
   assert.deepEqual(h.result.pots.map(p => p.winnerIds), [[f.id(3)],[f.id(4)]]);
   assert.deepEqual(h.log.filter(e => e.type === 'refund').map(e => e.amount), []);
   assert.equal(h.players.find(p => p.id === f.id(5)).stack, 500, 'covering caller retains chips above the largest opposing all-in');
-  const expected = [0,-5,-10,1535,-260,-1260,0,0,0];
+  const expected = [0,-5,-10,2015,-500,-1500,0,0,0];
   assert.deepEqual(h.players.map(p => p.stack - p.startingStack), expected);
-  assert.equal(f.room().members[f.id(3)].stack, 3295, 'one queued 100 BB top-up arrives after the award');
+  assert.equal(f.room().members[f.id(3)].stack, 4015, 'one queued 100 BB top-up arrives after the award');
   assert.equal(f.room().members[f.id(3)].totalBuyIn, 2000);
   assert.equal(f.app.service.pendingBuyIn(f.room().members[f.id(3)]), 0);
   assert.equal(f.room().mini.squid.counts[f.id(3)], 1); assert.equal(f.room().mini.squid.counts[f.id(4)], 0, 'side-pot winner gets no fish');
@@ -207,11 +208,11 @@ test('nine actual SSE players: concurrent chats/top-up, disconnect, three-way al
     for (const p of view.players) assert.equal(p.cards.filter(Boolean).length, [i,3,4,5].includes(f.users.findIndex(u => u.user.id === p.id)) ? 2 : 0);
   });
   const direct = (await f.api(3, `/api/opponents?room=${f.room().code}`)).opponents;
-  assert.equal(direct.summary.holdem.net, 1535);
-  assert.equal(direct.rows.find(row => row.id === f.id(4)).holdem.net, 760);
-  assert.equal(direct.rows.find(row => row.id === f.id(5)).holdem.net, 760);
+  assert.equal(direct.summary.holdem.net, 2015);
+  assert.equal(direct.rows.find(row => row.id === f.id(4)).holdem.net, 1000);
+  assert.equal(direct.rows.find(row => row.id === f.id(5)).holdem.net, 1000);
   const inverse = (await f.api(4, `/api/opponents?room=${f.room().code}&opponent=${f.id(3)}`)).opponents;
-  assert.equal(inverse.summary.holdem.net, -760);
+  assert.equal(inverse.summary.holdem.net, -1000);
   for (const scope of ['table','career']) {
     const stats = await f.api(0, f.path + `/players/${f.id(4)}/stats?scope=${scope}`);
     assert.equal(stats.hands, 1); assert.equal(stats.metrics.vpip.count, 1); assert.equal(stats.metrics.threeBet.count, 1);
@@ -249,8 +250,8 @@ test('nine real SSE players: absent zero-fish player, new identity and old winne
   assert.equal(f.room().hand.bombPot, false); assert.equal(f.room().hand.players.length, 8);
   assert.equal(f.room().mini.squid.tokenBudget, 13); assert.equal(f.room().mini.squid.participants.length, 10);
   assert.equal(f.room().mini.squid.counts[f.id(9)], 0); assert.equal(f.room().mini.squid.counts[f.id(0)], 1);
-  assert.equal(f.room().mini.squid.reserves[f.id(9)], 260);
-  assert.equal(f.room().members[f.id(4)].stack, zeroFishStack - 20, 'only the explicit new-player reserve increase is charged to the offline player; no blind is burned');
+  assert.equal(f.room().mini.squid.reserves[f.id(9)], undefined);
+  assert.equal(f.room().members[f.id(4)].stack, zeroFishStack, 'new admission charges neither reserve nor blind to an offline player');
   assert.equal(f.room().hand.players.some(p => p.id === f.id(4)), false);
   assert.deepEqual(f.room().hand.log.filter(e => e.playerId === f.id(9) && ['entryBlind','smallBlind','bigBlind','deadBlind'].includes(e.type)).map(e => [e.type,e.amount]), [['entryBlind',10]]);
   await f.cmd(9, 'sit', { seat: 0, amountBB: 200, entryMode: 'post', commandId: sitId });

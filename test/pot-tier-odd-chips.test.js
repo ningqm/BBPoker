@@ -72,3 +72,57 @@ test('historical unmerged archives retain their recorded odd-chip result without
     assert.ok(Math.abs(net - (p.stack - p.startingStack)) < 1e-8);
   }
 });
+
+// Frozen from dual-table hand 5d6a4f4f-2a12-46c6-9c12-54660ac52794.
+// Seats4/5/8 tie with straights. Seat3 is eligible for the 2500-point pot,
+// but not the following 2000-point pot. Killing its losing hand must not
+// erase that boundary: 2500 splits 834/833/833; 2000 splits 667/667/666.
+const KILLED_EXPECTED = [0, 0, 14500, 0, 1501, 2250, 4000, 0, 4749];
+function killedContenderFixture() {
+  const pairs = ['6h9h','JsJd','Qc6d','Th8c','Ts5d','2c2d','7s5s','4cTc','6sQd'];
+  const fixed = new Map(pairs.flatMap((pair, i) => [[i, pair.slice(0, 2)], [i + 9, pair.slice(2)]])
+    .concat([[19,'Kh'],[20,'9d'],[21,'Ks'],[23,'Jc'],[25,'Qh']]));
+  const pack = [...'cdhs'].flatMap(s => [...'23456789TJQKA'].map(r => r + s));
+  const rest = pack.filter(card => ![...fixed.values()].includes(card));
+  const deck = pack.map((_, i) => fixed.get(i) ?? rest.shift());
+  const hand = createHand({ id: 'killed-contender-side-pot-boundary', buttonSeat: 0, smallBlind: 5, bigBlind: 10, deck,
+    players: Array.from({ length: 9 }, (_, seat) => ({ id: String(seat), name: `seat${seat}`, seat, stack: 1000 + seat * 500 })) });
+  for (const [id, type] of [['3','allin'],['4','allin'],['5','allin'],['6','fold'],['7','allin'],['8','call'],['0','call'],['1','call'],['2','call']]) {
+    assert.equal(hand.actingId, id); applyAction(hand, id, type);
+  }
+  return hand;
+}
+function killedContenderView(hand) {
+  return { id: hand.id, number: 1, at: '2026-10-17T00:00:00.000Z', roomCode: 'synthetic', roomName: 'showdown side-pot boundary',
+    buttonSeat: hand.buttonSeat, smallBlindSeat: hand.smallBlindSeat, bigBlindSeat: hand.bigBlindSeat, ante: 0,
+    settings: { smallBlind: 5, bigBlind: 10 }, board: hand.board, log: hand.log,
+    result: { showdown: true, payouts: Object.fromEntries(hand.players.map(p => [p.id, KILLED_EXPECTED[p.seat] - (p.startingStack - p.contributed)])) },
+    players: hand.players.map(p => ({ id: p.id, name: p.name, seat: p.seat, startingStack: p.startingStack,
+      endingStack: KILLED_EXPECTED[p.seat], net: KILLED_EXPECTED[p.seat] - p.startingStack, miniNet: 0,
+      cards: p.folded ? [null,null] : p.cards, folded: p.folded })) };
+}
+
+test('distinct side pots distribute odd chips separately even when their eventual winners are identical', () => {
+  const hand = killedContenderFixture();
+  assert.deepEqual(hand.players.map(p => p.stack), KILLED_EXPECTED);
+  assert.deepEqual(hand.result.pots.map(p => p.amount), [8000, 3500, 3000, 2500, 2000, 1500, 2000]);
+  assert.deepEqual(hand.result.pots[3].eligibleIds, ['3','4','5','7','8']);
+  assert.deepEqual(hand.result.pots[4].eligibleIds, ['4','5','7','8']);
+  assert.deepEqual(hand.result.pots[3].winnerIds, ['4','5','8']);
+  assert.deepEqual(hand.result.pots[4].winnerIds, ['4','5','8']);
+});
+
+test('PokerKit oracle preserves its original side pots before killing losing showdown hands',
+  { skip: !process.env.POKERKIT_PYTHON }, () => {
+    const visible = killedContenderView(killedContenderFixture());
+    const result = replayIndependently(exportPhh([visible]), 1);
+    assert.equal(result.odd_chip_normalizations, 1);
+    assert.equal(result.pot_boundary_normalizations, 1);
+    // The unnormalized PokerKit result conserves total chips but is wrong for
+    // our per-pot rule. Reject it rather than allowing either one-point result.
+    const wrong = structuredClone(visible);
+    wrong.players[4].net--; wrong.players[4].endingStack--;
+    wrong.players[8].net++; wrong.players[8].endingStack++;
+    wrong.result.payouts['4']--; wrong.result.payouts['8']++;
+    assert.throws(() => replayIndependently(exportPhh([wrong]), 1), /killed-contender-side-pot-boundary/);
+  });

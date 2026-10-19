@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +31,7 @@ function setup(t, settings = {}, buyins = Array(9).fill(100)) {
     const q = room.mini.squid, part = q.active && q.participants.includes(f.id(i));
     const result = service.command(users[i], room.code, { type, commandId: randomUUID(), handId: room.hand?.id, actionSeq: room.hand?.log.length,
       ...(['stand', 'sitout'].includes(type) ? { expectedSquidRound: part ? q.round : 0,
-        expectedSquidCost: part && !q.counts[f.id(i)] ? 240 : 0 } : {}), ...extra });
+        expectedSquidCost: part && !q.counts[f.id(i)] ? q.tokenBudget * q.unit : 0 } : {}), ...extra });
     if (action) while (room.hand?.transition) assert.ok(advanceRoomEvent(service, room, value => { time = value; }));
     return result;
   };  f.connect = (i, connected) => { service.connections.set(`${room.code}:${f.id(i)}`, connected ? 1 : 0); service.connectionChanged(room, time, { reconnected: connected }); };
@@ -47,26 +48,26 @@ function setup(t, settings = {}, buyins = Array(9).fill(100)) {
   for (let i = 1; i < 10; i++) service.join(users[i], room.code, room.invite);
   for (let i = 0; i < 9; i++) { f.cmd(i, 'sit', { seat: i, amountBB: buyins[i] }); f.connect(i, true); }
   f.start(); f.cmd(0, 'autoDeal', { paused: true });
-  assert.deepEqual(Object.values(room.mini.squid.reserves), Array(9).fill(240));
+  assert.deepEqual(Object.values(room.mini.squid.reserves), []);
   return f;
 }
 function conserve(f) {
   const ms = Object.values(f.room.members), h = f.room.hand;
-  const held = ms.reduce((n, m) => n + m.stack + m.cashedOut, 0)
+  const held = ms.reduce((n, m) => n + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0)
     + Object.values(f.room.mini.squid.reserves).reduce((a, b) => a + b, 0)
     + (h?.status === 'playing' ? h.players.reduce((n, p) => n + p.contributed, 0) : 0);
   assert.equal(held, ms.reduce((n, m) => n + m.totalBuyIn, 0), 'buy-ins = stacks + escrow + cashouts + live pots');
 }
 function fishTransfers(f, expected) {
   const rows = f.data.ledger.filter(e => e.type === 'squidSettlement');
-  assert.equal(rows.length, 9); assert.equal(new Set(rows.map(e => e.roundSettlementId)).size, 1);
+  assert.equal(rows.length, expected.length); assert.equal(new Set(rows.map(e => e.roundSettlementId)).size, 1);
   assert.deepEqual(Object.fromEntries(rows.map(e => [e.playerId, e.amount])), Object.fromEntries(expected.map((n, i) => [f.id(i), n])));
   assert.equal(rows.reduce((n, e) => n + e.amount, 0), 0);
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < expected.length; i++) {
     const stats = aggregateAnalytics(f.data, f.id(i));
     assert.equal(stats.miniNet, expected[i]); assert.equal(stats.squidSettlementCount, 1);
   }
-  assert.equal(aggregateAnalytics(f.data, f.id(9)).miniNet, 0, 'waiting newcomer has no old-round liability');
+  if (expected.length < 10) assert.equal(aggregateAnalytics(f.data, f.id(9)).miniNet, 0, 'waiting newcomer has no old-round liability');
   conserve(f);
 }
 function installDeck(f, holes) {
@@ -103,12 +104,12 @@ test('combined nine: 3bet/4bet and three all-ins, pending leaver, newcomer barri
   f.cmd(4, 'stand');
   f.cmd(3, 'allin'); f.cmd(4, 'call'); f.cmd(5, 'call');
   finishRunout(f);
-  // Three stacks 760 each + dead SB5 + BB10 = 2295. AA beats KK and QQ.
-  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [2295]);
+  // Three full stacks 1000 each + dead SB5 + BB10 = 3015. AA beats KK and QQ.
+  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [3015]);
   assert.deepEqual(f.room.hand.result.mainWinnerIds, [f.id(3)]);
-  assert.deepEqual(f.room.hand.players.map(p => p.stack - p.startingStack), [0,-5,-10,1535,-760,-760,0,0,0]);
+  assert.deepEqual(f.room.hand.players.map(p => p.stack - p.startingStack), [0,-5,-10,2015,-1000,-1000,0,0,0]);
   assert.equal(q.counts[f.id(3)], 1); assert.equal(f.member(4).seat, null); assert.equal(f.member(4).cashedOut, 0);
-  assert.equal(q.reserves[f.id(4)], 240);
+  assert.equal(q.reserves[f.id(4)], undefined);
   for (let viewer = 0; viewer < 9; viewer++) {
     const state = f.service.state(f.room, f.id(viewer));
     for (const p of state.players.filter(p => p.inHand)) {
@@ -122,22 +123,27 @@ test('combined nine: 3bet/4bet and three all-ins, pending leaver, newcomer barri
   const sitId = randomUUID();
   f.cmd(4, 'sit', { seat: 8, amountBB: 100, entryMode: 'post', commandId: sitId });
   f.cmd(4, 'sit', { seat: 8, amountBB: 100, entryMode: 'post', commandId: sitId });
-  assert.equal(f.member(4).totalBuyIn, 2000); assert.equal(q.reserves[f.id(4)], 240);
+  assert.equal(f.member(4).totalBuyIn, 2000); assert.equal(q.reserves[f.id(4)], undefined);
   f.advance(60000); f.start();
   assert.equal(f.room.hand.bombPot, false, 'a pending returning player defers the due bomb');
-  assert.ok(!f.room.hand.players.some(p => p.id === f.id(9)));
+  assert.ok(!f.room.hand.players.some(p => p.id === f.id(9)), 'default wait-BB entrant still respects position');
   assert.deepEqual(f.room.hand.log.filter(e => e.playerId === f.id(4) && ['entryBlind','bigBlind','smallBlind','deadBlind'].includes(e.type)).map(e => [e.type,e.amount]), [['entryBlind',10]]);
   assert.equal(q.roundSettlementId, round); assert.equal(q.tokenBudget, 12); assert.equal(q.participants.length, 9);
   f.win(3); f.start();
-  assert.equal(f.room.hand.bombPot, true); assert.equal(f.room.hand.players.length, 7);
-  assert.equal(f.room.hand.log.filter(e => e.type === 'ante').length, 7);
+  assert.equal(f.room.hand.bombPot, false, 'newcomer now reaches a natural big blind before the deferred bomb');
+  assert.ok(f.room.hand.players.some(p => p.id === f.id(9)));
+  assert.equal(q.tokenBudget, 13); assert.equal(q.participants.length, 10);
+  assert.deepEqual(f.room.hand.log.filter(e => e.playerId === f.id(9) && ['entryBlind','bigBlind','deadBlind'].includes(e.type)).map(e => [e.type,e.amount]), [['bigBlind',10]]);
+  f.win(3); f.start();
+  assert.equal(f.room.hand.bombPot, true); assert.equal(f.room.hand.players.length, 8);
+  assert.equal(f.room.hand.log.filter(e => e.type === 'ante').length, 8);
   assert.ok(f.room.hand.log.every(e => !['smallBlind','bigBlind','entryBlind','deadBlind'].includes(e.type)));
-  f.win(3); assert.equal(f.room.hand.result.pots.reduce((sum, p) => sum + p.amount, 0), 140);
-  assert.equal(q.counts[f.id(3)], 3); assert.deepEqual(Object.values(q.reserves), Array(9).fill(240));
+  f.win(3); assert.equal(f.room.hand.result.pots.reduce((sum, p) => sum + p.amount, 0), 160);
+  assert.equal(q.counts[f.id(3)], 4); assert.deepEqual(Object.values(q.reserves), []);
   f.cmd(0, 'close');
-  fishTransfers(f, [-60,-60,-60,480,-60,-60,-60,-60,-60]);
-  assert.equal(q.lastResult.tokensAwarded, 3); assert.equal(q.lastResult.tokensExhausted, false);
-  assert.equal(aggregateAnalytics(f.data, f.id(9)).hands, 0);
+  fishTransfers(f, [-80,-80,-80,720,-80,-80,-80,-80,-80,-80]);
+  assert.equal(q.lastResult.tokensAwarded, 4); assert.equal(q.lastResult.tokensExhausted, false);
+  assert.equal(aggregateAnalytics(f.data, f.id(9)).hands, 2);
 });
 
 test('combined nine: forced bomb busts eight, late rebuy cancels absent settlement, returning liability survives expiry', t => {
@@ -145,21 +151,21 @@ test('combined nine: forced bomb busts eight, late rebuy cancels absent settleme
   f.win(0); f.advance(60000); f.start();
   installDeck(f, [['As','Ah'],['Ks','Kh'],['Qs','Qh'],['Js','Jh'],['Ts','Th'],['9s','9h'],['8s','8h'],['7s','7h'],['6s','6h']]);
   finishRunout(f);
-  assert.deepEqual(f.room.hand.players.map(p => p.startingStack), [775,755,750,760,760,760,760,760,760]);
-  // 750*9 + 5*8 + 5*7 = 6825 contestable; AA also receives its uncalled15.
-  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [6750,40,35]);
+  assert.deepEqual(f.room.hand.players.map(p => p.startingStack), [1015,995,990,1000,1000,1000,1000,1000,1000]);
+  // 990*9 + 5*8 + 5*7 = 8985 contestable; AA also receives its uncalled15.
+  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [8910,40,35]);
   assert.deepEqual(f.room.hand.log.filter(e => e.type === 'refund').map(e => e.amount), [15]);
-  assert.deepEqual(f.users.slice(0,9).map((_, i) => f.member(i).stack), [6840,0,0,0,0,0,0,0,0]);
+  assert.deepEqual(f.users.slice(0,9).map((_, i) => f.member(i).stack), [9000,0,0,0,0,0,0,0,0]);
   assert.equal(q.counts[f.id(0)], 2); assert.equal(q.absentSettlementAt, f.time + 10000);
   assert.deepEqual(f.room.rebuyGrace.eligibleIds.sort(), f.users.slice(1,9).map(u => u.id).sort());
   for (let i = 1; i < 9; i++) f.connect(i, false);
   f.advance(9999); f.service.tick(f.room, f.time);
   assert.equal(q.active, true); f.connect(1, true);
   const buy = randomUUID(); f.cmd(1, 'buyin', { amountBB: 100, commandId: buy }); f.cmd(1, 'buyin', { amountBB: 100, commandId: buy });
-  assert.equal(f.member(1).stack, 1000); assert.equal(f.member(1).totalBuyIn, 2000); assert.equal(q.reserves[f.id(1)], 240);
+  assert.equal(f.member(1).stack, 1000); assert.equal(f.member(1).totalBuyIn, 2000); assert.equal(q.reserves[f.id(1)], undefined);
   assert.equal(q.absentSettlementAt, null);
   f.cmd(2, 'stand'); f.cmd(9, 'sit', { seat: 2, amountBB: 100 }); f.connect(9, true);
-  f.cmd(0, 'stand'); assert.equal(f.member(0).cashedOut, 6840);
+  f.cmd(0, 'stand'); assert.equal(f.member(0).cashedOut, 9000);
   assert.equal(f.service.squidReady(f.room).length, 1, 'the waiting newcomer cannot pretend to be a second round opponent');
   f.advance(f.room.endsAt - f.time); f.service.tick(f.room, f.time);
   const deadline = f.service.state(f.room, f.id(1)).mini.squid.expiryGraceEndsAt;
@@ -167,7 +173,7 @@ test('combined nine: forced bomb busts eight, late rebuy cancels absent settleme
   f.advance(89999); f.service.tick(f.room, f.time); assert.equal(q.active, true);
   f.advance(1); f.service.tick(f.room, f.time); assert.equal(f.room.status, 'closed');
   fishTransfers(f, [320,-40,-40,-40,-40,-40,-40,-40,-40]);
-  assert.equal(f.member(0).cashedOut, 7400); assert.equal(f.member(1).cashedOut, 1200); assert.equal(f.member(2).cashedOut, 200);
+  assert.equal(f.member(0).cashedOut, 9320); assert.equal(f.member(1).cashedOut, 960); assert.equal(f.member(2).cashedOut, 0);
   assert.equal(f.member(9).cashedOut, 1000);
   f.connect(2, true); f.service.tick(f.room, f.time); fishTransfers(f, [320,-40,-40,-40,-40,-40,-40,-40,-40]);
 });
@@ -183,7 +189,7 @@ test('combined nine: multiple bomb hands preserve an absent blind debt and retur
     f.advance(60000); f.start(); assert.equal(f.room.hand.bombPot, true);
     assert.equal(f.room.hand.players.length, 8); assert.ok(!f.room.hand.players.some(p => p.id === f.id(4)));
     assert.deepEqual([f.room.blindOrbit.smallBlindSeat, f.room.blindOrbit.bigBlindSeat], [3,5]);
-    if (n === 1) { f.connect(4, true); f.cmd(4, 'entryBlind', { mode: 'post' }); }
+    if (n === 1) { f.connect(4, true); assert.equal(f.member(4).sittingOut, true); f.cmd(4, 'sitout', { value: false, entryMode: 'post' }); }
     f.win(0); assert.equal(f.member(4).stack, absentStack);
   }
   f.advance(60000); f.start(); assert.equal(f.room.hand.bombPot, false);
@@ -196,7 +202,7 @@ test('combined nine: multiple bomb hands preserve an absent blind debt and retur
   f.start(); assert.equal(f.room.hand.bombPot, true); assert.equal(f.room.hand.players.length, 9);
   assert.deepEqual(f.room.hand.log.filter(e => e.playerId === f.id(4)).map(e => [e.type,e.amount]), [['ante',20]]);
   f.win(0); assert.equal(q.counts[f.id(0)], 8); assert.equal(q.tokenBudget, 12);
-  assert.deepEqual(Object.values(q.reserves), Array(9).fill(240));
+  assert.deepEqual(Object.values(q.reserves), []);
   f.cmd(0, 'close'); fishTransfers(f, [1280,-160,-160,-160,-160,-160,-160,-160,-160]);
 });
 
@@ -205,27 +211,27 @@ test('combined nine: four different bomb-pot winners, side-pot leaver and rebuy 
   f.win(0); f.advance(60000); f.start();
   installDeck(f, [['As','Ah'],['Ks','Kh'],['Qs','Qh'],['Js','Jh'],['Ts','Th'],['9s','9h'],['8s','8h'],['7s','7h'],['6s','6h']]);
   f.cmd(1, 'stand'); finishRunout(f);
-  // Four independent tiers: 775*9, (1255-775)*8, (1750-1255)*7,
-  // (2260-1750)*6. AA/KK/QQ/JJ win successively as shorter stacks drop out.
-  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [6975,3840,3465,3060]);
+  // Four independent tiers: 1015*9, (1495-1015)*8, (1990-1495)*7,
+  // (2500-1990)*6. AA/KK/QQ/JJ win successively as shorter stacks drop out.
+  assert.deepEqual(f.room.hand.result.pots.map(p => p.amount), [9135,3840,3465,3060]);
   assert.deepEqual(f.room.hand.result.pots.map(p => p.winnerIds), [0,1,2,3].map(i => [f.id(i)]));
-  assert.deepEqual(f.room.hand.players.map(p => p.stack-p.startingStack), [6200,2585,1715,800,-2260,-2260,-2260,-2260,-2260]);
+  assert.deepEqual(f.room.hand.players.map(p => p.stack-p.startingStack), [8120,2345,1475,560,-2500,-2500,-2500,-2500,-2500]);
   assert.equal(q.counts[f.id(0)], 2); assert.deepEqual(Object.values(q.counts).slice(1), Array(8).fill(0));
   assert.equal(f.room.hand.squidAwardedId, f.id(0)); assert.equal(f.member(1).cashedOut, 3840);
-  assert.equal(q.reserves[f.id(1)], 240); assert.equal(q.absentSettlementAt, null, 'two other unmarked side-pot winners can continue');
+  assert.equal(q.reserves[f.id(1)], undefined); assert.equal(q.absentSettlementAt, null, 'two other unmarked side-pot winners can continue');
   f.cmd(9, 'sit', { seat: 1, amountBB: 100 }); f.connect(9, true);
   const buy = randomUUID(); f.cmd(4, 'buyin', { amountBB: 100, commandId: buy }); f.cmd(4, 'buyin', { amountBB: 100, commandId: buy });
-  assert.equal(f.member(4).stack, 1000); assert.equal(f.member(4).totalBuyIn, 3500); assert.equal(q.reserves[f.id(4)], 240);
+  assert.equal(f.member(4).stack, 1000); assert.equal(f.member(4).totalBuyIn, 3500); assert.equal(q.reserves[f.id(4)], undefined);
   assert.equal(q.tokenBudget, 12); assert.equal(q.participants.includes(f.id(9)), false);
   f.cmd(0, 'close'); fishTransfers(f, [320,-40,-40,-40,-40,-40,-40,-40,-40]);
-  assert.equal(f.member(1).cashedOut, 4040, 'winning only a side pot still owes two fish, with unused escrow returned');
-  assert.equal(f.member(4).cashedOut, 1200);
+  assert.equal(f.member(1).cashedOut, 3840, 'the earlier side-pot cashout stays historical; the later two-fish liability is separate');
+  assert.equal(f.member(4).cashedOut, 960);
 });
 
 test('combined nine HTTP: concurrent retries, stale actions and nine personalized reads never duplicate chips or reveal folded hands', async t => {
   let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-combined-nine-'));
-  const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: dir, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -238,7 +244,7 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
     return value;
   };
   const users = [];
-  for (let i = 0; i < 10; i++) users.push(await request(null, '/api/session', { name: `Combined HTTP ${i}` }, [201]));
+  for (let i = 0; i < 10; i++) users.push(seedLegacyAccount(app, { name: `Combined HTTP ${i}` }));
   const initial = (await request(users[0], '/api/rooms', { settings: { maxPlayers: 9, smallBlind: 5, bigBlind: 10,
     squid: true, squidMode: 'unlimited', squidExtraTokens: 3, squidUnitBB: 2, bombPot: true, bombIntervalMinutes: 1 } }, [201])).room;
   const path = `/api/rooms/${initial.code}`, room = () => app.store.data.rooms[initial.code], id = i => users[i].user.id;
@@ -301,12 +307,12 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
   assert.deepEqual(room().hand.log.filter(e => e.type === 'refund').map(e => e.amount), [160]);
   assert.equal(room().hand.result.payouts[id(5)], 225);
   assert.deepEqual(room().hand.players.map(p => p.stack - p.startingStack), [0,-5,-10,-30,-90,135,0,0,0]);
-  assert.equal(room().members[id(5)].cashedOut, 895); assert.equal(room().members[id(5)].seat, null);
+  assert.equal(room().members[id(5)].cashedOut, 1135); assert.equal(room().members[id(5)].seat, null);
   assert.equal(app.service.pendingBuyIn(room().members[id(5)]), 0);
   assert.equal(room().members[id(5)].totalBuyIn, 1000);
   assert.equal(app.store.data.ledger.filter(e => e.playerId === id(5) && e.type === 'buyin').length, 1);
   assert.equal(app.store.data.ledger.filter(e => e.playerId === id(5) && e.type === 'buyinCancelled').length, departureRace[2].room ? 1 : 0);
-  assert.equal(room().mini.squid.counts[id(5)], 1); assert.equal(room().mini.squid.reserves[id(5)], 240);
+  assert.equal(room().mini.squid.counts[id(5)], 1); assert.equal(room().mini.squid.reserves[id(5)], undefined);
   await nineReads();
   const historyViews = await Promise.all(users.slice(0,9).map(u => request(u, path + '/hands/' + handId)));
   historyViews.forEach((view, i) => {
@@ -327,8 +333,8 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
   assert.equal(freshView.players.find(p => p.id === id(9)).waitingFor, 'squid');
   assert.ok(freshView.players.filter(p => p.inHand).every(p => p.cards.every(c => c === null)));
   await cmd(5, 'sit', { seat: 5, amountBB: 100 }, [400]);
-  assert.equal(room().members[id(5)].totalBuyIn, 1000); assert.equal(room().mini.squid.reserves[id(5)], 240);
-  assert.deepEqual(Object.values(room().mini.squid.reserves), Array(9).fill(240));
+  assert.equal(room().members[id(5)].totalBuyIn, 1000); assert.equal(room().mini.squid.reserves[id(5)], undefined);
+  assert.deepEqual(Object.values(room().mini.squid.reserves), []);
   await cmd(8, 'stand', consent(8));
   const beforeRaceBuyins = Object.values(room().members).reduce((sum,m) => sum+m.totalBuyIn,0);
   const seatRace = await Promise.all([
@@ -338,7 +344,7 @@ test('combined nine HTTP: concurrent retries, stale actions and nine personalize
   assert.equal(seatRace.slice(0,2).filter(result => result.room).length, 1, 'exactly one competing identity receives the free seat');
   assert.equal(Object.values(room().members).filter(m => m.seat === 8).length, 1);
   assert.equal(Object.values(room().members).reduce((sum,m) => sum+m.totalBuyIn,0) - beforeRaceBuyins, 1000, 'the losing request cannot also credit a buy-in');
-  assert.deepEqual(Object.values(room().mini.squid.reserves), Array(9).fill(240));
+  assert.deepEqual(Object.values(room().mini.squid.reserves), []);
   assert.equal(room().mini.squid.tokenBudget, 12);
   conserve({ room: room() });
   await cmd(0, 'close');

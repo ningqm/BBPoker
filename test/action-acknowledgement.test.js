@@ -1,3 +1,4 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,18 +18,18 @@ function harness(){
   const bottom={renderedMarkup:'before'};
   const status={textContent:'可过牌',setAttribute(){}},classes=new Set(),dock={closest:()=>bottom,setAttribute(){},classList:{add:k=>classes.add(k)},querySelector:()=>status};
   const buttons=[{disabled:false},{disabled:false}];
-  const panel={hidden:false},toggle={setAttribute(){}};
-  const context=vm.createContext({state,requests,syncBetControls,isOlderRoomSnapshot,
-    document:{visibilityState:'visible',querySelector:s=>s==='.action-dock'?dock:s==='#raise-panel'?panel:s==='#raise-toggle'?toggle:null,querySelectorAll:()=>buttons},navigator:{onLine:true},
+  const panel={hidden:false},toggle={hidden:true,setAttribute(){}},submit={hidden:false};
+  const context=vm.createContext({sameRoomSnapshot,state,requests,syncBetControls,isOlderRoomSnapshot,
+    document:{visibilityState:'visible',querySelector:s=>s==='.action-dock'?dock:s==='#raise-panel'?panel:s==='#raise-toggle'?toggle:s==='#raise-button'?submit:null,querySelectorAll:()=>buttons},navigator:{onLine:true},
     commandId:()=>`synthetic-${++id}`,captureRoomChanges(){},rememberCommitment:()=>false,render(){renders.push(state.room.revision);},toast:m=>notices.push(m),closeModal(){state.modal=null;},connectStream:code=>streams.push(code),
     api:(path,body)=>new Promise((resolve,reject)=>calls.push({path,body,resolve,reject})),
   });
   vm.runInContext(code,context);
-  return {state,requests,bottom,calls,notices,streams,renders,status,buttons,panel,command:context.command,apply:context.normalizeState};
+  return {state,requests,bottom,calls,notices,streams,renders,status,buttons,panel,toggle,submit,command:context.command,apply:context.normalizeState};
 }
 test('press gives inline feedback without rebuilding the table or speculating chips',async()=>{
   const h=harness(),before=JSON.stringify(h.state.room),job=h.command('raise',{amount:40});
-  assert.equal(h.status.textContent,'正在下注…');assert.ok(h.buttons.every(b=>b.disabled));assert.equal(h.panel.hidden,true);
+  assert.equal(h.status.textContent,'正在下注…');assert.ok(h.buttons.every(b=>b.disabled));assert.equal(h.panel.hidden,true);assert.equal(h.toggle.hidden,false);assert.equal(h.submit.hidden,true);
   assert.equal(h.renders.length,0);assert.equal(h.bottom.renderedMarkup,null,'direct DOM changes invalidate the render cache');assert.equal(JSON.stringify(h.state.room),before);
   await h.command('raise',{amount:40});assert.equal(h.calls.length,1);
   h.calls[0].resolve({room:snapshot(2,['synthetic-1'])});assert.equal(await job,true);assert.equal(h.state.busy,false);assert.equal(h.renders.length,1);

@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { lobbyDirectory } from '../src/lobby.js';
 
 async function setup(t, actionTickMs = 1000000) {
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-lobby-'));
-  const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs });
+  const app = createApp({ dataDir: dir, actionTickMs });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
   const api = async (who, path, data, expected = 200) => {
@@ -20,7 +21,7 @@ async function setup(t, actionTickMs = 1000000) {
     const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value;
   };
   const users = [];
-  for (const name of ['公开房主', '邀请房主', '新朋友', '普通朋友']) users.push(await api(null, '/api/session', { name }, 201));
+  for (const name of ['公开房主', '邀请房主', '新朋友', '普通朋友']) users.push(seedLegacyAccount(app, { name }));
   const command = (who, code, type, extra = {}, expected = 200) => api(who, `/api/rooms/${code}/action`, { type, commandId: randomUUID(), ...extra }, expected);
   return { app, api, users, command };
 }

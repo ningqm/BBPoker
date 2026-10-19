@@ -1,6 +1,8 @@
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { dualTableFixture } from './helpers/dual-table-http.mjs';
 import { replayIndependently } from './helpers/pokerkit-oracle.mjs';
 import { exportPhh } from '../src/phh.js';
@@ -13,13 +15,26 @@ for (const modes of [['holdem','normal'],['unlimited','bomb'],['normalBomb','unl
     let now=Date.now();t.mock.method(Date,'now',()=>now);
     const f=await dualTableFixture({modes,registered:true,actionTickMs:1000000});t.after(()=>f.close());
     const sleep=()=>new Promise(resolve=>setTimeout(resolve,5));
-    const details={modes,timing:'controlled clock; real HTTP/SSE; production random shuffle',simultaneousBatches:0,actions:0,retries:0,chats:0,reconnects:0,entries:0,fishAdmissionChecks:0};
-    const handViews=[], socialDone=new Set();
+    const details={modes,timing:'controlled clock; real HTTP/SSE; production random shuffle',simultaneousBatches:0,actions:0,retries:0,chats:0,reconnects:0,entries:0,fishAdmissionChecks:0,hostHandoffChecks:0};
+    const handViews=[], socialDone=new Set(), replaced=new Map();
+    const observeHostHandoff=table=>{
+      const rep=replaced.get(table.index),r=f.internal(table);
+      if(!rep||rep.hostHandoffChecked||r.hostId===table.users[rep.old].user.id)return;
+      assert.ok(now-rep.disconnectedAt>=30000,'ordinary disconnected host retains the short reconnect grace');
+      assert.equal(f.sockets.has(`${table.index}:${rep.old}`),false,'departing host is actually disconnected');
+      assert.ok(r.members[r.hostId]?.seat!=null&&f.app.service.online(r,r.hostId),'management transfers to a remaining online seated player');
+      rep.hostHandoffChecked=true;details.hostHandoffChecks++;
+    };
     const clocks=()=>f.tables.flatMap(table=>{const r=f.internal(table),h=r.hand;return h?.status!=='playing'?[]:[h.transition?.nextAt,h.runout?.active?h.runout.nextAt:null,!r.presentation?.readyPublished?r.presentation?.actionReadyAt:null,r.deadline].filter(Number.isFinite).filter(v=>v>=now);});
-    const tick=()=>{for(const table of f.tables){f.app.service.tick(f.internal(table),now);f.app.broadcast(table.code);}f.app.store.save();};
+    const tick=()=>{for(const table of f.tables){f.app.service.tick(f.internal(table),now);observeHostHandoff(table);f.app.broadcast(table.code);}f.app.store.save();};
     const waitFrames=async()=>{for(let n=0;n<100;n++){if(f.tables.every(table=>{const h=f.internal(table).hand;return !h?.actingId||h.status!=='playing'||!f.sockets.has(`${table.index}:${table.users.findIndex(u=>u.user.id===h.actingId)}`)||(f.sockets.get(`${table.index}:${table.users.findIndex(u=>u.user.id===h.actingId)}`).latest?.hand?.actionSeq===h.log.length&&f.sockets.get(`${table.index}:${table.users.findIndex(u=>u.user.id===h.actingId)}`).latest?.serverTime===now);}))return;await sleep();}throw Error('SSE frames failed to catch up');};
-    const cmd=(table,index,type,extra={})=>f.command(table,index,type,extra);
-    for(const table of f.tables)await cmd(table,0,'autoDeal',{paused:true});
+    const cmd=async(table,index,type,extra={})=>{const result=await f.command(table,index,type,extra);observeHostHandoff(table);return result;};
+    const hostCommand=(table,type,extra={})=>{
+      const index=table.users.findIndex(user=>user.user.id===f.internal(table).hostId);
+      assert.ok(index>=0,'current manager belongs to this fixture');
+      return cmd(table,index,type,extra);
+    };
+    for(const table of f.tables)await hostCommand(table,'autoDeal',{paused:true});
     // Both rooms receive simultaneous chats, reads and repeated pending topups.
     const topups=f.tables.map(()=>randomUUID());
     const before=f.tables.map(table=>structuredClone(f.internal(table).hand));
@@ -30,17 +45,25 @@ for (const modes of [['holdem','normal'],['unlimited','bomb'],['normalBomb','unl
     ]));details.chats+=18;details.retries+=2;
     for(const table of f.tables){const r=f.internal(table);assert.deepEqual(r.hand,before[table.index]);assert.equal(f.app.service.pendingBuyIn(r.members[table.users[8].user.id]),1000);assert.equal(r.chat.length,9);assert.ok(r.chat.every(m=>m.text.startsWith(`${table.index}桌-`)));f.conserve(table);}
     await Promise.all(f.tables.map(table=>f.disconnect(table,6)));details.reconnects+=2;
-    const replaced=new Map();
     for(let round=0;round<8;round++){
       if(round>0){
         now+=round%2?65000:6000;
         for(const table of f.tables){
           const r=f.internal(table);f.app.service.completeRabbit(r,now);
           for(let i=0;i<table.users.length;i++){const m=r.members[table.users[i].user.id];if(m.seat!=null&&m.stack<1000)await cmd(table,i,'buyin',{amountBB:200});}
-          await cmd(table,0,'start');
+          if(r.hand.status==='playing'){
+            assert.equal(r.hand.number,round+1,'host handoff may automatically start exactly the next requested hand');
+            f.app.service.tick(r,now);f.app.broadcast(table.code);
+          }else{
+            assert.equal(r.hand.number,round,'a pending next hand still shows the preceding completed hand');
+            // Handoff or a top-up can already schedule the next hand. Respect
+            // that countdown and let the bounded timer loop below advance it.
+            if(Number.isFinite(r.nextHandAt))assert.equal(r.autoDealPaused,false,'a scheduled hand must be eligible to advance');
+            else await hostCommand(table,'start');
+          }
         }
       }
-      if(round>0){for(let startStep=0;f.tables.some(table=>f.internal(table).hand.status!=='playing');startStep++){assert.ok(startStep<10,'next hands start');const due=f.tables.map(table=>f.internal(table).nextHandAt).filter(Number.isFinite);assert.ok(due.length,'both tables are eligible to resume');now=Math.max(now,Math.min(...due));tick();}for(const table of f.tables)await cmd(table,0,'autoDeal',{paused:true});}
+      if(round>0){for(let startStep=0;f.tables.some(table=>f.internal(table).hand.status!=='playing');startStep++){assert.ok(startStep<10,'next hands start');const due=f.tables.map(table=>f.internal(table).nextHandAt).filter(Number.isFinite);assert.ok(due.length,'both tables are eligible to resume');now=Math.max(now,Math.min(...due));tick();}for(const table of f.tables){assert.equal(f.internal(table).hand.number,round+1,'every resume path starts exactly the next requested hand');await hostCommand(table,'autoDeal',{paused:true});}}
       for(let step=0;f.tables.some(table=>f.internal(table).hand.status==='playing');step++){
         assert.ok(step<500,'both tables finish bounded hand');await waitFrames();
         const jobs=[];
@@ -88,23 +111,41 @@ for (const modes of [['holdem','normal'],['unlimited','bomb'],['normalBomb','unl
           const id=q.active?q.won.find(id=>r.members[id]?.seat!=null):r.hand.players.find(p=>p.id!==table.users[0].user.id).id;
           if(!id)continue;
           const old=table.users.findIndex(u=>u.user.id===id),seat=r.members[id].seat,counts=structuredClone(q.counts),budget=q.tokenBudget,roundId=q.roundSettlementId;
+          // Guarantee the departing winner is also manager, rather than only
+          // covering handoff when the random winner happens to be user zero.
+          if(r.hostId!==id)await hostCommand(table,'transferHost',{playerId:id});
+          assert.equal(r.hostId,id,'the actual departing player owns management before disconnect');
           await cmd(table,old,'stand',{expectedSquidRound:q.active?q.round:0,expectedSquidCost:0});await f.disconnect(table,old);
           const sitId=randomUUID();await Promise.all([cmd(table,9,'sit',{seat,amountBB:200,entryMode:'post',commandId:sitId}),cmd(table,9,'sit',{seat,amountBB:200,entryMode:'post',commandId:sitId})]);await f.connect(table,9);
           assert.equal(r.members[table.users[9].user.id].totalBuyIn,2000);assert.deepEqual(q.counts,counts);
-          replaced.set(table.index,{old,seat,roundId,budget,admitted:false,entryPosts:0});details.entries++;details.retries++;
+          replaced.set(table.index,{old,seat,roundId,budget,admitted:false,returned:false,entryPosts:0,disconnectedAt:now,hostHandoffChecked:false});details.entries++;details.retries++;
         }
       }
       for(const table of f.tables){const rep=replaced.get(table.index);if(!rep)continue;const r=f.internal(table),q=r.mini.squid,newid=table.users[9].user.id;
         rep.entryPosts+=r.hand.log.filter(e=>e.playerId===newid&&e.type==='entryBlind').length;
         assert.ok(rep.entryPosts<=1,'new player is not charged entry blind twice');
         if(!rep.admitted&&r.hand.players.some(p=>p.id===newid)){rep.admitted=true;if(q.active&&q.roundSettlementId===rep.roundId){assert.equal(q.tokenBudget,rep.budget+1);assert.equal(q.participants.filter(id=>id===newid).length,1);details.fishAdmissionChecks++;}}
-        if(round===4&&rep.admitted){const cost=q.active&&q.participants.includes(newid)&&!q.counts[newid]?q.tokenBudget*q.unit:0;await cmd(table,9,'stand',{expectedSquidRound:q.active&&q.participants.includes(newid)?q.round:0,expectedSquidCost:cost});await f.disconnect(table,9);await cmd(table,rep.old,'sit',{seat:rep.seat,amountBB:100,entryMode:'post'});await f.connect(table,rep.old);details.entries++;}
+        // The randomly selected departing winner may occupy a protected blind
+        // position. Bomb hands do not advance that ordinary blind orbit, so
+        // the replacement can legitimately enter later than the fifth hand.
+        if(round>=4&&rep.admitted&&!rep.returned){const cost=q.active&&q.participants.includes(newid)&&!q.counts[newid]?q.tokenBudget*q.unit:0;await cmd(table,9,'stand',{expectedSquidRound:q.active&&q.participants.includes(newid)?q.round:0,expectedSquidCost:cost});await f.disconnect(table,9);await cmd(table,rep.old,'sit',{seat:rep.seat,amountBB:100,entryMode:'post'});await f.connect(table,rep.old);rep.returned=true;details.entries++;}
+      }
+      if(round===1){
+        // Observe handoff after recording this hand's admission/blind counters.
+        // Clearing the departed host's pause may also auto-start the next hand;
+        // the next outer iteration then plays that hand without another start.
+        now+=30000;tick();
+        for(const table of f.tables){
+          assert.equal(replaced.get(table.index)?.hostHandoffChecked,true,'each disconnected manager actually transfers');
+          assert.equal(f.internal(table).autoDealPaused,false,'an absent host cannot leave the whole table paused');
+          await hostCommand(table,'autoDeal',{paused:true});
+        }
       }
     }
     // End both tables concurrently and compare all public totals to raw hand
     // stack changes + independently grouped fish ledger changes.
     const finalFish=f.tables.map(table=>structuredClone(f.internal(table).mini.squid));
-    await Promise.all(f.tables.map(table=>cmd(table,0,'close')));
+    await Promise.all(f.tables.map(table=>hostCommand(table,'close')));
     for(const table of f.tables){const r=f.internal(table),q=finalFish[table.index];f.conserve(table);
       if(q.active){const rows=f.app.store.data.ledger.filter(l=>l.roomCode===r.code&&l.type==='squidSettlement'&&l.roundSettlementId===q.roundSettlementId),total=Object.values(q.counts).reduce((s,n)=>s+n,0),zeros=q.participants.filter(id=>!q.counts[id]).length;
         assert.equal(rows.length,q.participants.length);for(const row of rows)assert.equal(row.amount,q.counts[row.playerId]?q.counts[row.playerId]*q.unit*zeros:-total*q.unit);
@@ -118,9 +159,10 @@ for (const modes of [['holdem','normal'],['unlimited','bomb'],['normalBomb','unl
     const groups=new Map();for(const row of f.app.store.data.ledger.filter(l=>l.type==='squidSettlement')){const key=`${row.roomCode}:${row.roundSettlementId}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
     for(const rows of groups.values()){const zeros=rows.filter(row=>row.squidCount===0).length,total=rows.reduce((s,row)=>s+row.squidCount,0);assert.equal(rows.length,rows[0].participantIds.length);assert.equal(new Set(rows.map(row=>row.playerId)).size,rows.length);for(const row of rows){assert.equal(row.tokensAwarded,total);assert.equal(row.amount,row.squidCount?row.squidCount*row.squidUnit*zeros:-total*row.squidUnit);if(row.squidMode==='normal')assert.ok(row.squidCount<=1);}assert.equal(rows.reduce((s,row)=>s+row.amount,0),0);}
     details.fishSettlements=groups.size;
-    assert.equal(f.errors.length,0);assert.equal(details.entries,4,'both tables replace and return one identity');assert.ok(details.simultaneousBatches>10,JSON.stringify(details));
+    assert.equal(f.errors.length,0);assert.equal(details.entries,4,'both tables replace and return one identity');assert.equal(details.hostHandoffChecks,2,'both departing hosts actually hand management to remaining players');assert.ok(details.simultaneousBatches>10,JSON.stringify(details));
     const summary={...details,coverage:{threeBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=2).length,fourBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=3).length,sidePotHands:handViews.filter(h=>h.result.pots.length>1).length,bombHands:handViews.filter(h=>h.bombPot).length},...f.summary(),sseFrames:[...f.sockets.values()].reduce((s,v)=>s+v.frames,0)};
     if(process.env.POKERKIT_PYTHON)summary.pokerkit=replayIndependently(exportPhh(handViews),handViews.length);
-    t.diagnostic(JSON.stringify({modes,actions:details.actions,simultaneousBatches:details.simultaneousBatches,entries:details.entries,fishAdmissionChecks:details.fishAdmissionChecks,threeBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=2).length,fourBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=3).length,sidePotHands:handViews.filter(h=>h.result.pots.length>1).length,bombHands:handViews.filter(h=>h.bombPot).length,pokerkit:summary.pokerkit}));
+    const path=`${tmpdir()}/bbpoker-dual-${modes.join('-')}-${process.pid}-evidence.json`;writeFileSync(path,JSON.stringify(summary,null,2));
+    t.diagnostic(JSON.stringify({modes,actions:details.actions,simultaneousBatches:details.simultaneousBatches,entries:details.entries,fishAdmissionChecks:details.fishAdmissionChecks,hostHandoffChecks:details.hostHandoffChecks,threeBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=2).length,fourBetHands:handViews.filter(h=>h.log.filter(e=>e.street==='preflop'&&e.isRaise).length>=3).length,sidePotHands:handViews.filter(h=>h.result.pots.length>1).length,bombHands:handViews.filter(h=>h.bombPot).length,pokerkit:summary.pokerkit,evidence:path}));
   });
 }

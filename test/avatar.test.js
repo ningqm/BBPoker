@@ -1,3 +1,4 @@
+import { seedLegacyAccount, seedAssignedAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
@@ -37,7 +38,7 @@ function chunks(bytes) {
 }
 async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-avatar-'));
-  let app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000 });
+  let app = createApp({ dataDir: directory, actionTickMs: 60000 });
   const listen = () => new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   await listen();
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
@@ -53,7 +54,7 @@ async function fixture(t) {
     if (status === 200) { assert.equal(response.headers.get('content-type'), 'image/png'); assert.equal(response.headers.get('cache-control'), 'no-store'); assert.equal(response.headers.get('x-content-type-options'), 'nosniff'); }
     return data;
   }
-  return { directory, base, api, image, get app() { return app; }, guest: name => api('/api/session', { name }, null, 201), async restart() { await app.close(); app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000 }); await listen(); } };
+  return { directory, base, api, image, get app() { return app; }, guest: name => seedLegacyAccount(app, { name }), async restart() { await app.close(); app = createApp({ dataDir: directory, actionTickMs: 60000 }); await listen(); } };
 }
 
 test('avatar normalization strips every metadata chunk while preserving bounded RGB/RGBA pixel streams', () => {
@@ -203,7 +204,7 @@ test('encrypted avatar authentication binds each file to its identifier and corr
 });
 
 test('an upload paused while reading its body rechecks credentials before storing any blob', async t => {
-  const f = await fixture(t), owner = await f.api('/api/account/register', { username: 'avatar_session', password: 'avatar-test-only-password', name: '玩家' }, null, 201);
+  const f = await fixture(t), owner = await seedAssignedAccount(f.app, { username: 'avatar_session', password: 'avatar-test-only-password', name: '玩家' });
   let arrived; const received = new Promise(resolve => { arrived = resolve; });
   f.app.server.prependOnceListener('request', arrived);
   let pending;

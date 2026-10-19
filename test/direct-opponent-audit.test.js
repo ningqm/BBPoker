@@ -170,7 +170,7 @@ test('independent audit: a departed fish holder receives a late natural settleme
   assert.deepEqual(f.db.hands.at(-1).players.map(p => p.id), ['B', 'C', 'D']);
   const rows = f.db.ledger.filter(row => row.type === 'squidSettlement');
   assert.deepEqual(Object.fromEntries(rows.map(r => [r.playerId, r.amount])), { A: 4, B: 4, C: 4, D: -12 });
-  assert.equal(f.room.members.A.cashedOut - cashBefore, 16, '12 reserved points returned plus 4 net profit');
+  assert.equal(f.room.members.A.cashedOut - cashBefore, 4, 'only 4 net profit is credited; no reserve exists');
   assert.deepEqual(amounts(directSquidTransfers(rows, f.db.hands.at(-1).miniAfter.squid)), { 'D>A': 4, 'D>B': 4, 'D>C': 4 });
   const report = directRecordLibrary(f.db, 'A').opponents;
   assert.equal(report.summary.hands, 1); assert.equal(report.summary.squid.net, 4);

@@ -1,3 +1,5 @@
+import * as lifecycle from '../public/lifecycle.js';
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,12 +12,14 @@ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+a.length));
 function harness(unit='bb') {
   money.setDisplayUnit(unit);
-  const state={clock:createRoomClock(),raise:20,connected:true,feedbackResync:false,room:{code:'room-a',meId:'hero',settings:{bigBlind:10},hand:{id:'h1',status:'playing',actionSeq:1,actingId:'hero',currentBet:10,pot:105},players:[{id:'hero',bet:20,stack:1980,inHand:true,cards:['As','Kh'],shownIndices:[]}],actions:{canAct:true,canRaise:true,callAmount:30,minRaiseTo:100,maxRaiseTo:2000}}};
-  const nodes={'#raise-range':{value:0,setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}},'#raise-button':{dataset:{}},'#raise-amount':{},'#raise-panel':{hidden:true},'#raise-toggle':{setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}}};
+  const state={user:{id:'hero'},page:'room',clock:createRoomClock(),raise:20,connected:true,feedbackResync:false,room:{code:'room-a',meId:'hero',settings:{bigBlind:10},hand:{id:'h1',status:'playing',actionSeq:1,actingId:'hero',currentBet:10,pot:105},players:[{id:'hero',bet:20,stack:1980,inHand:true,cards:['As','Kh'],shownIndices:[]}],actions:{canAct:true,canRaise:true,callAmount:30,minRaiseTo:100,maxRaiseTo:2000}}};
+  const nodes={'#raise-range':{value:0,setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}},'#raise-button':{dataset:{},setAttribute(key,value){this[key]=value;}},'#raise-amount':{},'#raise-panel':{hidden:true,setAttribute(key,value){this[key]=value;}},'#raise-toggle':{setAttribute(key,value){this[key]=value;},focus(){this.focused=true;}}};
   const listeners=new Map(),sent=[],messages=[],presets=['third','half','two-thirds','pot'].map(preset=>({dataset:{preset},setAttribute(key,value){this[key]=value;},classList:{toggle(key,value){this[key]=value;}}}));
-  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...money,state,betActionLabel,betPresetOptions,betSubmission,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betTurnKey,betSliderKeyPosition,betAmountFromKey,betActionEnabled,revealOptions,Math,Number,$:s=>nodes[s],esc:String,
+  const context=vm.createContext({lifecycle,requests:{capture:()=>({valid:()=>true})},commandId:()=>'reveal-id',render(){},normalizeState(){},sameRoomSnapshot,createRoomClock,isOlderRoomSnapshot,...money,state,betActionLabel,betPresetOptions,betSubmission,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,betSelection,syncBetControls,betTurnKey,betSliderKeyPosition,betAmountFromKey,betActionEnabled,revealOptions,Math,Number,$:s=>nodes[s],esc:String,
     document:{querySelectorAll:selector=>selector==='[data-action="raise-preset"]'?presets:[],addEventListener:(type,listener)=>listeners.set(type,listener)},updateSettingConstraints(){},updateBuyinSummary(){},chips:n=>money.formatChips(n,10),toast:message=>messages.push(message),
     command:async(type,payload)=>{sent.push({type,...payload});return true;}});
+  context.api=async(path,body)=>context.command(body.type,{indices:body.indices,handId:body.handId});
+  vm.runInContext(section('function cardRevealScope(','async function command('),context);
   vm.runInContext(section('function setRaise(','document.addEventListener('),context);
   vm.runInContext(section('async function handleAction(','function setRaise('),context);
   vm.runInContext(section("document.addEventListener('input'","document.addEventListener('change'"),context);
@@ -39,8 +43,8 @@ test('one preset click submits its displayed whole-BB total in either display un
 test('changing display units keeps the chosen amount and exact all-in ceiling inside the custom picker',async()=>{
   const h=harness('points');h.state.room.actions.maxRaiseTo=2005;await custom(h);h.context.setRaise(125);assert.equal(h.nodes['#raise-range']['aria-valuetext'],'加至 130 积分');
   money.setDisplayUnit('bb');h.context.setRaise(h.state.raise);assert.equal(h.state.raise,130);assert.equal(h.nodes['#raise-range']['aria-valuetext'],'加至 13 BB');
-  h.input(1000);assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].dataset.allin,'true');assert.equal(h.nodes['#raise-button'].textContent,'All-in 200.5 BB');assert.equal(h.sent.length,0);
-  money.setDisplayUnit('points');h.context.setRaise(h.state.raise);assert.equal(h.nodes['#raise-button'].textContent,'All-in 2,005 积分');
+  h.input(1000);assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].dataset.allin,'true');assert.equal(h.nodes['#raise-button'].textContent,'All-in');assert.equal(h.nodes['#raise-button']['aria-label'],'All-in 200.5 BB，点击直接下注');assert.equal(h.nodes['#raise-range'].style,'--raise-fill:100%');assert.equal(h.nodes['#raise-panel'].style,'--raise-progress:1;--raise-fill:100%');assert.equal(h.sent.length,0);
+  money.setDisplayUnit('points');h.context.setRaise(h.state.raise);assert.equal(h.nodes['#raise-button'].textContent,'All-in');assert.equal(h.nodes['#raise-button']['aria-label'],'All-in 2,005 积分，点击直接下注');
   await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:2005}]);assert.equal(h.state.raisePanelOpen,false);
 });
 
@@ -72,9 +76,11 @@ test('dragging and keyboard changes only update the custom quote; its one submit
   for(const position of [0,250,500,750,999,1000]){
     h.input(position);assert.equal(h.sent.length,0);
     assert.ok(h.state.raise===2005||h.state.raise%10===0);
-    assert.equal(h.nodes['#raise-range'].value,betSliderFromAmount(h.state.room,h.state.raise));
+    const renderedPosition=betSliderFromAmount(h.state.room,h.state.raise);assert.equal(h.nodes['#raise-range'].value,renderedPosition);
+    assert.equal(h.nodes['#raise-panel'].style,`--raise-progress:${renderedPosition/1000};--raise-fill:${renderedPosition/10}%`);
+    assert.ok(h.nodes['#raise-amount'].innerHTML.includes(money.formatChips(h.state.raise,10)));
   }
-  assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].textContent,'All-in 200.5 BB');
+  assert.equal(h.state.raise,2005);assert.equal(h.nodes['#raise-button'].textContent,'All-in');assert.equal(h.nodes['#raise-button']['aria-label'],'All-in 200.5 BB，点击直接下注');
   await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:2005}]);
   await h.act('raise');assert.equal(h.sent.length,1,'closed picker cannot submit a second time');
   money.setDisplayUnit('points');
@@ -202,13 +208,17 @@ test('a legal short-stack all-in has its own exact quote and cannot exceed an un
 
 test('amount panel is a reversible preview: open, keyboard adjust, Escape, and outside press never submit',async()=>{
   const h=harness();await h.act('toggle-raise-panel');h.context.setRaise(h.state.room.actions.minRaiseTo);
-  assert.equal(h.state.raisePanelOpen,true);assert.equal(h.nodes['#raise-panel'].hidden,false);assert.equal(h.nodes['#raise-toggle']['aria-expanded'],'true');assert.equal(h.nodes['#raise-range'].focused,true);
+  assert.equal(h.state.raisePanelOpen,true);assert.equal(h.nodes['#raise-panel'].hidden,false);assert.equal(h.nodes['#raise-toggle']['aria-expanded'],'true');assert.equal(h.nodes['#raise-toggle'].hidden,true);assert.equal(h.nodes['#raise-button'].hidden,false);assert.equal(h.nodes['#raise-range'].focused,true);
   const key=event=>h.listeners.get('keydown')({target:{id:'raise-range',value:h.nodes['#raise-range'].value},preventDefault(){this.prevented=true;},...event});
   key({key:'ArrowUp'});assert.equal(h.state.raise,110);key({key:'ArrowRight'});assert.equal(h.state.raise,120);key({key:'ArrowDown'});assert.equal(h.state.raise,110);
   key({key:'End'});assert.equal(h.state.raise,2000);assert.equal(h.sent.length,0);
-  key({key:'Escape'});assert.equal(h.state.raisePanelOpen,false);assert.equal(h.nodes['#raise-panel'].hidden,true);assert.equal(h.nodes['#raise-toggle'].focused,true);
+  key({key:'Escape'});assert.equal(h.state.raisePanelOpen,false);assert.equal(h.nodes['#raise-panel'].hidden,true);assert.equal(h.nodes['#raise-toggle'].focused,true);assert.equal(h.nodes['#raise-toggle'].hidden,false);assert.equal(h.nodes['#raise-button'].hidden,true);
   await h.act('toggle-raise-panel');h.listeners.get('pointerdown')({target:{id:'raise-range',closest:()=>({})}});assert.equal(h.state.raisePanelOpen,true);
   h.listeners.get('pointerdown')({target:{id:'table',closest:()=>null}});assert.equal(h.state.raisePanelOpen,false);assert.equal(h.sent.length,0);
+  await h.act('toggle-raise-panel');h.context.setRaise(120);
+  h.listeners.get('pointerdown')({target:{id:'raise-button',closest:selector=>selector==='.raise-control'?{}:null}});
+  assert.equal(h.state.raisePanelOpen,true,'the fixed submit remains armed between pointerdown and click');
+  await h.act('raise');assert.deepEqual(h.sent,[{type:'raise',amount:120}]);
   money.setDisplayUnit('points');
 });
 
@@ -218,4 +228,17 @@ test('a stale turn or lost connection cannot open the amount panel or submit its
   h.state.room.actions.canAct=true;h.state.connected=false;await h.act('toggle-raise-panel');assert.equal(h.state.raisePanelOpen,false);
   h.state.connected=true;h.state.busy=true;await h.act('toggle-raise-panel');assert.equal(h.state.raisePanelOpen,false);
   money.setDisplayUnit('points');
+});
+
+
+test('real show-card click handler submits the second card while the first response is pending',async()=>{
+  const h=harness();h.state.room.hand.status='complete';const done=[];
+  h.context.command=(type,payload)=>{h.sent.push({type,...payload});return new Promise(resolve=>done.push(resolve));};
+  const first=h.act('show-card',{hand:'h1',index:'0'});
+  const second=h.act('show-card',{hand:'h1',index:'1'});
+  await h.act('show-card',{hand:'h1',index:'0'});
+  assert.equal(h.sent.length,2);
+  assert.deepEqual(h.sent.map(x=>Array.from(x.indices)),[[0],[1]]);
+  assert.equal(Boolean(h.state.busy),false);
+  done[1](true);await second;done[0](true);await first;
 });

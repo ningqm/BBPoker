@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,7 +63,7 @@ function conserved(room) {
   const members = Object.values(room.members), hand = room.hand;
   const pot = hand?.status === 'playing' ? hand.players.reduce((n, p) => n + p.contributed, 0) : 0;
   const reserves = Object.values(room.mini.squid.reserves).reduce((n, v) => n + v, 0);
-  assert.equal(members.reduce((n, m) => n + m.stack + m.cashedOut, 0) + reserves + pot + room.mini.mushroom.pool,
+  assert.equal(members.reduce((n, m) => n + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + reserves + pot + room.mini.mushroom.pool,
     members.reduce((n, m) => n + m.totalBuyIn, 0), 'cashouts + stacks + live pot + reserves equal all buy-ins');
 }
 
@@ -122,7 +123,7 @@ test('oracle: offline fish holders retain rewards while the remaining original p
     f.win(winner);
   }
   assertSettlement(f, expectedFish(f.users.slice(0, 5), [0, 1, 2, 3]));
-  assert.equal(f.room.members[f.users[0].id].stack, stack + reserve + 20);
+  assert.equal(f.room.members[f.users[0].id].stack, stack + 20);
 });
 
 test('oracle: two offline unmarked players pay no new blinds while two or more others continue the same squid round', t => {
@@ -171,7 +172,7 @@ test('oracle: a marked player leaves and receives the exact reward when another 
   for (let i = 2; i < 5; i++) f.cmd(i, 'sitout', { value: true });
   f.advance(5000); f.service.tick(f.room, f.time);
   assertSettlement(f, expectedFish(f.users.slice(0, 5), [0, 1]));
-  assert.equal(f.room.members[f.users[0].id].cashedOut, oldCashout + reserve + 60);
+  assert.equal(f.room.members[f.users[0].id].cashedOut, oldCashout + 60);
 });
 
 test('oracle: insufficient original players waits, restart resets grace, and early settlement preserves all earned fish', t => {
@@ -263,8 +264,8 @@ test('oracle: waiting newcomers incur no current-round reserve until their first
   }
   assert.equal(allJoined,true,'natural BB must eventually admit each newcomer to the same round');
   assert.equal(f.room.mini.squid.tokenBudget,5);
-  assert.equal(f.room.mini.squid.reserves[f.users[0].id],40);
-  for(const user of f.users.slice(1,6))assert.equal(f.room.mini.squid.reserves[user.id],100);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],undefined);
+  for(const user of f.users.slice(1,6))assert.equal(f.room.mini.squid.reserves[user.id],undefined);
 });
 
 test('oracle: original unmarked player reconnects mid-hand then returns to that round without a second reserve', t => {
@@ -318,7 +319,7 @@ test('oracle: when all remaining original players wait for missed blinds, a stal
 
 test('oracle: actual SSE tabs, reconnect and encrypted restart do not duplicate the current hand blinds', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-continuity-oracle-'));
-  let app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+  let app = createApp({ dataDir: dir, actionTickMs: 1000000 });
   const controllers = [];
   t.after(async () => { for (const c of controllers) c.abort(); await app.close(); rmSync(dir, { recursive: true, force: true }); });
   const listen = () => new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -331,7 +332,7 @@ test('oracle: actual SSE tabs, reconnect and encrypted restart do not duplicate 
     const body = await res.json(); assert.equal(res.ok, true, JSON.stringify(body)); return body;
   };
   const users = [];
-  for (const name of ['连接测试甲', '连接测试乙', '连接测试丙']) users.push(await api('/api/session', { name }));
+  for (const name of ['连接测试甲', '连接测试乙', '连接测试丙']) users.push(seedLegacyAccount(app, { name }));
   const created = (await api('/api/rooms', { settings: { squid: true } }, users[0].token)).room;
   for (const user of users.slice(1)) await api(`/api/rooms/${created.code}/join`, { invite: created.invite }, user.token);
   const room = () => app.store.data.rooms[created.code];
@@ -359,7 +360,7 @@ test('oracle: actual SSE tabs, reconnect and encrypted restart do not duplicate 
   controllers[1].abort(); await waitConnections(1, 0); await stream(1); await waitConnections(1, 1);
   assert.deepEqual(room().hand, prior); assert.deepEqual(room().mini.squid.reserves, reserves);
   const stored = structuredClone(app.store.data); await app.close();
-  app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 }); await listen();
+  app = createApp({ dataDir: dir, actionTickMs: 1000000 }); await listen();
   assert.deepEqual(app.store.data.rooms, stored.rooms);
   for (let i = 0; i < 3; i++) await stream(i);
   assert.deepEqual(room().hand, prior); assert.deepEqual(room().mini.squid.reserves, reserves);

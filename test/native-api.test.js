@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { clientConfig, apiUrl, inviteUrl, parseInvite } from '../public/platform
 
 async function setup(t, options = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'tongzhuo-native-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, publicOrigin: '', clientOrigins: '', ...options });
+  const app = createApp({ dataDir: directory, publicOrigin: '', clientOrigins: '', ...options });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   return { app, base: `http://127.0.0.1:${app.server.address().port}` };
@@ -31,11 +32,11 @@ test('native API: only configured exact origins can preflight bearer requests', 
 });
 
 test('native API: allowed origins still require identity and member authorization', async t => {
-  const { base } = await setup(t, { clientOrigins: 'app://localhost' });
+  const { app, base } = await setup(t, { clientOrigins: 'app://localhost' });
   const origin = 'app://localhost';
   assert.equal((await fetch(base + '/api/me', { headers: { Origin: origin } })).status, 401);
   const res = await fetch(base + '/api/session', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '客户端验证' }) });
-  assert.equal(res.status, 201); const user = await res.json();
+  assert.equal(res.status, 403, 'native clients cannot create public accounts either'); const user = seedLegacyAccount(app, { name: '客户端验证' });
   const me = await fetch(base + '/api/me', { headers: { Origin: origin, Authorization: `Bearer ${user.token}` } });
   assert.equal(me.status, 200); assert.equal((await me.json()).user.id, user.user.id);
   const data = await fetch(base + '/api/export?format=phh', { headers: { Origin: origin, Authorization: `Bearer ${user.token}` } });

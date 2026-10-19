@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HAND_CATEGORIES, updateHandCategoryMotion, renderHandCategory} from '../public/hand-category.js';
+import {HAND_CATEGORIES, updateHandCategoryMotion, renderHandCategory, displayedHandCategory} from '../public/hand-category.js';
 const room=(board=[],own='高牌',other=null)=>({code:'table',meId:'me',hand:{id:'hand',status:'playing',board},players:[{id:'me',handCategory:own},{id:'other',handCategory:other}]});
 const options={live:true,now:1000};
 test('own ordinary street upgrades without needing all-in or exposing hidden opponents',()=>{
@@ -57,4 +57,40 @@ test('render ignores mismatched, stale or unsafe labels in animation metadata',(
  assert.equal(renderHandCategory('<img src=x>'), '');
  assert.doesNotMatch(renderHandCategory('一对',{motion:{from:'高牌',to:'两对',at:1000},now:1100}),/category-before/);
  assert.doesNotMatch(renderHandCategory('一对',{motion:{from:'<img>',to:'一对',at:1000},now:1100}),/<img|category-before/);
+});
+
+function rabbitRoom(board, display = null) {
+ const r=room(['Kc','2d','7h'],'一对');
+ r.hand.status='complete';r.hand.rabbit={originalCount:3,board};
+ r.players[0].folded=true;r.players[0].displayHandCategory=display;
+ return r;
+}
+test('a folded owner sees supplemental board upgrades without replacing the settled category',()=>{
+ const a=rabbitRoom(['Kc','2d','7h']),b=rabbitRoom(['Kc','2d','7h','Qc'],'两对'),c=rabbitRoom(['Kc','2d','7h','Qc','Kd'],'葫芦');
+ const m=updateHandCategoryMotion(a,b,[],options);
+ assert.deepEqual(m,[{handId:'hand',playerId:'me',from:'一对',to:'两对',at:1000}]);
+ assert.equal(b.players[0].handCategory,'一对');
+ assert.equal(displayedHandCategory(b.players[0]),'两对');
+ const next=updateHandCategoryMotion(b,c,m,{live:true,now:1500});
+ assert.equal(next[0].from,'两对');assert.equal(next[0].to,'葫芦');
+ assert.match(renderHandCategory(displayedHandCategory(c.players[0]),{motion:next[0],now:1600}),/category-after" data-hand-category="full-house">葫芦/);
+ assert.equal(displayedHandCategory({handCategory:'一对'}),'一对','old servers remain compatible');
+});
+test('supplemental upgrades survive clock and chat updates without restarting, then expire',()=>{
+ const a=rabbitRoom(['Kc','2d','7h']),b=rabbitRoom(['Kc','2d','7h','Qc','Kd'],'葫芦');
+ const m=updateHandCategoryMotion(a,b,[],options),chat={...b,chat:[{text:'nice'}]};
+ assert.deepEqual(updateHandCategoryMotion(b,chat,m,{live:true,now:1200}),m);
+ assert.deepEqual(updateHandCategoryMotion(b,chat,m,{live:true,now:2000}),[]);
+ assert.equal(updateHandCategoryMotion(a,b,[],{live:false,now:1200}).length,0);
+ for(const previous of [null,{...a,meId:'else'},{...a,code:'else'},{...a,hand:{...a.hand,id:'new'}}])assert.deepEqual(updateHandCategoryMotion(previous,b,m,options),[]);
+});
+test('a visible supplemental board cannot animate a folded opponent or a newly disclosed label',()=>{
+ const a=rabbitRoom(['Kc','2d','7h']),b=rabbitRoom(['Kc','2d','7h','Qc','Kd'],'葫芦');
+ a.meId=b.meId='viewer';assert.deepEqual(updateHandCategoryMotion(a,b,[],options),[]);
+ a.meId=b.meId='me';b.players[0].displayHandCategory=null;
+ assert.deepEqual(updateHandCategoryMotion(a,b,[],options),[],'no server-approved changed label');
+ const c=rabbitRoom(b.hand.rabbit.board,'葫芦');
+ assert.deepEqual(updateHandCategoryMotion(b,c,[],options),[],'same board does not animate a newly disclosed label');
+ const corrupt=rabbitRoom(['Ac','2d','7h','Qc','Kd'],'葫芦');
+ assert.deepEqual(updateHandCategoryMotion(a,corrupt,[],options),[]);
 });

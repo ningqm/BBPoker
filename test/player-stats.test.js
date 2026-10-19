@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,7 +11,7 @@ import { aggregateAnalytics } from '../src/analytics.js';
 
 async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-player-stats-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 60000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -21,7 +22,7 @@ async function fixture(t) {
     const data = await response.json(); assert.equal(response.status, status, JSON.stringify(data)); return data;
   };
   const people = [];
-  for (const name of ['本人', '对手', '观战者', '局外人']) people.push(await api('/api/session', null, { name }, 201));
+  for (const name of ['本人', '对手', '观战者', '局外人']) people.push(seedLegacyAccount(app, { name }));
   const room = (await api('/api/rooms', people[0].token, {}, 201)).room;
   for (const person of people.slice(1, 3)) await api(`/api/rooms/${room.code}/join`, person.token, { invite: room.invite });
   const [me, target, observer, stranger] = people;

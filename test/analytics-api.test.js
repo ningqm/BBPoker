@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +12,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   const today = Date.parse('2026-10-13T10:00:00.000Z'), day = 86400000;
   let timestamp = today - 4 * day; t.mock.method(Date, 'now', () => timestamp);
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-analytics-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -21,7 +22,7 @@ test('authenticated statistics share a settled cohort across rooms, dates, lates
   };
   const ok = async (path, token, data) => { const response = await request(path, token, data); assert.ok(response.status >= 200 && response.status < 300, JSON.stringify(response)); return response.body; };
   const users = [];
-  for (const name of ['统计验收一', '统计验收二', '统计验收三', '统计观众', '统计外人']) users.push(await ok('/api/session', null, { name }));
+  for (const name of ['统计验收一', '统计验收二', '统计验收三', '统计观众', '统计外人']) users.push(seedLegacyAccount(app, { name }));
   const me = users[0].user.id;
   const created = (await ok('/api/rooms', users[0].token, {})).room, code = created.code;
   for (let i = 1; i <= 3; i++) await ok(`/api/rooms/${code}/join`, users[i].token, { invite: created.invite });

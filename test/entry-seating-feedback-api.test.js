@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +9,7 @@ import { createApp } from '../server.js';
 
 for (const mode of ['holdem', 'normal', 'unlimited']) test(`HTTP nine-seat ${mode} + bomb: accepted seating and entry choices are immediately observable and persist atomically`, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-entry-seat-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -17,7 +18,7 @@ for (const mode of ['holdem', 'normal', 'unlimited']) test(`HTTP nine-seat ${mod
     const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value;
   };
   const users = [];
-  for (let i = 0; i < 9; i++) users.push(await api('/api/session', null, { name: `Seat API ${i}` }, 201));
+  for (let i = 0; i < 9; i++) users.push(seedLegacyAccount(app, { name: `Seat API ${i}` }));
   const created = (await api('/api/rooms', users[0], { settings: { maxPlayers: 9, squid: mode !== 'holdem', squidMode: mode === 'unlimited' ? 'unlimited' : 'normal', bombPot: true } }, 201)).room;
   const code = created.code, room = () => app.store.data.rooms[code];
   const command = (i, type, body = {}, status = 200) => api(`/api/rooms/${code}/action`, users[i], { commandId: randomUUID(), type, ...body }, status);

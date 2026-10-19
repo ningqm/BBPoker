@@ -38,7 +38,7 @@ function fixture(t, { squid = false, mode = 'normal', bomb = false } = {}) {
     advance(ms) { time += ms; },
     conserved() {
       const all = Object.values(room.members), pot = room.hand?.status === 'playing' ? room.hand.players.reduce((sum, player) => sum + player.contributed, 0) : 0;
-      assert.equal(all.reduce((sum, player) => sum + player.stack + player.cashedOut, 0) + Object.values(room.mini.squid.reserves).reduce((sum, amount) => sum + amount, 0) + pot,
+      assert.equal(all.reduce((sum, player) => sum + player.stack + player.cashedOut - (player.squidDebt ?? 0), 0) + Object.values(room.mini.squid.reserves).reduce((sum, amount) => sum + amount, 0) + pot,
         all.reduce((sum, player) => sum + player.totalBuyIn, 0));
     },
   };

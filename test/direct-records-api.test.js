@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { createHand, applyAction, availableActions } from '../src/poker.js';
 
 test('direct opponent API isolates identities, conserves real multiway results and dates fish by settlement', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-direct-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -17,7 +18,7 @@ test('direct opponent API isolates identities, conserves real multiway results a
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   const people = [];
-  for (const name of ['自己', '小雨', '阿海', '旁观者', '未加入的人']) people.push(await request('/api/session', null, { name }, 201));
+  for (const name of ['自己', '小雨', '阿海', '旁观者', '未加入的人']) people.push(seedLegacyAccount(app, { name }));
   const [hero, a, b, observer, outsider] = people, ids = [hero, a, b].map(u => u.user.id);
   const room = (await request('/api/rooms', hero, {}, 201)).room;
   for (const user of [a, b, observer]) await request(`/api/rooms/${room.code}/join`, user, { invite: room.invite });

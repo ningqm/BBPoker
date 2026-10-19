@@ -42,8 +42,9 @@ function tab() {
   const context = vm.createContext({createRoomClock,isOlderRoomSnapshot,clearTimeout,statsUI,records,funTracker:createTableFunTracker(),
     feedback:createTableFeedback(),turnCountdown:createTurnCountdown(),
     createRequestGuard, readIdentity, writeIdentity, clearIdentity,
+    document: { querySelectorAll: () => [] }, location: { hash: '' },
     avatarCache: { clear() {} },
-    stopStream() {}, closeModal() {}, render() {}, toast() {}, resumeTable() {},
+    abortPendingTableRequests() {}, stopStream() {}, closeModal() {}, render() {}, toast() {}, resumeTable() {},
     api(endpoint) { calls.push({ endpoint, token: context.client.state.token }); return Promise.resolve({ ok: true }); },
   });
   vm.runInContext([

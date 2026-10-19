@@ -21,12 +21,19 @@ function setup(){
 }
 function actionButtons(html){return html.slice(html.indexOf('<div class="action-buttons"'),html.indexOf('</div>',html.indexOf('<div class="action-buttons"'))).match(/<button\b[^>]*>/g)||[];}
 
-test('the same two actions, four amount presets and inline custom opener remain present through every table phase',()=>{
+test('the same two actions and four presets remain stable with an independent custom opener above them',()=>{
   const h=setup();const situations=[()=>{},()=>{h.room.actions.canAct=false;},()=>{h.room.hand.status='complete';},()=>{h.room.hand=null;},()=>{h.room.status='closed';}];
   for(const change of situations){change();const html=h.draw();assert.equal(actionButtons(html).length,2);assert.equal((html.match(/data-preset=/g)||[]).length,4);assert.match(html,/class="action-area action-dock /);
     const row=html.slice(html.indexOf('<div class="raise-shortcuts"'),html.indexOf('<div class="action-buttons"'));
-    assert.equal((row.match(/<button\b/g)||[]).length,5);assert.equal((row.match(/id="raise-toggle"/g)||[]).length,1);assert.doesNotMatch(row,/data-preset="(?:all|over)"/);}
-  assert.match(css,/\.table-bottom\{flex:0 0 146px;height:146px;min-height:146px/);
+    assert.equal((row.match(/<button\b/g)||[]).length,4);assert.doesNotMatch(row,/id="raise-toggle"|data-preset="(?:all|over)"/);
+    const tools=html.slice(html.indexOf('<div class="turn-tools"'),html.indexOf('<div class="raise-shortcuts"'));assert.equal((tools.match(/id="raise-toggle"/g)||[]).length,1);}
+  const bottom=css.match(/\.room-shell \.table-bottom\{flex:0 0 (\d+)px;height:(\d+)px;min-height:(\d+)px/);
+  const dock=css.match(/\.room-shell \.table-bottom \.action-dock\{[^}]*height:(\d+)px;min-height:(\d+)px;padding:(\d+)px/);
+  const rows=css.match(/\.room-shell \.table-bottom \.action-dock \.decision\{[^}]*grid-template-rows:(\d+)px (\d+)px (\d+)px;gap:(\d+)px/);
+  assert.ok(bottom&&dock&&rows,'the base dock has a reserved fixed height and three defined rows');
+  assert.ok([...bottom.slice(1),...dock.slice(1,3)].every(value=>Number(value)===Number(bottom[1])),'dock and reserved table-bottom use the same height');
+  const content=rows.slice(1,4).reduce((sum,value)=>sum+Number(value),0)+2*Number(rows[4])+2*Number(dock[3]);
+  assert.ok(Number(bottom[1])>=content,'the upper custom row, four presets and main actions all fit without expanding the table');
 });
 
 test('off-turn controls never arm a game action or leave another countdown below the table',()=>{
@@ -53,14 +60,17 @@ test('every preset visibly shows its exact total in the chosen unit and none is 
     }
     const main=html.slice(html.indexOf('<div class="action-buttons"'),html.indexOf('</div></div>',html.indexOf('<div class="action-buttons"')));
     assert.doesNotMatch(main,/data-action="raise"|raise-button/);
-    assert.match(html,/id="raise-panel"[\s\S]*id="raise-button"/);
+    assert.match(html,/class="raise-control"[\s\S]*id="raise-button"[\s\S]*id="raise-panel"/);
   }
   setDisplayUnit('points');
 });
 
-test('a short all-in stays available in the custom slot without adding a third main action',()=>{
+test('a short all-in stays available above the presets without adding a third main action',()=>{
   const h=setup();h.room.hand.currentBet=100;h.room.actions={...h.room.actions,canRaise:false,canAllIn:true,minRaiseTo:200,maxRaiseTo:155,callAmount:95};
   const html=h.draw();assert.equal(actionButtons(html).length,2);assert.match(html,/class="bet-preset short-allin"[^>]*data-action="allin"[^>]*data-amount="155"/);assert.doesNotMatch(html,/id="raise-panel"|id="raise-toggle"/);
+  assert.ok(html.indexOf('class="bet-preset short-allin"')<html.indexOf('class="raise-shortcuts"'));
+  h.state.connected=false;assert.match(h.draw(),/<button[^>]*data-action="allin"[^>]*disabled/);h.state.connected=true;
+  h.state.busy=true;assert.match(h.draw(),/<button[^>]*data-action="allin"[^>]*disabled/);h.state.busy=false;
   h.room.actions.maxRaiseTo=80;h.room.actions.callAmount=75;h.room.players[0].stack=75;
   const call=h.draw();assert.doesNotMatch(call,/data-action="allin"/);assert.match(call,/All-in 跟注/);
 });
@@ -83,4 +93,27 @@ test('long point quotes retain exact digits and can wrap inside the fixed-height
   const html=h.draw();assert.match(html,/class="bet-preset-amount">100,000 积分<\/strong>/);assert.match(html,/class="bet-preset-amount">300,000 积分<\/strong>/);
   assert.match(css,/\.bet-preset-amount\{[^}]*max-width:100%[^}]*white-space:normal[^}]*overflow-wrap:anywhere/);
   assert.match(css,/\.raise-shortcuts button\{height:44px;min-height:44px/);
+});
+
+// The ceiling is the current legal total (including chips already committed on
+// this street). A next-hand top-up cannot silently increase an all-in quote.
+test('the picker displays one selected amount and shows the exact legal all-in total only at maximum',()=>{
+  for(const unit of ['points','bb']){
+    setDisplayUnit(unit);const h=setup();h.room.players[0].bet=5;h.room.players[0].stack=2000;h.room.players[0].pendingBuyIn=5000;h.room.actions.maxRaiseTo=2005;h.state.raise=20;
+    const html=h.draw(),selected=html.match(/class="raise-selection-amount">(.*?)<\/strong>/);
+    assert.equal(selected?.[1],formatChips(20,10));assert.doesNotMatch(html,/raise-stack-limit|>全押 /);
+    const panel=html.slice(html.indexOf('<section class="raise-popover"'),html.indexOf('</section>',html.indexOf('<section class="raise-popover"')));
+    assert.doesNotMatch(panel,/id="raise-button"/);assert.equal((panel.match(/class="raise-selection-amount"/g)||[]).length,1);
+    assert.match(html,/<button[^>]*id="raise-button"[^>]* hidden/);assert.doesNotMatch(html,/<button[^>]*id="raise-toggle"[^>]* hidden/);
+    assert.match(html,/class="raise-control"[\s\S]*id="raise-toggle"[\s\S]*id="raise-panel"/);
+    assert.match(html,/id="raise-panel"[^>]*style="--raise-progress:0;--raise-fill:0%"/);
+    assert.match(html,/id="raise-range"[^>]*value="0"[^>]*style="--raise-fill:0%"/);
+    h.state.raise=2005;h.state.raisePanelOpen=true;const maximum=h.draw();
+    assert.match(maximum,/<button[^>]*id="raise-toggle"[^>]* hidden/);assert.doesNotMatch(maximum,/<button[^>]*id="raise-button"[^>]* hidden/);assert.doesNotMatch(maximum,/收起|全押 /);
+    assert.match(maximum,/id="raise-range"[^>]*value="1000"[^>]*style="--raise-fill:100%"/);
+    const submit=maximum.match(/<button[^>]*id="raise-button"[^>]*>(.*?)<\/button>/);
+    assert.equal(submit?.[1],'All-in');assert.ok(maximum.includes(`aria-label="All-in ${formatChips(2005,10)}，点击直接下注"`));
+    assert.match(maximum,/id="raise-panel"[^>]*style="--raise-progress:1;--raise-fill:100%"/);
+  }
+  setDisplayUnit('points');
 });

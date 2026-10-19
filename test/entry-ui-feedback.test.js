@@ -1,3 +1,4 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -16,7 +17,7 @@ function harness(){
     page:'room',modal:{kind:'buyin'},busy:false,connected:true,feedbackResync:false};
   const submit={disabled:false,isConnected:true},form={id:'buyin-form',dataset:{room:'123456',seat:'3'},values:{amountBB:'200',entryMode:'post'},querySelector:s=>s==='[type=submit]'?submit:null};
   let pending,sequence=0;
-  const context=vm.createContext({...money,...controls,lifecycle,requests,state,Date,isOlderRoomSnapshot,
+  const context=vm.createContext({sameRoomSnapshot,...money,...controls,lifecycle,requests,state,Date,isOlderRoomSnapshot,
     document:{visibilityState:'visible',addEventListener:(type,callback)=>listeners.set(type,callback)},navigator:{onLine:true},
     FormData:class{constructor(form){this.form=form;}get(name){return this.form.values[name]??null;}},
     dialog:{querySelector:s=>s==='#buyin-form'&&state.modal?.kind==='buyin'?form:null},

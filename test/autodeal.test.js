@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -150,13 +151,14 @@ test('blind-only or bomb all-ins run out before receiving the next-hand decision
   }
 });
 
-test('legacy completed rooms remain unchanged until the host resumes; active legacy rooms enter auto-deal on completion', t => {
+test('legacy completed rooms recover a five-second automatic countdown; active legacy rooms enter auto-deal on completion', t => {
   const f = fixture(t); f.cmd(0, 'start'); f.finish();
   delete f.room.autoDealPaused; delete f.room.nextHandAt; delete f.room.autoWaitReason;
-  const before = structuredClone(f.room); f.advance(20000);
-  assert.equal(f.service.tick(f.room), false); assert.deepEqual(f.room, before);
-  assert.equal(f.service.state(f.room, f.users[0].id).autoDeal.paused, true);
-  f.cmd(0, 'start'); assert.equal(f.room.handNumber, 1); assert.equal(f.room.nextHandAt, f.time + 5000);
+  f.advance(20000);
+  assert.equal(f.service.tick(f.room), true);
+  assert.equal(f.service.state(f.room, f.users[0].id).autoDeal.paused, false);
+  assert.equal(f.room.handNumber, 1); assert.equal(f.room.nextHandAt, f.time + 5000);
+  assert.equal(f.service.tick(f.room), false); // Repeated timers do not reset the wait.
   f.advance(5000); f.service.tick(f.room); delete f.room.autoDealPaused; delete f.room.nextHandAt; delete f.room.autoWaitReason;
   f.finish(); assert.equal(f.room.autoDealPaused, false); assert.equal(f.room.nextHandAt, f.time + 5000);
 });
@@ -164,13 +166,13 @@ test('legacy completed rooms remain unchanged until the host resumes; active leg
 test('authenticated room creation ignores an obsolete deployed room key while retaining invitations and one room per host', async t => {
   const previousKey = process.env.CREATE_ROOM_KEY; process.env.CREATE_ROOM_KEY = 'obsolete-test-value';
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-create-no-key-'));
-  const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: dir, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); if (previousKey === undefined) delete process.env.CREATE_ROOM_KEY; else process.env.CREATE_ROOM_KEY = previousKey; });
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const api = async (path, data, token) => { const response = await fetch(base + path, { method: data === undefined ? 'GET' : 'POST', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
   assert.equal((await api('/api/rooms', {})).status, 401);
-  const host = (await api('/api/session', { name: '测试房主' })).body, outsider = (await api('/api/session', { name: '测试访客' })).body;
+  const host = seedLegacyAccount(app, { name: '测试房主' }), outsider = seedLegacyAccount(app, { name: '测试访客' });
   assert.equal((await api('/api/me', undefined, host.token)).body.createKeyRequired, false);
   const created = await api('/api/rooms', { createKey: 'wrong-ignored' }, host.token); assert.equal(created.status, 201);
   assert.equal((await api(`/api/rooms/${created.body.room.code}`, undefined, outsider.token)).status, 403);
@@ -181,14 +183,14 @@ test('authenticated room creation ignores an obsolete deployed room key while re
 test('real server clock persists before SSE, retries a failed save without duplicate settlement, and reconnects safely after restart', async t => {
   let timestamp = 1800000000000; t.mock.method(Date, 'now', () => timestamp);
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-auto-sse-'));
-  let app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 20 });
+  let app = createApp({ dataDir: dir, actionTickMs: 20 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const controllers = [];
   t.after(async () => { for (const c of controllers) c.abort(); await app.close(); rmSync(dir, { recursive: true, force: true }); });
   const base = () => `http://127.0.0.1:${app.server.address().port}`;
   const api = async (path, data, token) => { const response = await fetch(base() + path, { method: data === undefined ? 'GET' : 'POST', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); const body = await response.json(); assert.ok(response.ok, JSON.stringify(body)); return body; };
   const users = [];
-  for (const name of ['自动续局房主', '自动续局朋友']) users.push(await api('/api/session', { name }));
+  for (const name of ['自动续局房主', '自动续局朋友']) users.push(seedLegacyAccount(app, { name }));
   const created = (await api('/api/rooms', {}, users[0].token)).room, code = created.code;
   await api(`/api/rooms/${code}/join`, { invite: created.invite }, users[1].token);
   const room = () => app.store.data.rooms[code];
@@ -241,7 +243,7 @@ test('real server clock persists before SSE, retries a failed save without dupli
   await firstStream.until(s => s.hand?.number === 2 && s.hand.status === 'complete');
   const beforeRestart = structuredClone(app.store.data); await app.close(); firstStream.controller.abort();
   timestamp += 10000;
-  app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 1000000 });
+  app = createApp({ dataDir: dir, actionTickMs: 1000000 });
   assert.deepEqual(app.store.data.rooms, beforeRestart.rooms); assert.deepEqual(app.store.data.hands, beforeRestart.hands);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const resumed = await stream(); const resumedFriend = await stream(1); await resumedFriend.until(s => s.hand?.number === 2);

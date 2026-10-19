@@ -1,3 +1,4 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ function section(start, end) {
 // Execute the real composition events, render gate, incoming-state application
 // and foreground callback. Only DOM painting and the network transport are fake.
 function harness() {
-  const documentEvents = new Map(), windowEvents = new Map(), network = [];
+  const documentEvents = new Map(), windowEvents = new Map(), network = [], audioEvents = [];
   const listen = registry => (name, fn) => {
     if (!registry.has(name)) registry.set(name, []);
     registry.get(name).push(fn);
@@ -25,7 +26,7 @@ function harness() {
     getElementById: () => null, body: { classList: { toggle() {} } } };
   const app = { innerHTML: '', querySelector: () => null,
     contains: target => Boolean(target?.app && target.isConnected) };
-  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, document: doc, window: { addEventListener: listen(windowEvents) },
+  const context = vm.createContext({sameRoomSnapshot,createRoomClock,isOlderRoomSnapshot, document: doc, window: { addEventListener: listen(windowEvents) },
     navigator: { onLine: true }, app, syncBetControls,
     statsUI: { defaultStatsFilters: () => ({}), captureStatsDraft() {}, restoreStatsDraft() {} },
     records: { captureRecordDraft() {}, restoreRecordDraft() {} },
@@ -33,7 +34,7 @@ function harness() {
     patchFocusedChat: () => true, patchFocusedRaise: () => false, patchRoomView: () => false, patchLobby: () => false,
     avatarCache: { hydrate() {} }, layoutTableBubbles() {}, mountPotAwards() {}, mountFunEffects() {}, tick() {},
     captureRoomChanges() {}, rememberCommitment: () => false, toast() {},
-    tableSounds: { playFeedback() {}, suspend() {} }, feedback: { reset() {} }, funTracker: { reset() {} },
+    tableSounds: { playFeedback() {}, suspend() { audioEvents.push('suspend'); }, restore() { audioEvents.push('restore'); } }, feedback: { reset() {} }, funTracker: { reset() {} },
     abortPendingTableRequests: () => network.push('abort-pending'), connectStream: code => network.push(`stream:${code}`),
     stopReplay() {}, stopLobbyPolling() {}, stopStream() {}, updateConnection() {},
     route() {}, loadLobby() {}, historyRefresh: { stop() {} }, profileEditor: null,
@@ -59,7 +60,7 @@ function harness() {
   client.render();
   const dispatch = (name, target, extra = {}) => (documentEvents.get(name) || []).forEach(fn => fn({ target, ...extra }));
   const input = { id: 'chat-input', app: true, isConnected: true, value: '还在输入', form: null };
-  return { ...client, doc, app, network, input, dispatch,
+  return { ...client, doc, app, network, audioEvents, input, dispatch,
     start() { doc.activeElement = input; dispatch('compositionstart', input); },
     show() { doc.visibilityState = 'visible'; dispatch('visibilitychange', doc); },
     hide() { doc.visibilityState = 'hidden'; dispatch('visibilitychange', doc); },
@@ -87,6 +88,7 @@ test('returning from background clears abandoned IME, synchronizes the room, and
   const c = harness(); c.start(); c.hide(); c.doc.activeElement = null; c.show();
   assert.equal(c.state.composing, false);
   assert.deepEqual(c.network, ['abort-pending', 'stream:123456']);
+  assert.deepEqual(c.audioEvents, ['suspend', 'restore'], 'foreground restores audio together with the room');
   c.normalizeState(room(2, true));
   assert.doesNotMatch(c.app.innerHTML, /disabled/);
   assert.equal(c.state.chatDraft, '还在输入');
@@ -134,6 +136,7 @@ for (const sameRecordForm of [false, true]) {
 
 test('a network recovery while genuinely typing preserves composition and never clears an outstanding action', () => {
   const c = harness(); c.start(); c.state.busy = true; c.resumeTable();
+  assert.deepEqual(c.audioEvents, ['restore']);
   assert.equal(c.state.composing, true); assert.equal(c.state.compositionTarget, c.input);
   assert.equal(c.state.busy, true, 'only the action lifecycle can release its pending command');
   assert.equal(c.input.value, '还在输入');

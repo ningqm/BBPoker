@@ -1,3 +1,4 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,9 +45,9 @@ const room = revision => ({ code: '123456', revision, meId: 'old-user', hand: { 
 function harness() {
   const pending = [], streams = [], identities = [], notices = [];
   let client, id = 0;
-  const context = vm.createContext({createRoomClock,isOlderRoomSnapshot, ...money, ...tableScene, ...tableControls, statsUI, records, updateHandCategoryMotion,
+  const context = vm.createContext({sameRoomSnapshot,createRoomClock,isOlderRoomSnapshot, ...money, ...tableScene, ...tableControls, statsUI, records, updateHandCategoryMotion,
     createRequestGuard, feedback: createTableFeedback(), turnCountdown: createTurnCountdown(), funTracker: createTableFunTracker(),
-    tableSounds: { play() {}, playFeedback() {}, suspend() {}, stopPlayback() {} }, avatarCache: { clear() {} },
+    tableSounds: { play() {}, playFeedback() {}, suspend() {}, restore() {}, stopPlayback() {} }, avatarCache: { clear() {} },
     AbortController, apiUrl: path => path,
     fetch(url, options) {
       const request = { url, options, ...deferred() }; pending.push(request);
@@ -68,7 +69,7 @@ function harness() {
   return { ...client, pending, streams, identities, notices, form };
 }
 
-for (const kind of ['password', 'bind']) test(`failed account ${kind} releases an interrupted betting request and only resynchronizes`, async () => {
+for (const kind of ['password']) test(`failed account ${kind} releases an interrupted betting request and only resynchronizes`, async () => {
   const h = harness(), original = h.command('raise', { amount: 40 });
   assert.equal(h.state.busy, true); const action = h.pending[0];
   const change = h.submitAccount(kind, h.form);
@@ -102,15 +103,20 @@ test('late old response cannot release a newer command after the account failure
   assert.equal(h.pending.filter(request => request.url.endsWith('/action')).length, 2, 'only the two explicit player commands were sent');
 });
 
-test('successful credential rotation clears the old command and private room before showing the new recovery code', async () => {
+test('successful credential rotation clears the old command and private room before reopening the table with the new session', async () => {
   const h = harness(), original = h.command('call'), action = h.pending[0];
   const change = h.submitAccount('password', h.form);
   h.pending[1].resolve(response({ token: 'new-session', user: { id: 'old-user', name: 'Synthetic player', username: 'synthetic_user' }, recoveryCode: 'synthetic-recovery-code' }));
+  for(let i=0;i<30&&h.pending.length<3;i++)await Promise.resolve();
+  assert.equal(h.state.room,null,'old private state is cleared before fetching the table');
+  assert.equal(h.pending[2].url,'/api/rooms/123456');
+  assert.equal(h.pending[2].options.headers.Authorization,'Bearer new-session');
+  h.pending[2].resolve(response(room(2)));
   await change; assert.equal(await original, false);
   assert.equal(action.options.signal.aborted, true); assert.equal(h.state.busy, false);
   assert.equal(h.state.token, 'new-session'); assert.deepEqual(h.identities, ['new-session']);
-  assert.equal(h.state.room, null); assert.equal(h.state.stats, null); assert.equal(h.state.page, 'recovery');
-  assert.equal(h.state.pendingRecovery.code, 'synthetic-recovery-code');
+  assert.equal(h.state.room.revision,2); assert.equal(h.state.stats, null); assert.equal(h.state.page, 'room');
+  assert.equal(h.state.pendingRecovery,null);
   assert.equal(h.pending.filter(request => request.url.endsWith('/action')).length, 1);
-  assert.deepEqual(h.streams, [], 'successful credential rotation must not reopen a stream with the revoked session');
+  assert.deepEqual(h.streams, ['123456'], 'the table reconnects after fetching its state with the replacement session');
 });

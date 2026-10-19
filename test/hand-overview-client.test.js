@@ -61,3 +61,29 @@ test('a completed favorite update reloads a favorite-only list even if the new i
     const pending=context.run('hand-a',favorite,button);resolve({favorite});await pending;assert.equal(refreshed,1);assert.equal(button.disabled,false);
   }
 });
+
+test('compact mode loads a static hand, keeps navigation and does not start playback',async()=>{
+ const c=harness(),navigation=[{id:'older',number:1},{id:'safe-hand',number:2}];
+ const pending=c.replayModal('safe-hand','123456','compact',navigation);c.reply();await pending;
+ assert.equal(c.state.replay.compact,true);assert.deepEqual(c.state.replay.navigation,navigation);assert.deepEqual(c.renders,['overview']);assert.equal(c.timers.size,0);
+});
+test('table quick history opens latest hand, and stale room or closed modal cannot replace the screen',async()=>{
+ for(const stale of [null,'close','room']){
+  let resolve;const opened=[];const state={room:{code:'123456'},replayRequest:0};
+  const c=vm.createContext({state,requests:{capture:()=>({check(){},valid:()=>true})},api:()=>new Promise(r=>resolve=r),openModal(title,body,kind){state.modal={kind};},closeModal(){state.modal=null;},toast(){},replayModal(...args){opened.push(args);}});
+  vm.runInContext(section('async function historyModal(){','async function replayModal('),c);
+  const pending=c.historyModal();if(stale==='close')state.modal=null;if(stale==='room')state.room={code:'654321'};
+  resolve({hands:[{id:'h2',number:2},{id:'h1',number:1}]});await pending;
+  if(stale){assert.equal(opened.length,0);continue;}
+  assert.equal(opened[0][0],'h2');assert.equal(opened[0][2],'compact');assert.deepEqual(Array.from(opened[0][3],h=>h.id),['h1','h2']);
+ }
+});
+
+test('quick-history arrows stay inside the same table and stop at either boundary',async()=>{
+ const opened=[],navigation=[{id:'h1'},{id:'h2'}];const state={modal:{kind:'hand-overview'},replay:{hand:{id:'h2',roomCode:'123456'},compact:true,navigation}};
+ const c=vm.createContext({state,replayModal(...args){opened.push(args);}});
+ vm.runInContext(section('async function compactHandStep(','async function replayModal('),c);
+ await c.compactHandStep(1);assert.equal(opened.length,0);
+ await c.compactHandStep(-1);assert.deepEqual(opened[0],['h1','123456','compact',navigation]);
+ state.modal={kind:'room-menu'};await c.compactHandStep(-1);assert.equal(opened.length,1);
+});

@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,7 +12,7 @@ import { decideAction } from '../scripts/practice-bot-strategy.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-bot-test-'));
-  const app = createApp({ dataDir: directory, actionTickMs: 20, allowGuestSessions: true });
+  const app = createApp({ dataDir: directory, actionTickMs: 20 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
@@ -21,8 +22,8 @@ async function fixture(t) {
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
     const value = await response.json(); assert.ok(response.ok, value.error); return value;
   }
-  const bot = await api(null, '/api/session', { name: '测试陪练机器人' });
-  const human = await api(null, '/api/session', { name: '测试玩家' });
+  const bot = seedLegacyAccount(app, { name: '测试陪练机器人' });
+  const human = seedLegacyAccount(app, { name: '测试玩家' });
   const { room } = await api(bot.token, '/api/rooms', { name: '隔离测试', access: 'invite', settings: { maxPlayers: 2 } });
   const action = (user, extra) => api(user.token, `/api/rooms/${room.code}/action`, { commandId: randomUUID(), ...extra });
   await action(bot, { type: 'sit', seat: 0, amountBB: 200, entryMode: 'post' });

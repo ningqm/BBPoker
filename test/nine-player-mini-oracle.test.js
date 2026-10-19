@@ -50,7 +50,7 @@ function fixture(t, settings = {}, buyins = Array(9).fill(100)) {
 }
 function conserved(f) {
   const r = f.room, ms = Object.values(r.members);
-  const held = ms.reduce((s, m) => s + m.stack + m.cashedOut, 0)
+  const held = ms.reduce((s, m) => s + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0)
     + Object.values(r.mini.squid.reserves).reduce((s, x) => s + x, 0)
     + (r.hand?.status === 'playing' ? r.hand.players.reduce((s, p) => s + p.contributed, 0) : 0);
   assert.equal(held, ms.reduce((s, m) => s + m.totalBuyIn, 0), 'all buy-ins remain in stacks, live pots, reserves or cashouts');
@@ -83,7 +83,7 @@ function playWin(f, i) { f.start(); f.win(i); }
 
 test('nine-player oracle: eight distinct fish, repeated winners and repeated finish never duplicate reserves or transfers', t => {
   const f = fixture(t), first = f.room.mini.squid.roundSettlementId;
-  assert.deepEqual(Object.values(f.room.mini.squid.reserves), Array(9).fill(160)); conserved(f);
+  assert.deepEqual(Object.values(f.room.mini.squid.reserves), []); conserved(f);
   f.win(0); playWin(f, 0);
   assert.deepEqual(f.room.mini.squid.won, [f.id(0)]); assert.equal(settlements(f).length, 0);
   for (let i = 1; i < 8; i++) playWin(f, i);
@@ -93,8 +93,8 @@ test('nine-player oracle: eight distinct fish, repeated winners and repeated fin
   assert.equal(settlements(f).length, 9);
   const before = f.users.slice(0, 9).map((_, i) => f.member(i).stack);
   f.start(); assert.equal(f.room.mini.squid.round, 2); assert.notEqual(f.room.mini.squid.roundSettlementId, first);
-  assert.deepEqual(Object.values(f.room.mini.squid.reserves), Array(9).fill(160));
-  for (const p of f.room.hand.players) assert.equal(p.startingStack, before[Number(p.id.split('-').at(-1))] - 160);
+  assert.deepEqual(Object.values(f.room.mini.squid.reserves), []);
+  for (const p of f.room.hand.players) assert.equal(p.startingStack, before[Number(p.id.split('-').at(-1))]);
   assert.equal(settlements(f).length, 9); conserved(f);
 });
 
@@ -118,8 +118,8 @@ test('nine-player oracle: marked leaver still receives while two absent unmarked
   f.advance(4999); f.service.tick(f.room, f.time); assert.equal(settlements(f).length, 0);
   f.advance(1); f.service.tick(f.room, f.time);
   amounts(f, [40, 40, 40, 40, 40, 40, 40, -140, -140]);
-  assert.equal(f.member(0).cashedOut, cash + 200, 'marked leaver receives reserve 160 plus net 40 into cashout');
-  assert.deepEqual([f.member(7).stack, f.member(8).stack], absentBalances.map(x => x + 20));
+  assert.equal(f.member(0).cashedOut, cash + 40, 'marked leaver receives only the settled net 40 into cashout');
+  assert.deepEqual([f.member(7).stack, f.member(8).stack], absentBalances.map(x => x - 140));
   assert.equal(aggregateAnalytics(f.data, f.id(9)).hands, 0); assert.equal(aggregateAnalytics(f.data, f.id(9)).miniNet, 0);
   f.connect(7, true); f.connect(8, true); f.service.tick(f.room, f.time);
   assert.equal(settlements(f).length, 9); conserved(f);
@@ -146,7 +146,7 @@ test('nine-player oracle: one of two unmarked absentees returns before grace, ea
   }
   assert.equal(returned, true);
   amounts(f, [20, 20, 20, 20, 20, 20, 20, -160, 20]);
-  assert.equal(f.member(7).stack, absent, 'loser pays exactly held reserve, never extra absent blinds');
+  assert.equal(f.member(7).stack, absent - 160, 'loser pays eight actual fish at settlement, never extra absent blinds');
   assert.ok(settlements(f).every(x => x.reason === 'normal'));
 });
 
@@ -156,14 +156,14 @@ test('nine-player oracle: pending departure cancellation, same-round reseating a
   assert.equal(f.member(8).pendingDeparture, 'stand');
   f.cmd(8, 'cancelDeparture'); assert.equal(f.member(8).pendingDeparture, null);
   f.cmd(8, 'stand'); f.win(0);
-  assert.equal(f.member(8).seat, null); assert.equal(f.room.mini.squid.reserves[f.id(8)], 160);
+  assert.equal(f.member(8).seat, null); assert.equal(f.room.mini.squid.reserves[f.id(8)], undefined);
   const buy = randomUUID(), cash = f.member(8).cashedOut;
   f.cmd(8, 'sit', { seat: 8, amountBB: 100, entryMode: 'post', commandId: buy });
   f.cmd(8, 'sit', { seat: 8, amountBB: 100, entryMode: 'post', commandId: buy });
   assert.equal(f.member(8).totalBuyIn, 2000); assert.equal(f.member(8).stack, 1000); assert.equal(f.member(8).cashedOut, cash);
-  assert.equal(f.room.mini.squid.reserves[f.id(8)], 160); assert.equal(f.room.mini.squid.round, 1);
+  assert.equal(f.room.mini.squid.reserves[f.id(8)], undefined); assert.equal(f.room.mini.squid.round, 1);
   f.cmd(0, 'close'); amounts(f, [160, -20, -20, -20, -20, -20, -20, -20, -20]);
-  assert.equal(f.member(8).cashedOut, cash + 1140);
+  assert.equal(f.member(8).cashedOut, cash + 980);
 });
 
 function controlledBomb(f, holes, board) {
@@ -193,38 +193,38 @@ test('nine-player oracle: timed bomb with four all-in pot tiers awards only the 
   f.advance(60000); f.start();
   assert.equal(f.room.hand.players.length, 9); assert.equal(f.room.nextBombAt, f.time + 60000);
   const h = controlledBomb(f, [['As','Ah'], ['Ks','Kh'], ['Qs','Qh'], ['Js','Jh'], ['Ts','Th'], ['9s','9h'], ['8s','8h'], ['7s','7h'], ['6s','6h']], ['Ac','Kd','Qc','2s','3d']);
-  assert.deepEqual(h.players.map(p => p.startingStack), [855, 1335, 1830, 2340, 2340, 2340, 2340, 2340, 2340]);
-  assert.deepEqual(h.result.pots.map(p => p.amount), [7695, 3840, 3465, 3060]);
+  assert.deepEqual(h.players.map(p => p.startingStack), [1015, 1495, 1990, 2500, 2500, 2500, 2500, 2500, 2500]);
+  assert.deepEqual(h.result.pots.map(p => p.amount), [9135, 3840, 3465, 3060]);
   assert.deepEqual(h.result.pots.map(p => p.winnerIds), [0, 1, 2, 3].map(i => [f.id(i)]));
-  assert.deepEqual(h.players.map(p => p.stack - p.startingStack), [6840, 2505, 1635, 720, -2340, -2340, -2340, -2340, -2340]);
+  assert.deepEqual(h.players.map(p => p.stack - p.startingStack), [8120, 2345, 1475, 560, -2500, -2500, -2500, -2500, -2500]);
   assert.ok(h.log.filter(e => e.type === 'ante').length === 9); assert.ok(h.log.every(e => !['smallBlind','bigBlind','entryBlind'].includes(e.type)));
   assert.deepEqual(f.room.mini.squid.won, [f.id(0)], 'side-pot winners and repeated main win award no extra normal fish');
   assert.deepEqual(f.room.rebuyGrace.eligibleIds.sort(), [4,5,6,7,8].map(i => f.id(i)));
-  f.cmd(4, 'buyin', { amountBB: 100 }); assert.equal(f.member(4).stack, 1000); assert.equal(f.room.mini.squid.reserves[f.id(4)], 160);
-  f.cmd(5, 'stand'); assert.equal(f.member(5).cashedOut, 0); assert.equal(f.room.mini.squid.reserves[f.id(5)], 160);
+  f.cmd(4, 'buyin', { amountBB: 100 }); assert.equal(f.member(4).stack, 1000); assert.equal(f.room.mini.squid.reserves[f.id(4)], undefined);
+  f.cmd(5, 'stand'); assert.equal(f.member(5).cashedOut, 0); assert.equal(f.room.mini.squid.reserves[f.id(5)], undefined);
   f.cmd(0, 'close'); amounts(f, [160, -20, -20, -20, -20, -20, -20, -20, -20]);
-  assert.equal(f.member(5).cashedOut, 140); assert.equal(f.member(4).cashedOut, 1140);
+  assert.equal(f.member(5).cashedOut - (f.member(5).squidDebt ?? 0), -20); assert.equal(f.member(4).cashedOut, 980);
   for (let i = 0; i < 9; i++) assert.equal(aggregateAnalytics(f.data, f.id(i)).metrics.vpip.opportunities, 1, 'bomb adds no preflop opportunity');
 });
 
-test('nine-player oracle: cutoff and overtime finish the original fish round without new bomb fees or a new reserve', t => {
+test('nine-player oracle: cutoff and overtime finish the original fish round with scheduled bombs and no new reserve', t => {
   const f = fixture(t, { bombPot: true, bombIntervalMinutes: 1, durationMinutes: 30 }); f.win(0);
   const round = f.room.mini.squid.roundSettlementId;
-  f.advance(f.room.endsAt - 300000 - f.time); f.start(); assert.equal(f.room.hand.bombPot, false); f.win(1);
+  f.advance(f.room.endsAt - 300000 - f.time); f.start(); assert.equal(f.room.hand.bombPot, true); f.win(1);
   f.advance(f.room.endsAt - f.time);
   for (let i = 2; i < 8; i++) {
-    f.start(); assert.equal(f.room.hand.bombPot, false); assert.equal(f.room.mini.squid.roundSettlementId, round); f.win(i);
+    f.start(); assert.equal(f.room.hand.bombPot, i === 2); assert.equal(f.room.mini.squid.roundSettlementId, round); f.win(i);
   }
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.mini.squid.round, 1);
   assert.equal(f.data.hands.length, 8); amounts(f, [20,20,20,20,20,20,20,20,-160]);
-  assert.equal(f.data.hands.flatMap(h => h.log).filter(e => e.type === 'ante').length, 0);
+  assert.equal(f.data.hands.flatMap(h => h.log).filter(e => e.type === 'ante').length, 18);
 });
 
 
 test('nine-player unlimited oracle: N+3 fish, repeated holders and budget exhaustion settle weighted counts with four losers', t => {
   const f = fixture(t, { squidMode: 'unlimited' }), q = f.room.mini.squid;
   assert.equal(q.mode, 'unlimited'); assert.equal(q.tokenBudget, 12); assert.equal(q.extraTokens, 3);
-  assert.deepEqual(Object.values(q.reserves), Array(9).fill(240));
+  assert.deepEqual(Object.values(q.reserves), []);
   const before = structuredClone(q), initial = f.service.state(f.room, f.id(0));
   assert.deepEqual(q, before, 'read projection cannot migrate or charge reserves');
   assert.equal(initial.players.find(p => p.id === f.id(8)).squidMaxLoss, 240);
@@ -274,7 +274,7 @@ test('nine-player unlimited oracle: marked departure and seven absent losers set
   assert.equal(f.room.mini.squid.absentSettlementAt, f.time + 5000);
   f.advance(5000); f.service.tick(f.room, f.time);
   amounts(f, [420,140,-80,-80,-80,-80,-80,-80,-80]);
-  assert.equal(f.member(0).cashedOut, cash + 660, 'reserve 240 plus seven losers times three fish times 20');
+  assert.equal(f.member(0).cashedOut, cash + 420, 'seven losers times three actual fish times 20');
   assert.equal(f.room.mini.squid.lastResult.tokensAwarded, 4); assert.equal(f.room.mini.squid.lastResult.tokensExhausted, false);
   assert.ok(settlements(f).every(r => r.reason === 'absent'));
   for (let i = 2; i < 9; i++) f.connect(i, true);
@@ -370,17 +370,18 @@ test('nine-player unlimited oracle: overtime keeps frozen N+X and only its origi
   const round=f.room.mini.squid.roundSettlementId;
   f.advance(f.room.endsAt-f.time);
   for(let n=0;n<8;n++) {
-    f.start();assert.equal(f.room.hand.bombPot,false);assert.equal(f.room.hand.squidTokenBudget,9);assert.equal(f.room.mini.squid.roundSettlementId,round);f.win(0);
+    f.start();assert.equal(f.room.hand.bombPot,n===0);assert.equal(f.room.hand.squidTokenBudget,9);assert.equal(f.room.mini.squid.roundSettlementId,round);f.win(0);
   }
   amounts(f,[1440,-180,-180,-180,-180,-180,-180,-180,-180]);
   assert.equal(f.room.status,'closed');assert.equal(f.room.mini.squid.round,1);assert.equal(f.data.hands.length,9);
 });
 
-test('nine-player unlimited oracle: maximum extra fish reserves the whole budget and rejects insufficient renewal without any mutation', t => {
+test('nine-player unlimited oracle: maximum extra fish is a budget only; renewal no longer locks that potential loss', t => {
   const f=fixture(t,{squidMode:'unlimited',squidExtraTokens:100},Array(9).fill(250));
-  assert.equal(f.room.mini.squid.tokenBudget,109);assert.deepEqual(Object.values(f.room.mini.squid.reserves),Array(9).fill(2180));
+  assert.equal(f.room.mini.squid.tokenBudget,109);assert.deepEqual(Object.values(f.room.mini.squid.reserves),[]);
   for(let n=0;n<109;n++){if(n)f.start();f.win(0);}
   amounts(f,[17440,-2180,-2180,-2180,-2180,-2180,-2180,-2180,-2180]);
-  const before=structuredClone(f.data);
-  assert.throws(()=>f.start(),/积分不足|补码/);assert.deepEqual(f.data,before,'unaffordable next round cannot consume reserves, round identity or a scheduled hand');
+  const before=structuredClone(f.data.hands);f.start();
+  assert.equal(f.room.mini.squid.round,2);assert.equal(f.room.hand.players.length,9);assert.deepEqual(f.room.mini.squid.reserves,{});
+  assert.deepEqual(f.data.hands,before,'starting another round cannot change historical settlements');conserved(f);
 });

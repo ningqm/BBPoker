@@ -141,9 +141,9 @@ function handTable(hand, index, viewerId) {
     '_tongzhuo_reveal_timing = "Cards reflect export-time visibility; no reveal timestamps are inferred."',
     `_tongzhuo_player_ids = ${strings(players.map(p => p.id))}`,
     `_tongzhuo_mini_net = ${array(mini)}`,
-    // Ending room balances may include mini pools/reserves and are deliberately
-    // separate from the standard PHH finishing_stacks used for hold'em replay.
-    `_tongzhuo_room_ending_stacks = ${array(players.map(p => integer(p.endingStack, '结束房间积分')))}`,
+    // Room net balances can be negative after a squid settlement debt. Keep
+    // that signed extension separate from nonnegative poker finishing_stacks.
+    `_tongzhuo_room_ending_stacks = ${array(players.map(p => integer(p.endingStack, '结算后房间净余额', -Number.MAX_SAFE_INTEGER)))}`,
   ];
   if (dead.some(Boolean) || posted.some(Boolean)) lines.push(`_bbpoker_entry_live = ${array(posted)}`, `_bbpoker_entry_dead = ${array(dead)}`);
   if (hand.bombPot) { lines.push('_bbpoker_bomb_pot = true', `_bbpoker_synthetic_preflop_checks = ${syntheticChecks.length}`); }

@@ -15,7 +15,7 @@ export function username(value) {
 }
 
 export function password(value) {
-  if (typeof value !== 'string' || value.length < 10 || value.length > 128) fail('密码需为 10–128 位字符');
+  if (typeof value !== 'string' || value.length < 6 || value.length > 128) fail('密码需为 6–128 位字符');
   return value;
 }
 
@@ -40,7 +40,7 @@ export async function hashPassword(value) {
 }
 
 export async function verifyPassword(value, stored) {
-  const valid = typeof value === 'string' && value.length >= 10 && value.length <= 128;
+  const valid = typeof value === 'string' && value.length >= 6 && value.length <= 128;
   const record = /^scrypt-v1\$([a-f0-9]{32})\$([a-f0-9]{64})$/.exec(stored ?? '') ?? /^scrypt-v1\$([a-f0-9]{32})\$([a-f0-9]{64})$/.exec(DUMMY);
   const actual = await derive(valid ? value : '', record[1]);
   return timingSafeEqual(actual, Buffer.from(record[2], 'hex')) && valid && typeof stored === 'string';

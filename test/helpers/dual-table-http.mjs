@@ -1,6 +1,7 @@
+import { seedLegacyAccount, seedAssignedAccount } from './accounts.js';
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../../server.js';
@@ -11,9 +12,9 @@ export const MODES = {
   unlimitedBomb:{ squid:true,squidMode:'unlimited',bombPot:true },
 };
 const sleep = ms => new Promise(resolve => setTimeout(resolve,ms));
-export async function dualTableFixture({port=0,modes=['normalBomb','unlimitedBomb'],registered=true,actionTickMs=100}={}) {
+export async function dualTableFixture({port=0,modes=['normalBomb','unlimitedBomb'],registered=true,actionTickMs=100,privateFile=null}={}) {
   const directory=mkdtempSync(join(tmpdir(),'bbpoker-dual-http-'));
-  const app=createApp({dataDir:directory,allowGuestSessions:true,actionTickMs});
+  const app=createApp({dataDir:directory,actionTickMs});
   await new Promise(resolve=>app.server.listen(port,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${app.server.address().port}`, tables=[], sockets=new Map(), events=[], errors=[];
   let busy=false,closed=false,timer=null;
@@ -49,7 +50,7 @@ export async function dualTableFixture({port=0,modes=['normalBomb','unlimitedBom
   const checkedHands=new Set();
   function conserve(table) {
     const r=internal(table),members=Object.values(r.members),h=r.hand;
-    const chips=members.reduce((n,m)=>n+m.stack+m.cashedOut,0)+Object.values(r.mini.squid.reserves).reduce((n,v)=>n+v,0)+(h?.status==='playing'?h.players.reduce((n,p)=>n+p.contributed,0):0);
+    const chips=members.reduce((n,m)=>n+m.stack+m.cashedOut-(m.squidDebt??0),0)+Object.values(r.mini.squid.reserves).reduce((n,v)=>n+v,0)+(h?.status==='playing'?h.players.reduce((n,p)=>n+p.contributed,0):0);
     const buyins=members.reduce((n,m)=>n+m.totalBuyIn,0);assert.equal(chips,buyins,`table ${table.index} total points`);
     for(const m of members)assert.ok(Number.isSafeInteger(m.stack)&&m.stack>=0);
     assert.equal(app.store.data.ledger.filter(row=>row.roomCode===r.code&&['holdem','squidSettlement'].includes(row.type)).reduce((sum,row)=>sum+row.amount,0),0);
@@ -96,8 +97,8 @@ export async function dualTableFixture({port=0,modes=['normalBomb','unlimitedBom
   for(let tableIndex=0;tableIndex<2;tableIndex++){
     const table={index:tableIndex,mode:modes[tableIndex],users:[],actions:{},completed:[],manual:new Set(),nextAt:0};tables.push(table);
     for(let i=0;i<11;i++){
-      let user;if(registered&&i===0){const username=`qa_dual_${tableIndex===0?'a':'b'}`,password=`QA-${randomBytes(12).toString('base64url')}`;user=await api(null,'/api/account/register',{username,password,name:`验收玩家${tableIndex===0?'甲':'乙'}`},201);table.login={username,password};}
-      else user=await api(null,'/api/session',{name:`${tableIndex===0?'甲':'乙'}桌机器人${i+1}`},201);
+      let user;if(registered&&i===0){const username=`qa_dual_${tableIndex===0?'a':'b'}`,password=`QA-${randomBytes(12).toString('base64url')}`;user=await seedAssignedAccount(app,{username,password,name:`验收玩家${tableIndex===0?'甲':'乙'}`});table.login={username,password};}
+      else user=seedLegacyAccount(app,{name:`${tableIndex===0?'甲':'乙'}桌机器人${i+1}`});
       table.users.push(user);
     }
     const created=(await api(table.users[0],'/api/rooms',{name:`双桌验收${tableIndex===0?'甲':'乙'} · ${table.mode}`,access:'public',settings:{maxPlayers:9,smallBlind:5,bigBlind:10,durationMinutes:480,squidExtraTokens:3,squidUnitBB:2,bombIntervalMinutes:1,bombAnteBB:2,...MODES[table.mode]}},201)).room;
@@ -109,6 +110,7 @@ export async function dualTableFixture({port=0,modes=['normalBomb','unlimitedBom
   // Each registered browser identity may observe either table, but is seated in
   // only its own. The two tables still have disjoint sets of nine dealt users.
   for(let i=0;i<2;i++)await api(tables[i].users[0],`/api/rooms/${tables[1-i].code}/join`,{});
+  if(privateFile)writeFileSync(privateFile,JSON.stringify({origin,timing:'real wall clock',tables:tables.map(t=>({index:t.index,mode:t.mode,url:t.url,code:t.code,login:t.login}))},null,2),{mode:0o600});
   return {app,origin,directory,tables,sockets,events,errors,api,command,connect,disconnect,internal,conserve,strategy,autoplayStep,
     startBots(options={}){timer=setInterval(()=>autoplayStep(options),100);},
     pauseBots(){clearInterval(timer);timer=null;},

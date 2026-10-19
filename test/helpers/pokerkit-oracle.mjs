@@ -2,14 +2,23 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 export function replayIndependently(source, expectedCount) {
   const script = `import sys,json
-from pokerkit import HandHistory
+from pokerkit import HandHistory,Automation
 hands=list(HandHistory.loads_all(sys.stdin.read()))
-summary={'hands':len(hands),'actions':0,'zero_cost_runout_checks':0,'odd_chip_normalizations':0}
+summary={'hands':len(hands),'actions':0,'zero_cost_runout_checks':0,'odd_chip_normalizations':0,'pot_boundary_normalizations':0}
 for hand in hands:
+    # Let the PHH iterator perform these operations one at a time so we can
+    # preserve PokerKit's pots before HandKilling removes losing contenders.
+    # That removal can merge distinct side pots with the same eventual winners.
+    hand.automations=tuple(a for a in hand.automations if a not in (Automation.HAND_KILLING,Automation.CHIPS_PUSHING,Automation.CHIPS_PULLING))
     seen=0
     adjustments=[0]*len(hand.starting_stacks)
     inserted_checks=0
+    original_pots=None
+    next_pot=0
     for state,action in hand.state_actions:
+        if original_pots is None and (state.can_kill_hand() or state.can_push_chips()):
+            assert hand.variant=='NT' and state.board_count==1,(hand.hand,'only single-board holdem normalization is supported')
+            original_pots=[(p.unraked_amount,p.player_indices) for p in state.pots]
         added=state.operations[seen:]
         seen=len(state.operations)
         for op in added:
@@ -22,17 +31,34 @@ for hand in hands:
                 inserted_checks+=1
             if name=='ChipsPushing':
                 # PokerKit awards all odd chips to the first winner. BBPoker
-                # distributes one each clockwise, beginning after the button.
-                # Normalize only that policy using PokerKit's own winners.
+                # distributes one each clockwise for each original pot. Both
+                # original pot amounts/eligibility and winners come exclusively
+                # from PokerKit; no BBPoker result is used to derive payouts.
+                assert original_pots is not None,(hand.hand,'missing original pots')
                 winners=[i for i,a in enumerate(op.amounts) if a>0]
-                if len(winners)>1:
-                    quotient,remainder=divmod(sum(op.amounts),len(winners))
+                total=sum(op.amounts)
+                quotient,remainder=divmod(total,len(winners))
+                assert quotient>0,(hand.hand,'zero-share comparison needs a separate oracle')
+                assert [op.amounts[i] for i in winners]==[quotient+remainder]+[quotient]*(len(winners)-1)
+                normalized=[0]*len(winners)
+                consumed=0
+                while consumed<total:
+                    assert next_pot<len(original_pots),(hand.hand,'extra pushed pot',op)
+                    amount,eligible=original_pots[next_pot]
+                    next_pot+=1
+                    consumed+=amount
+                    assert consumed<=total and set(winners)<=set(eligible),(hand.hand,'incompatible merged pot',op,amount,eligible)
+                    quotient,remainder=divmod(amount,len(winners))
                     assert quotient>0,(hand.hand,'zero-share comparison needs a separate oracle')
-                    assert [op.amounts[i] for i in winners]==[quotient+remainder]+[quotient]*(len(winners)-1)
-                    for k,i in enumerate(winners):
-                        adjustments[i]+=quotient+(k<remainder)-op.amounts[i]
+                    for k in range(len(winners)):
+                        normalized[k]+=quotient+(k<remainder)
                     summary['odd_chip_normalizations']+=remainder>1
+                quotient,remainder=divmod(total,len(winners))
+                summary['pot_boundary_normalizations']+=normalized!=[quotient+(k<remainder) for k in range(len(winners))]
+                for k,i in enumerate(winners):
+                    adjustments[i]+=normalized[k]-op.amounts[i]
     assert not state.status,(hand.hand,'unfinished')
+    assert original_pots is not None and next_pot==len(original_pots),(hand.hand,'unpaid original pot')
     normalized=[a+b for a,b in zip(state.stacks,adjustments)]
     assert normalized==hand.finishing_stacks,(hand.hand,normalized,hand.finishing_stacks,hand.actions)
     expected=sum(len(a.split())>1 and a.split()[1] in {'f','cc','cbr'} for a in hand.actions)

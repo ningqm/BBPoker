@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,7 @@ import { readyRoomAction } from './helpers/room-clock.js';
 async function fixture(t) {
   let time = 1800000000000; t.mock.method(Date, 'now', () => time);
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-queue-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 10 });
+  const app = createApp({ dataDir: directory, actionTickMs: 10 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -19,7 +20,7 @@ async function fixture(t) {
     const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value;
   }
   const users = [];
-  for (const name of ['queue-api-a', 'queue-api-b']) users.push(await api('/api/session', null, { name }, 201));
+  for (const name of ['queue-api-a', 'queue-api-b']) users.push(seedLegacyAccount(app, { name }));
   const created = (await api('/api/rooms', users[0], { settings: { maxTotalBuyInBB: 300 } }, 201)).room, code = created.code;
   await api(`/api/rooms/${code}/join`, users[1], { invite: created.invite });
   const room = () => app.store.data.rooms[code];

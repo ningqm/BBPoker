@@ -1,3 +1,4 @@
+import { seedLegacyAccount, seedAssignedAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -10,7 +11,7 @@ import { nickname, avatar, profilePatch, AVATAR_COUNT } from '../src/profile.js'
 const PASSWORD = 'profile-test-only-password';
 async function fixture(t, options = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-profile-'));
-  let app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000, ...options });
+  let app = createApp({ dataDir: directory, actionTickMs: 60000, ...options });
   const listen = () => new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   await listen();
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
@@ -41,7 +42,7 @@ async function fixture(t, options = {}) {
     }
     assert.fail('profile fixture exceeded bounded presentation steps');
   }
-  return { api, stream, ready, directory, get app() { return app; }, guest: (name, avatar = 0) => api('/api/session', { name, avatar }, null, 201), async restart() { await app.close(); app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 60000, ...options }); await listen(); } };
+  return { api, stream, ready, directory, get app() { return app; }, guest: (name, avatar = 0) => seedLegacyAccount(app, { name, avatar }), async restart() { await app.close(); app = createApp({ dataDir: directory, actionTickMs: 60000, ...options }); await listen(); } };
 }
 
 async function event(reader) {
@@ -68,7 +69,7 @@ test('profile validation counts Unicode characters, normalizes controls and reje
 
 test('registered profiles keep account ownership, credentials and every session across restart', async t => {
   const f = await fixture(t);
-  const first = await f.api('/api/account/register', { username: 'profile_owner', password: PASSWORD, name: '原昵称', avatar: 11 }, null, 201);
+  const first = await seedAssignedAccount(f.app, { username: 'profile_owner', password: PASSWORD, name: '原昵称', avatar: 11 });
   const second = await f.api('/api/account/login', { username: 'profile_owner', password: PASSWORD });
   const before = structuredClone(f.app.service.user(first.user.id));
   const sessions = structuredClone(f.app.store.data.sessions);
@@ -85,7 +86,7 @@ test('registered profiles keep account ownership, credentials and every session 
   assert.deepEqual(login.user, changed.user);
 });
 
-test('profile writes require a valid session, cannot target another user and reject invalid avatars at registration', async t => {
+test('profile writes require a valid session, cannot target another user and reject invalid profile avatars while public registration stays closed', async t => {
   const f = await fixture(t), owner = await f.guest('甲'), other = await f.guest('乙');
   const before = structuredClone(f.app.store.data.users);
   await f.api('/api/profile', { name: '冒充' }, null, 401);
@@ -94,8 +95,8 @@ test('profile writes require a valid session, cannot target another user and rej
   await f.api('/api/profile', { name: '\u202e\u0000' }, owner.token, 400);
   await f.api('/api/profile', JSON.parse('{"name":"坏字段","__proto__":{"admin":true}}'), owner.token, 400);
   assert.deepEqual(f.app.store.data.users, before);
-  await f.api('/api/account/register', { username: 'invalid_avatar', password: PASSWORD, avatar: 12 }, null, 400);
-  await f.api('/api/session', { name: '坏头像', avatar: -1 }, null, 400);
+  await f.api('/api/account/register', { username: 'invalid_avatar', password: PASSWORD, avatar: 12 }, null, 403);
+  await f.api('/api/session', { name: '坏头像', avatar: -1 }, null, 403);
   assert.equal({}.admin, undefined);
 });
 

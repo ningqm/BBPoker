@@ -50,7 +50,7 @@ function fixture(t) {
 }
 function conserved(room) {
   const members = Object.values(room.members);
-  const chips = members.reduce((sum, m) => sum + m.stack + m.cashedOut, 0)
+  const chips = members.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0)
     + Object.values(room.mini.squid.reserves).reduce((a, b) => a + b, 0)
     + (room.hand?.status === 'playing' ? room.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0);
   assert.equal(chips, members.reduce((sum, m) => sum + m.totalBuyIn, 0));
@@ -91,7 +91,7 @@ for (const mode of ['normal', 'unlimited']) for (const marked of [false, true]) 
     f.cmd(a, 3, 'timebank', { commandId: sharedId });
     f.win(a, marked ? 3 : 0);
     const reserve = a.mini.squid.reserves[hero.id];
-    f.cmd(a, 3, 'stand', { expectedSquidRound: a.mini.squid.round, expectedSquidCost: marked ? 0 : reserve });
+    f.cmd(a, 3, 'stand', { expectedSquidRound: a.mini.squid.round, expectedSquidCost: marked ? 0 : a.mini.squid.tokenBudget * a.mini.squid.unit });
     f.online(a, 3, false);
     const oldCashout = a.members[hero.id].cashedOut;
     const seats = [0, 1, 2, 4, 5, 6, 7, 8];
@@ -113,7 +113,7 @@ for (const mode of ['normal', 'unlimited']) for (const marked of [false, true]) 
     f.cmd(a, 0, 'close');
     assert.deepEqual(b, frozenB, 'old-room fish settlement cannot move a new-room live stack, pot, deck, deadline or top-up');
     const expectedFishNet = marked ? 8 * 20 : -20;
-    assert.equal(a.members[hero.id].cashedOut, oldCashout + reserve + expectedFishNet);
+    assert.equal(a.members[hero.id].cashedOut - (a.members[hero.id].squidDebt ?? 0), oldCashout + expectedFishNet);
     assert.equal(b.members[hero.id].totalBuyIn, 1000);
     assert.equal(f.service.pendingBuyIn(b.members[hero.id]), 1000);
     assert.deepEqual(f.store.data.ledger.filter(row => row.type === 'squidSettlement' && row.playerId === hero.id).map(row => [row.roomCode, row.amount]), [[a.code, expectedFishNet]]);
@@ -131,7 +131,7 @@ for (const mode of ['normal', 'unlimited']) for (const marked of [false, true]) 
     assert.equal(f.service.pendingBuyIn(b.members[hero.id]), 0);
     assert.equal(b.members[hero.id].stack, b.hand.endingStacks[hero.id] + 1000);
     assert.equal(f.store.data.ledger.filter(row => row.roomCode === b.code && row.type === 'buyin' && row.playerId === hero.id).length, 2);
-    assert.equal(a.members[hero.id].cashedOut, oldCashout + reserve + expectedFishNet);
+    assert.equal(a.members[hero.id].cashedOut - (a.members[hero.id].squidDebt ?? 0), oldCashout + expectedFishNet);
     conserved(a); conserved(b);
   });
 }

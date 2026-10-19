@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,14 +104,14 @@ test('manual resume, direct start, close and expiry can skip animation without l
 
 test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE and restarts without reshuffling', async t => {
   let timestamp = 1800000000000; t.mock.method(Date, 'now', () => timestamp);
-  const directory = mkdtempSync(join(tmpdir(), 'bbpoker-rabbit-http-')); let app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 20 });
+  const directory = mkdtempSync(join(tmpdir(), 'bbpoker-rabbit-http-')); let app = createApp({ dataDir: directory, actionTickMs: 20 });
   const listen = () => new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); await listen();
   const controllers = []; t.after(async () => { controllers.forEach(c => c.abort()); await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const api = async (token, path, body, expected = 200) => {
     const response = await fetch(`http://127.0.0.1:${app.server.address().port}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value;
   };
-  const users = []; for (const name of ['互动甲', '互动乙', '旁观']) users.push(await api(null, '/api/session', { name }, 201));
+  const users = []; for (const name of ['互动甲', '互动乙', '旁观']) users.push(seedLegacyAccount(app, { name }));
   const created = (await api(users[0].token, '/api/rooms', {}, 201)).room, code = created.code;
   for (const u of users.slice(1)) await api(u.token, `/api/rooms/${code}/join`, { invite: created.invite });
   const room = () => app.store.data.rooms[code];
@@ -151,7 +152,7 @@ test('HTTP failure rolls back throw cooldown/dedup; rabbit persists before SSE a
   assert.equal(app.store.read().hands[0].rabbit.board.length, 5); assert.equal(revealed.hand.rabbit.proofs.length, 5);
   assert.deepEqual(revealed.players.flatMap(p => p.cards), [null, null, null, null]);
   const save = structuredClone(app.store.data), key = readFileSync(join(directory, 'key')); await app.close();
-  app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 }); await listen();
+  app = createApp({ dataDir: directory, actionTickMs: 1000000 }); await listen();
   assert.deepEqual(app.store.data, save); assert.deepEqual(readFileSync(join(directory, 'key')), key);
   const refreshed = await api(users[2].token, `/api/rooms/${code}`); assert.deepEqual(refreshed.hand.rabbit, revealed.hand.rabbit); assert.deepEqual(refreshed.hand.board, []);
   assert.deepEqual((await api(users[0].token, `/api/rooms/${code}/chat`, throwBody)).message, message);

@@ -32,7 +32,7 @@ function finishTo(f, winner) {
 }
 function conserved(f) {
   const r = f.room, members = Object.values(r.members);
-  const actual = members.reduce((sum, m) => sum + m.stack + m.cashedOut, 0) + Object.values(r.mini.squid.reserves).reduce((a, b) => a + b, 0)
+  const actual = members.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + Object.values(r.mini.squid.reserves).reduce((a, b) => a + b, 0)
     + (r.hand?.status === 'playing' ? r.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0);
   assert.equal(actual, members.reduce((sum, m) => sum + m.totalBuyIn, 0));
 }
@@ -42,7 +42,7 @@ test('independent oracle: queued leavers retain reserves and only marked players
   assert.equal(f.room.members['oracle-0'].seat,0);assert.equal(f.room.mini.squid.active,true);conserved(f);
   finishTo(f,2);assert.equal(f.store.data.ledger.filter(row=>row.type==='squidSettlement').length,0);
   assert.equal(f.room.members['oracle-0'].seat,null);assert.equal(f.room.members['oracle-1'].seat,null);
-  assert.equal(f.room.mini.squid.reserves['oracle-0'],6);assert.equal(f.room.mini.squid.reserves['oracle-1'],6);
+  assert.equal(f.room.mini.squid.reserves['oracle-0'],undefined);assert.equal(f.room.mini.squid.reserves['oracle-1'],undefined);
   f.service.start(f.room);assert.deepEqual(f.room.hand.players.map(p=>p.id),['oracle-2','oracle-3']);finishTo(f,3);
   const due=f.room.mini.squid.absentSettlementAt;assert.ok(Number.isFinite(due));assert.equal(f.room.mini.squid.active,true);
   f.service.completeRabbit(f.room,due);f.service.tick(f.room,due);
@@ -57,7 +57,7 @@ test('independent oracle: queued leavers retain reserves and only marked players
 test('independent oracle: returning a marked original player preserves its token and re-enters the same round without a second reserve', t => {
   const f=fixture(t);f.cmd(0,'stand');finishTo(f,0);
   assert.equal(f.room.members['oracle-0'].seat,null);assert.deepEqual(f.room.mini.squid.won,['oracle-0']);
-  const reserves=structuredClone(f.room.mini.squid.reserves);assert.equal(reserves['oracle-0'],6);conserved(f);
+  const reserves=structuredClone(f.room.mini.squid.reserves);assert.equal(reserves['oracle-0'],undefined);conserved(f);
   f.cmd(0,'sit',{seat:0,amountBB:100});assert.equal(f.service.waitingFor(f.room,f.room.members['oracle-0']),null);
   assert.deepEqual(f.room.mini.squid.reserves,reserves);assert.deepEqual(f.room.mini.squid.won,['oracle-0']);
   f.service.start(f.room);assert.ok(f.room.hand.players.some(p=>p.id==='oracle-0'));assert.equal(f.room.hand.squidRound,1);finishTo(f,1);

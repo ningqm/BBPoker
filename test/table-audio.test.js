@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES, TABLE_VOICE_LABELS, TABLE_AUDIO_MIX } from '../public/table-feedback.js';
+import { createTableFeedback, createTableSounds, createTurnCountdown, TABLE_VOICE_CUES, TABLE_VOICE_LABELS, TABLE_AUDIO_MIX, TABLE_TURN_TONES } from '../public/table-feedback.js';
 
 const blinds = [{ seq: 1, type: 'smallBlind', playerId: 'a', amount: 5, street: 'preflop' }, { seq: 2, type: 'bigBlind', playerId: 'b', amount: 10, street: 'preflop' }];
 function frame({ log = blinds, seq = 1, actor = 'a', deadline = 30000, status = 'playing', allIn = [] } = {}) {
@@ -120,8 +120,8 @@ function audioFixture({ fetchOk = true, fetchDelay = null } = {}) {
     async resume() { stats.resumes++; this.changeState('running'); }
     async suspend() { stats.suspended++; this.changeState('suspended'); }
     async close() { stats.closed++; this.changeState('closed'); }
-    createOscillator() { const node = { frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {}, start() {}, stop() {} }; stats.oscillators.push(node); return node; }
-    createGain() { const values = []; return { values, gain: { setValueAtTime(value) { values.push(value); }, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+    createOscillator() { const frequencies = []; const node = { frequencies, frequency: { setValueAtTime(value) { frequencies.push(value); }, exponentialRampToValueAtTime(value) { frequencies.push(value); } }, connect(gain) { this.gain = gain; }, disconnect() {}, start(at) { this.at = at; }, stop(at) { if (at === undefined) this.stopped = true; else this.stopAt = at; } }; stats.oscillators.push(node); return node; }
+    createGain() { const values = [], ramps = []; return { values, ramps, gain: { setValueAtTime(value) { values.push(value); }, exponentialRampToValueAtTime(value) { ramps.push(value); } }, connect() {}, disconnect() {} }; }
     createBuffer(channels, count, rate) { return { duration: count / rate, noise: true, getChannelData: () => new Float32Array(count) }; }
     createBufferSource() { const node = { playbackRate: { setValueAtTime(value) { node.rate = value; } }, connect(gain) { this.gain = gain; }, disconnect() {}, start(at) { this.started = true; this.at = at; }, stop(at) { if (at === undefined) this.stopped = true; else this.stopAt = at; } }; stats.sources.push(node); return node; }
     async decodeAudioData(data) { const cue = ['chips', ...TABLE_VOICE_CUES][new Uint8Array(data)[0]]; return { duration: cue === 'chips' ? 0.929 : 0.4, cue }; }
@@ -168,6 +168,28 @@ test('new action replaces speech; timer sounds do not cancel voice; voice-off re
   assert.equal(sounds.speak('allin'), false);
   now += 200; assert.equal(sounds.playFeedback({ sound: 'chip', chips: true, speech: 'raise' }), true);
   sounds.setEnabled(false); assert.equal(sounds.playFeedback({ sound: 'chip', speech: 'raise' }), false);
+  sounds.dispose();
+});
+
+test('every approved voice is only slightly shorter, with unchanged chip, collection and check speeds', async () => {
+  const f = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => now });
+  await sounds.unlock(); await sounds.preloadAudio();
+  assert.ok(TABLE_AUDIO_MIX.voiceRate > 1 && TABLE_AUDIO_MIX.voiceRate <= 1.08, 'a subtle adjustment, not rushed speech');
+  for (const type of TABLE_VOICE_CUES) {
+    assert.equal(sounds.speak(type), true);
+    const source = f.stats.sources.at(-1);
+    assert.equal(source.buffer.cue, type, 'keep each existing approved recording');
+    assert.equal(source.rate, TABLE_AUDIO_MIX.voiceRate);
+    assert.ok(source.buffer.duration / source.rate > source.buffer.duration * 0.92, 'retain syllables and natural tails');
+    assert.equal(source.stopAt, undefined, 'the full clip ends naturally, without truncation');
+  }
+  now += 1000; assert.equal(sounds.play('chip'), true);
+  assert.equal(f.stats.sources.at(-1).rate, 1);
+  now += 1000; assert.equal(sounds.play('collect'), true);
+  assert.equal(f.stats.sources.at(-1).rate, TABLE_AUDIO_MIX.collectRate);
+  assert.equal(sounds.play('check'), true);
+  assert.equal(f.stats.sources.at(-1).rate, undefined, 'recorded knocks retain their normal default rate');
   sounds.dispose();
 });
 
@@ -233,7 +255,7 @@ test('an operating-system audio interruption recovers once and never restarts in
   }
 });
 
-test('when automatic audio resume is blocked it waits for a real unlock instead of looping', async () => {
+test('automatic audio resume is bounded and a real gesture can always retry immediately', async () => {
   const f = audioFixture(); let blocked = false;
   class PolicyContext extends f.AudioContext {
     async resume() {
@@ -692,4 +714,233 @@ test('late, hidden, disconnected and restored snapshots never create knock event
     assert.equal(tracker.update(next,{now:2000,...options}).checks,undefined);
     assert.equal(tracker.update({...next,serverTime:9000},{now:9000}).checks,undefined);
   }
+});
+
+
+test('a fold uses only the selected spoken word, with no synthetic downward tone or fake chip sound', async () => {
+  const f = audioFixture();
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher });
+  await sounds.unlock(); await sounds.preloadAudio();
+  assert.equal(sounds.playFeedback({ eventId: 'fold-clean', sound: 'fold', speech: 'fold', chips: false }), true);
+  assert.equal(f.stats.oscillators.length, 0);
+  assert.deepEqual(f.stats.sources.map(node => node.buffer.cue), ['fold']);
+  sounds.setVoiceEnabled(false);
+  assert.equal(sounds.playFeedback({ eventId: 'fold-muted', sound: 'fold', speech: 'fold' }), false);
+  assert.equal(f.stats.oscillators.length, 0); sounds.dispose();
+});
+
+test('the final-seconds warning remains audible beside ordinary prompts and does not stack duplicate ticks', async () => {
+  const f = audioFixture(); let clock = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => clock });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.play('yourturn'); const regular = [...f.stats.oscillators];
+  clock += 10; assert.equal(sounds.play('countdown'), true, 'not swallowed by the 90 ms prompt throttle');
+  const warning = f.stats.oscillators.at(-1);
+  assert.ok(warning.stopAt - warning.at >= 0.12);
+  assert.ok(warning.gain.ramps[0] >= 0.14, 'warning has enough level above the former tiny click');
+  assert.ok(regular.every(node => !node.stopped), 'warning does not cut off a pending turn notification');
+  assert.equal(sounds.play('countdown'), false, 'repeated renderer cannot stack the same tick');
+  clock += 200; sounds.play('board');
+  assert.equal(warning.stopped, undefined, 'board cue cannot cut off the warning');
+  clock += 800; const before = f.stats.oscillators.length;
+  assert.equal(sounds.play('countdown-last'), true);
+  const final = f.stats.oscillators.slice(before);
+  assert.equal(final.length, 2, 'last three seconds have a distinct double pulse');
+  assert.ok(final[1].at - final[0].at >= 0.14);
+  sounds.suspend(); assert.ok(final.every(node => node.stopped)); sounds.dispose();
+});
+
+test('the action-ready cue is one short bell strike with simultaneous partials, not sequential beeps', async () => {
+  const f = audioFixture(), sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher });
+  await sounds.unlock();
+  assert.equal(sounds.playFeedback({ yourTurnId: 'room:me:hand:1' }), true);
+  const bells = f.stats.oscillators;
+  assert.equal(bells.length, 3);
+  assert.deepEqual(bells.map(node => node.at), [0, 0, 0]);
+  assert.deepEqual(bells.map(node => node.frequencies[0]), TABLE_TURN_TONES.map(partial => partial[0]));
+  assert.deepEqual(bells.map(node => node.gain.ramps[0]), [0.08, 0.025, 0.009]);
+  assert.ok(Math.max(...bells.map(node => node.stopAt - node.at)) <= 0.25);
+  assert.equal(f.stats.sources.length, 0, 'bell needs no recording download');
+  sounds.dispose();
+});
+
+test('a fresh turn bell bypasses an adjacent board cue and ordinary prompts cannot cut it off', async () => {
+  const f = audioFixture(); let now = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => now });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.play('board'); now += 10;
+  assert.equal(sounds.playFeedback({ yourTurnId: 'street:flop:first-action' }), true, 'recent board audio cannot swallow readiness');
+  const bells = f.stats.oscillators.slice(-3);
+  now += 100; sounds.play('board');
+  assert.ok(bells.every(node => !node.stopped), 'board audio cannot truncate the bell tail');
+  now += 10; sounds.play('countdown');
+  assert.ok(bells.every(node => !node.stopped), 'countdown remains on its own channel');
+  sounds.suspend(); assert.ok(bells.every(node => node.stopped), 'background stop still reaches the separate channel');
+  sounds.dispose();
+});
+
+test('turn bells coexist with chips, action speech and checks without delaying or replacing those cues', async () => {
+  for (const action of ['call', 'check']) {
+    const f = audioFixture(), sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => 1000 });
+    await sounds.unlock(); await sounds.preloadAudio();
+    const feedback = action === 'call'
+      ? { eventId: 'action', yourTurnId: 'turn', sound: 'chip', chips: true, speech: 'call' }
+      : { eventId: 'action', yourTurnId: 'turn', sound: 'check', checks: ['check:1'] };
+    assert.equal(sounds.playFeedback(feedback), true);
+    const bells = f.stats.oscillators;
+    assert.equal(bells.length, 3); assert.ok(bells.every(node => node.at === 0 && !node.stopped));
+    if (action === 'call') {
+      assert.equal(f.stats.sources.filter(node => node.buffer.cue === 'chips').length, 1);
+      assert.equal(f.stats.sources.filter(node => node.buffer.cue === 'call').length, 1);
+    } else assert.equal(f.stats.sources.filter(node => node.buffer.noise).length, 1);
+    assert.equal(sounds.playFeedback(feedback), false, 'repeated action and turn IDs remain silent');
+    assert.equal(f.stats.oscillators.length, 3);
+    sounds.dispose();
+  }
+});
+
+test('readiness IDs deduplicate independently of action IDs and do not throttle a different real turn', async () => {
+  const f = audioFixture(), sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => 1000 });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.playFeedback({ eventId: 'same-action', sound: 'chip', speech: 'call' });
+  const recordings = f.stats.sources.length;
+  assert.equal(sounds.playFeedback({ eventId: 'same-action', yourTurnId: 'turn:1', sound: 'chip', speech: 'call' }), true, 'duplicate action can carry newly ready turn');
+  assert.equal(f.stats.sources.length, recordings, 'the action is not replayed');
+  assert.equal(f.stats.oscillators.length, 3);
+  assert.equal(sounds.playFeedback({ eventId: 'same-action', yourTurnId: 'turn:1' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'same-action', yourTurnId: 'turn:2' }), true, 'no arbitrary 90 ms throttle on a different turn');
+  assert.equal(f.stats.oscillators.length, 6);
+  sounds.dispose();
+});
+
+test('legacy yourturn sound with a readiness ID rings once while retaining accompanying chips and speech', async () => {
+  const f = audioFixture(), sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => 1000 });
+  await sounds.unlock(); await sounds.preloadAudio();
+  const feedback = { eventId: 'legacy-action', yourTurnId: 'legacy-turn', sound: 'yourturn', chips: true, speech: 'call' };
+  assert.equal(sounds.playFeedback(feedback), true);
+  assert.equal(f.stats.oscillators.length, 3);
+  assert.ok(f.stats.oscillators.every(node => node.at === 0), 'bell does not wait behind the chip effect');
+  assert.deepEqual(f.stats.sources.map(node => node.buffer.cue), ['chips', 'call']);
+  assert.equal(sounds.playFeedback(feedback), false); assert.equal(f.stats.oscillators.length, 3);
+  sounds.dispose();
+});
+
+test('muted or hidden turn IDs are consumed without delayed replay after audio is enabled again', async () => {
+  for (const mode of ['muted', 'hidden']) {
+    const f = audioFixture(), sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher });
+    await sounds.unlock(); await sounds.preloadAudio();
+    if (mode === 'muted') sounds.setEnabled(false);
+    else { f.doc.visibilityState = 'hidden'; f.listeners.get('visibilitychange')(); }
+    assert.equal(sounds.playFeedback({ yourTurnId: 'missed-turn' }), false);
+    assert.equal(f.stats.oscillators.length, 0);
+    if (mode === 'muted') sounds.setEnabled(true);
+    else { f.doc.visibilityState = 'visible'; f.listeners.get('visibilitychange')(); }
+    await sounds.unlock();
+    assert.equal(sounds.playFeedback({ yourTurnId: 'missed-turn' }), false);
+    assert.equal(sounds.playFeedback({ yourTurnId: 'live-turn' }), true);
+    assert.equal(f.stats.oscillators.length, 3);
+    sounds.dispose();
+  }
+});
+
+test('later live events recover a transiently rejected resume with bounded retries and no stale action playback', async () => {
+  const f = audioFixture(); let clock = 1000, blocked = false;
+  class TransientContext extends f.AudioContext {
+    async resume() { if (blocked) { f.stats.resumes++; throw new Error('audio route temporarily unavailable'); } return super.resume(); }
+  }
+  const sounds = createTableSounds({ enabled: true, AudioContext: TransientContext, document: f.doc, fetch: f.fetcher, now: () => clock });
+  await sounds.unlock(); await sounds.preloadAudio();
+  const audio = f.stats.contexts[0]; blocked = true; audio.changeState('interrupted');
+  await Promise.resolve(); const attempts = f.stats.resumes;
+  for (let i = 0; i < 10; i++) { assert.equal(sounds.playFeedback({ eventId: `missed-${i}`, sound: 'chip' }), false); await Promise.resolve(); }
+  assert.equal(f.stats.resumes, attempts, 'live state updates cannot create a tight resume loop');
+  blocked = false; clock += 3100;
+  assert.equal(sounds.playFeedback({ eventId: 'repair-trigger', sound: 'chip' }), false, 'repair does not delay this event into a later action');
+  await Promise.resolve();
+  assert.equal(f.stats.resumes, attempts + 1);
+  assert.equal(sounds.playFeedback({ eventId: 'repair-trigger', sound: 'chip' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'future-live', sound: 'chip' }), true);
+  assert.equal(f.stats.sources.length, 1); sounds.dispose();
+});
+
+test('a missed audio statechange is recovered on the next live event without restarting old sounds', async () => {
+  const f = audioFixture(); let clock = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, fetch: f.fetcher, now: () => clock });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.playFeedback({ eventId: 'before-suspension', sound: 'chip' });
+  const previousSource = f.stats.sources.at(-1); clock += 1000;
+  f.stats.contexts[0].state = 'suspended'; // Browser reports state but omitted the event.
+  const attempts = f.stats.resumes;
+  assert.equal(sounds.playFeedback({ eventId: 'repair', sound: 'chip' }), false);
+  await Promise.resolve();
+  assert.equal(f.stats.resumes, attempts + 1);
+  assert.equal(previousSource.stopped, true, 'interrupted tail cannot resume with a later player');
+  assert.equal(sounds.playFeedback({ eventId: 'repair', sound: 'chip' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'new-live', sound: 'chip' }), true); sounds.dispose();
+});
+
+test('BFCache, focus and network restoration recover activated audio and remove their listeners on disposal', async () => {
+  for (const event of ['pageshow', 'focus', 'online']) {
+    const f = audioFixture(), lifecycle = new Map();
+    const win = { addEventListener: (type, listener) => lifecycle.set(type, listener), removeEventListener: type => lifecycle.delete(type) };
+    const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, window: win, fetch: f.fetcher });
+    await sounds.unlock(); await sounds.preloadAudio();
+    f.stats.contexts[0].state = 'suspended';
+    lifecycle.get(event)(); await Promise.resolve();
+    assert.equal(sounds.play('check'), true, event);
+    sounds.dispose(); assert.equal(lifecycle.size, 0);
+  }
+});
+
+test('failed recordings are warmed again by later live events without a tap or replaying missed bets', async () => {
+  const f = audioFixture(); let failed = true, clock = 1000;
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, now: () => clock,
+    fetch: async (...args) => failed ? { ok: false } : f.fetcher(...args) });
+  await sounds.unlock(); assert.equal(await sounds.preloadAudio(), false);
+  assert.equal(sounds.playFeedback({ eventId: 'old-bet', sound: 'chip', speech: 'allin' }), false);
+  clock += 3100; failed = false;
+  assert.equal(sounds.playFeedback({ eventId: 'warming-bet', sound: 'chip', speech: 'allin' }), false);
+  await sounds.preloadAudio();
+  assert.equal(f.stats.sources.length, 0, 'successful download does not play prior actions');
+  assert.equal(sounds.playFeedback({ eventId: 'warming-bet', sound: 'chip', speech: 'allin' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'fresh-bet', sound: 'chip', speech: 'allin' }), true);
+  assert.deepEqual(f.stats.sources.map(node => node.buffer.cue), ['chips', 'allin']); sounds.dispose();
+});
+
+test('an unresolved policy resume cannot accumulate automatic retries and a real gesture supersedes it', async () => {
+  const f = audioFixture(); let clock = 1000, pending = false, release;
+  class PendingContext extends f.AudioContext {
+    resume() {
+      if (!pending) return super.resume();
+      f.stats.resumes++;
+      return new Promise(resolve => { release = () => { this.changeState('running'); resolve(); }; });
+    }
+  }
+  const sounds = createTableSounds({ enabled: true, AudioContext: PendingContext, document: f.doc, fetch: f.fetcher, now: () => clock });
+  await sounds.unlock(); await sounds.preloadAudio();
+  pending = true; f.stats.contexts[0].changeState('interrupted');
+  const resumes = f.stats.resumes;
+  for (let i = 0; i < 12; i++) { clock += 4000; sounds.playFeedback({ eventId: `pending-${i}`, sound: 'chip' }); }
+  assert.equal(f.stats.resumes, resumes, 'one unresolved automatic promise, not one per incoming action');
+  pending = false; assert.equal(await sounds.unlock(), true);
+  release(); await Promise.resolve();
+  assert.equal(f.stats.sources.length, 0);
+  assert.equal(sounds.playFeedback({ eventId: 'pending-11', sound: 'chip' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'after-gesture', sound: 'chip' }), true); sounds.dispose();
+});
+
+test('pagehide stops old sources even without visibilitychange and pageshow resumes only future cues', async () => {
+  const f = audioFixture(), lifecycle = new Map();
+  const win = { addEventListener: (type, listener) => lifecycle.set(type, listener), removeEventListener: type => lifecycle.delete(type) };
+  const sounds = createTableSounds({ enabled: true, AudioContext: f.AudioContext, document: f.doc, window: win, fetch: f.fetcher });
+  await sounds.unlock(); await sounds.preloadAudio();
+  sounds.playFeedback({ eventId: 'before-pagehide', sound: 'chip', speech: 'raise' });
+  const playing = [...f.stats.sources];
+  lifecycle.get('pagehide')();
+  assert.ok(playing.every(node => node.stopped));
+  assert.equal(sounds.play('check'), false);
+  lifecycle.get('pageshow')(); await Promise.resolve();
+  assert.equal(sounds.playFeedback({ eventId: 'before-pagehide', sound: 'chip', speech: 'raise' }), false);
+  assert.equal(sounds.playFeedback({ eventId: 'new-page-check', sound: 'check' }), true);
+  sounds.dispose(); assert.equal(lifecycle.size, 0);
 });

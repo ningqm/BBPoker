@@ -67,7 +67,7 @@ function conserved(f) {
   const committed = room.hand?.status === 'playing' ? room.hand.players.reduce((sum, player) => sum + player.contributed, 0) : 0;
   assert.ok(members.every(m => m.stack >= 0 && m.cashedOut >= 0), 'no player can become overdrawn');
   assert.ok(reserves.every(n => Number.isSafeInteger(n) && n >= 0), 'reserves are funded nonnegative integers');
-  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut, 0) + reserves.reduce((sum, n) => sum + n, 0) + committed,
+  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + reserves.reduce((sum, n) => sum + n, 0) + committed,
     members.reduce((sum, m) => sum + m.totalBuyIn, 0), 'all buy-ins remain in stacks, reserves, pots or cashouts');
 }
 const fishRows = f => f.store.data.ledger.filter(row => row.type === 'squidSettlement');
@@ -89,8 +89,8 @@ for (const mode of ['normal', 'unlimited']) test(`midround oracle: ${mode} adds 
   assert.deepEqual(f.room.mini.squid.participants, ['A', 'B', 'C', 'D', 'E']);
   assert.equal(f.room.mini.squid.tokenBudget, oldBudget + 2);
   assert.deepEqual(counts(f), { A: 1, B: 0, C: 0, D: 0, E: 0 });
-  assert.equal(f.room.mini.squid.reserves.A, oldBudget * 4, 'a fish holder needs no increased loss reserve');
-  for (const id of ['B', 'C', 'D', 'E']) assert.equal(f.room.mini.squid.reserves[id], (oldBudget + 2) * 4);
+  assert.equal(f.room.mini.squid.reserves.A, undefined, 'a fish holder needs no increased loss reserve');
+  for (const id of ['B', 'C', 'D', 'E']) assert.equal(f.room.mini.squid.reserves[id], undefined);
   assert.deepEqual(pokerPosts(f.room.hand, 'D').map(row => [row.type, row.amount]), [['bigBlind', 2]], 'natural BB is not also charged an entry BB');
   assert.deepEqual(pokerPosts(f.room.hand, 'E').map(row => [row.type, row.amount]), [['entryBlind', 2]], 'out-of-position newcomer posts exactly one live BB');
   assert.deepEqual(f.store.data.hands[0], archive); assert.equal(f.room.endsAt, oldEnd); conserved(f);
@@ -100,7 +100,7 @@ for (const mode of ['normal', 'unlimited']) test(`midround oracle: ${mode} nine-
   const f = fixture(t, { count: 9, mode }); f.win('A'); f.cmd('A', 'stand');
   const departedCash = f.room.members.A.cashedOut;
   const archive = structuredClone(f.store.data.hands[0]);
-  assert.equal(archive.miniBefore.squid.rulesVersion, 5, 'the pre-admission hand retains its original rules version');
+  assert.equal(archive.miniBefore.squid.rulesVersion, 7, 'the pre-admission hand retains its original rules version');
   f.sit('J', 0); f.start();
   assert.equal(f.room.hand.players.length, 9); assert.ok(!f.room.hand.players.some(p => p.id === 'A'));
   assert.equal(f.room.mini.squid.participants.length, 10);
@@ -118,7 +118,7 @@ for (const mode of ['normal', 'unlimited']) test(`midround oracle: ${mode} nine-
   const expected = mode === 'normal' ? { A: 4, B: 4, C: 4, D: 4, E: 4, F: 4, G: 4, H: 4, I: -36, J: 4 }
     : { A: 32, B: -52, C: -52, D: -52, E: -52, F: -52, G: -52, H: -52, I: -52, J: 384 };
   assert.deepEqual(actual, expected); assert.equal(fishRows(f).length, 10);
-  assert.ok(fishRows(f).every(row => row.rulesVersion === 6), 'every expanded-round settlement row identifies the admission rules');
+  assert.ok(fishRows(f).every(row => row.rulesVersion === 7), 'every expanded-round settlement row identifies the admission rules');
   assert.equal(fishRows(f).reduce((sum, row) => sum + row.amount, 0), 0);
   assert.deepEqual(f.store.data.hands[0], archive, 'later identities cannot rewrite an old archived hand');
   assert.equal(directRecordLibrary(f.store.data, 'A').opponents.summary.squid.net, expected.A);
@@ -127,14 +127,14 @@ for (const mode of ['normal', 'unlimited']) test(`midround oracle: ${mode} nine-
   assert.deepEqual(f.store.data.ledger, before, 'repeated finish cannot pay the round twice'); conserved(f);
 });
 
-test('midround oracle: an absent no-fish player cannot fund a newcomer from already cashed-out chips', t => {
+test('midround oracle: an absent zero-fish identity retains liability without blocking a new funded player', t => {
   const f = fixture(t, { count: 9 }); f.win('A'); f.cmd('I', 'stand', f.consent('I'));
-  const cash = f.room.members.I.cashedOut, reserve = structuredClone(f.room.mini.squid.reserves);
+  const cash = f.room.members.I.cashedOut;
   f.sit('J', 8); f.start();
-  assert.equal(f.room.hand.players.length, 8); assert.ok(!f.room.hand.players.some(p => p.id === 'J'));
-  assert.equal(f.room.mini.squid.tokenBudget, 8); assert.equal(f.room.mini.squid.participants.length, 9);
-  assert.equal(f.room.members.I.cashedOut, cash); assert.deepEqual(f.room.mini.squid.reserves, reserve);
-  assert.equal(f.room.members.J.totalBuyIn, 200); assert.equal(f.room.members.J.stack, 200);
+  assert.equal(f.room.hand.players.length, 9); assert.ok(f.room.hand.players.some(p => p.id === 'J'));
+  assert.equal(f.room.mini.squid.tokenBudget, 9); assert.equal(f.room.mini.squid.participants.length, 10);
+  assert.equal(f.room.members.I.cashedOut, cash); assert.deepEqual(f.room.mini.squid.reserves, {});
+  assert.equal(f.room.members.J.totalBuyIn, 200);
   f.win('B'); conserved(f);
 });
 
@@ -197,31 +197,25 @@ test('midround oracle: an admission queued during a live hand survives restart a
   assert.equal(f.room.members.D.totalBuyIn, 200); conserved(f);
 });
 
-test('midround oracle: an unaffordable newcomer stays out without charging others or blocking the old hand', t => {
+test('midround oracle: a newcomer below maximum squid liability can still join with a live blind', t => {
   const f = fixture(t, { mode: 'unlimited', unitBB: 20, buyinBB: 500 }); f.win('A');
-  const reserves = structuredClone(f.room.mini.squid.reserves); f.sit('D', 3); f.start();
-  assert.equal(f.room.hand.players.length, 3); assert.ok(!f.room.hand.players.some(p => p.id === 'D'));
-  assert.equal(f.room.mini.squid.tokenBudget, 6); assert.deepEqual(f.room.mini.squid.reserves, reserves);
-  assert.equal(f.room.members.D.stack, 200, '200 available cannot fund the new 7 * 40 reserve plus a live blind');
+  f.sit('D', 3); f.start();
+  assert.equal(f.room.hand.players.length, 4); assert.ok(f.room.hand.players.some(p => p.id === 'D'));
+  assert.equal(f.room.mini.squid.tokenBudget, 7); assert.deepEqual(f.room.mini.squid.reserves, {});
+  assert.equal(f.room.members.D.stack, 198, '200 chips only pays the natural 2-point BB, never the 280-point potential squid loss');
   f.win('A'); f.cmd('D', 'buyin', { amountBB: 100 });
-  for (let attempt = 0; !f.room.mini.squid.participants.includes('D'); attempt++) {
-    assert.ok(attempt < 4, 'funded posting newcomer eventually reaches a legal entry position');
-    f.start(); if (!f.room.mini.squid.participants.includes('D')) f.win('A');
-  }
-  assert.equal(f.room.mini.squid.tokenBudget, 7); assert.equal(f.room.mini.squid.reserves.D, 280);
   assert.equal(f.room.members.D.totalBuyIn, 400); conserved(f);
 });
 
-test('midround oracle: one unaffordable newcomer cannot block a funded newcomer and later adds only its own fish', t => {
+test('midround oracle: entrants with unequal stacks join together without reserve barriers or duplicate fish', t => {
   const f = fixture(t, { mode: 'unlimited', unitBB: 20, buyinBB: 500 }); f.win('A');
   f.sit('D', 3, { amountBB: 500 }); f.sit('E', 4); f.start();
-  assert.ok(f.room.hand.players.some(p => p.id === 'D')); assert.ok(!f.room.hand.players.some(p => p.id === 'E'));
-  assert.equal(f.room.mini.squid.tokenBudget, 7); assert.equal(f.room.mini.squid.reserves.D, 280);
-  assert.equal(f.room.members.E.stack, 200); assert.equal(f.room.mini.squid.reserves.E, undefined);
+  assert.ok(f.room.hand.players.some(p => p.id === 'D')); assert.ok(f.room.hand.players.some(p => p.id === 'E'));
+  assert.equal(f.room.mini.squid.tokenBudget, 8); assert.deepEqual(f.room.mini.squid.reserves, {});
+  assert.equal(f.room.members.E.stack, 198);
   f.win('A'); f.cmd('E', 'buyin', { amountBB: 100 }); f.start();
   assert.ok(f.room.hand.players.some(p => p.id === 'E')); assert.equal(f.room.mini.squid.tokenBudget, 8);
-  for (const id of ['B', 'C', 'D', 'E']) assert.equal(f.room.mini.squid.reserves[id], 320);
-  assert.equal(f.room.mini.squid.reserves.A, 240); assert.equal(f.room.members.E.totalBuyIn, 400); conserved(f);
+  assert.deepEqual(f.room.mini.squid.reserves, {}); assert.equal(f.room.members.E.totalBuyIn, 400); conserved(f);
 });
 
 test('midround oracle: funded newcomers resume one online original while absent zero-fish identities retain liability', t => {
@@ -231,13 +225,13 @@ test('midround oracle: funded newcomers resume one online original while absent 
   assert.deepEqual(f.room.hand.players.map(p => p.id), ['A', 'D']);
   assert.equal(f.room.mini.squid.tokenBudget, 7);
   for (const id of ['B', 'C']) {
-    assert.equal(f.room.members[id].stack, before[id] - 4);
-    assert.equal(f.room.mini.squid.reserves[id], 28);
+    assert.equal(f.room.members[id].stack, before[id]);
+    assert.equal(f.room.mini.squid.reserves[id], undefined);
   }
   f.win('A'); f.start();
   assert.deepEqual(f.room.hand.players.map(p => p.id), ['A', 'D', 'E']);
   assert.equal(f.room.mini.squid.tokenBudget, 8);
-  for (const id of ['B', 'C']) assert.equal(f.room.members[id].stack, before[id] - 8);
+  for (const id of ['B', 'C']) assert.equal(f.room.members[id].stack, before[id]);
   assert.deepEqual(f.room.mini.squid.participants, ['A', 'B', 'C', 'D', 'E']); conserved(f);
 });
 
@@ -258,17 +252,17 @@ test('midround oracle: the next round resets admissions while preserving the pri
   const f = fixture(t); f.win('A'); f.sit('D', 3); f.start(); f.win('D'); f.start(); f.win('B');
   assert.equal(f.room.mini.squid.active, false); assert.equal(f.room.mini.squid.admissions.length, 1);
   const archive = structuredClone(f.store.data.hands), settlement = structuredClone(fishRows(f));
-  assert.equal(settlement.length, 4); assert.ok(settlement.every(row => row.rulesVersion === 6));
+  assert.equal(settlement.length, 4); assert.ok(settlement.every(row => row.rulesVersion === 7));
   f.start();
   assert.equal(f.room.mini.squid.round, 2); assert.equal(f.room.mini.squid.tokenBudget, 3);
-  assert.equal(f.room.mini.squid.rulesVersion, 5, 'a fresh round without mid-round admission uses the original rules');
-  assert.equal(f.room.hand.miniBefore.squid.rulesVersion, 5);
+  assert.equal(f.room.mini.squid.rulesVersion, 7, 'a fresh round without mid-round admission uses the original rules');
+  assert.equal(f.room.hand.miniBefore.squid.rulesVersion, 7);
   assert.deepEqual(f.room.mini.squid.admissions, []); assert.deepEqual(f.room.hand.miniBefore.squid.admissions, []);
   assert.deepEqual(counts(f), { A: 0, B: 0, C: 0, D: 0 });
   assert.deepEqual(f.store.data.hands, archive); assert.deepEqual(fishRows(f), settlement); conserved(f);
   f.win('A'); f.start(); f.win('B'); f.start(); f.win('C');
   const nextSettlement = fishRows(f).slice(settlement.length);
-  assert.equal(nextSettlement.length, 4); assert.ok(nextSettlement.every(row => row.rulesVersion === 5));
+  assert.equal(nextSettlement.length, 4); assert.ok(nextSettlement.every(row => row.rulesVersion === 7));
   assert.deepEqual(fishRows(f).slice(0, settlement.length), settlement, 'new-round settlement cannot change old rule versions or amounts');
   assert.deepEqual(f.store.data.hands.slice(0, archive.length), archive, 'later rounds cannot rewrite earlier hand versions or snapshots');
   conserved(f);

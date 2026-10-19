@@ -29,7 +29,7 @@ function checkToRiver(f) {
 }
 
 test('fixed timing rejects configuration influence and derives full-session cards from duration', () => {
-  for (const [durationMinutes, expected] of [[30, 3], [45, 6], [60, 6], [90, 9], [720, 72]]) {
+  for (const [durationMinutes, expected] of [[15, 3], [30, 3], [45, 6], [60, 6], [90, 9], [720, 72]]) {
     for (const obsolete of [0, 99, -5, null, 'invalid']) {
       const settings = settingsFor({ durationMinutes, actionSeconds: obsolete, timeBankCards: obsolete, timeBankSeconds: obsolete });
       assert.equal(settings.actionSeconds, 20); assert.equal(settings.timeBankSeconds, 30); assert.equal(settings.timeBankCards, expected);

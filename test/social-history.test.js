@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -128,7 +129,7 @@ test('favorites are personal, bounded and available only for completed participa
 
 test('HTTP chat/SSE and personal favorites survive encrypted restart without exposing another player cards', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-social-'));
-  let app = createApp({ dataDir: directory, allowGuestSessions: true });
+  let app = createApp({ dataDir: directory });
   const start = () => new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve)); await start();
   const base = () => `http://127.0.0.1:${app.server.address().port}`;
   const api = async (user, path, body, expected = 200) => {
@@ -137,7 +138,7 @@ test('HTTP chat/SSE and personal favorites survive encrypted restart without exp
   };
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const users = [];
-  for (const name of ['甲', '乙', '旁观', '局外']) users.push(await api(null, '/api/session', { name }, 201));
+  for (const name of ['甲', '乙', '旁观', '局外']) users.push(seedLegacyAccount(app, { name }));
   const room = (await api(users[0], '/api/rooms', { settings: { approvalRequired: false } }, 201)).room;
   for (const user of users.slice(1, 3)) await api(user, `/api/rooms/${room.code}/join`, { invite: room.invite });
   const messageId = randomUUID(), chatPath = `/api/rooms/${room.code}/chat`;
@@ -180,7 +181,7 @@ test('HTTP chat/SSE and personal favorites survive encrypted restart without exp
   const bytes = readFileSync(join(directory, 'table.enc'));
   assert.equal(bytes.subarray(0, 4).toString(), 'TZ01'); assert.equal(bytes.includes(Buffer.from('私有房间聊天测试')), false); assert.equal(bytes.includes(Buffer.from('favoriteHands')), false);
   const key = readFileSync(join(directory, 'key'));
-  await app.close(); app = createApp({ dataDir: directory, allowGuestSessions: true }); await start();
+  await app.close(); app = createApp({ dataDir: directory }); await start();
   assert.deepEqual(readFileSync(join(directory, 'key')), key);
   assert.deepEqual((await api(users[0], `/api/rooms/${room.code}`)).chat, [message, emoji]);
   assert.equal((await api(users[0], '/api/hands?favorites=1')).hands[0].id, id);

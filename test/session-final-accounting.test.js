@@ -95,7 +95,7 @@ for (const mode of ['holdem', 'normal', 'unlimited']) test(`closed nine-player s
       const member = f.member(i), row = session.players.find(p => p.id === f.id(i)), projected = state.players.find(p => p.id === f.id(i));
       const expectedNet = poker[i] + fish[i], expectedReturn = buyins[i] + expectedNet;
       assert.equal(member.seat, null); assert.equal(member.stack, 0); assert.equal(member.totalBuyIn, buyins[i]);
-      assert.equal(member.cashedOut, expectedReturn, `player${i} actual accumulated returns include old cashouts and final reserve settlement`);
+      assert.equal(member.cashedOut - (member.squidDebt ?? 0), expectedReturn, `player${i} net returns include actual cashouts minus unpaid squid settlement`);
       assert.equal(row.totalBuyIn, buyins[i]); assert.equal(row.holdemNet, poker[i]); assert.equal(row.miniNet, fish[i]);
       assert.equal(row.net, expectedNet); assert.equal(row.totalBuyIn + row.net, expectedReturn);
       assert.equal(row.totalBuyInBB, buyins[i] / 10); assert.equal(row.netBB, expectedNet / 10);
@@ -104,7 +104,7 @@ for (const mode of ['holdem', 'normal', 'unlimited']) test(`closed nine-player s
       assert.equal(f.store.data.ledger.filter(e => e.type === 'buyin' && e.playerId === f.id(i)).reduce((sum, e) => sum + e.amount, 0), buyins[i]);
       const personal = f.service.sessions(f.id(i)).sessions[0]; assert.equal(personal.meNet, expectedNet);
     }
-    assert.equal(Object.values(f.room.members).reduce((sum, m) => sum + m.cashedOut, 0), 14000);
+    assert.equal(Object.values(f.room.members).reduce((sum, m) => sum + m.cashedOut - (m.squidDebt ?? 0), 0), 14000);
     assert.throws(() => f.service.sessionFor(f.id(10), f.room.code), error => error.status === 403);
   }
 });

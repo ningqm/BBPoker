@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ for (const mode of ['normal', 'unlimited']) test(`${mode} midround admission: HT
   let clock = Date.now();
   t.mock.method(Date, 'now', () => clock);
   const directory = mkdtempSync(join(tmpdir(), 'bbpoker-midround-api-'));
-  const app = createApp({ dataDir: directory, allowGuestSessions: true, actionTickMs: 1000000 });
+  const app = createApp({ dataDir: directory, actionTickMs: 1000000 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await app.close(); rmSync(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -21,7 +22,7 @@ for (const mode of ['normal', 'unlimited']) test(`${mode} midround admission: HT
     const value = await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   const people = [];
-  for (const name of ['Host', 'Existing A', 'Existing B', 'Newcomer']) people.push(await request('/api/session', null, { name }, 201));
+  for (const name of ['Host', 'Existing A', 'Existing B', 'Newcomer']) people.push(seedLegacyAccount(app, { name }));
   const created = (await request('/api/rooms', people[0], { settings: { squid: true, squidMode: mode, maxPlayers: 9 } }, 201)).room;
   const code = created.code, room = () => app.store.data.rooms[code], newcomer = people[3].user.id;
   const action = async (who, type, extra = {}, status = 200)  => {
@@ -70,7 +71,7 @@ for (const mode of ['normal', 'unlimited']) test(`${mode} midround admission: HT
   assert.equal(after.mini.squid.participants.length, 4);
   assert.equal(after.mini.squid.counts[newcomer], 0);
   assert.equal(after.mini.squid.tokenBudget, initialBudget + 1);
-  assert.equal(after.mini.squid.reserves[newcomer], (initialBudget + 1) * 20);
+  assert.equal(after.mini.squid.reserves[newcomer], undefined);
   assert.equal(after.hand.players.filter(p => p.id === newcomer).length, 1);
   assert.equal(after.hand.players.find(p => p.id === newcomer).contributed, 10, 'natural BB must not also post an extra entry BB');
   await request(`/api/rooms/${code}/action`, people[0], start);

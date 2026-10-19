@@ -64,6 +64,24 @@ test('a freshly busted seated player gets exactly one shared extra five seconds 
   assert.equal(f.store.data.hands.length, 1);
 });
 
+for (const squidMode of [null, 'normal', 'unlimited']) test(`five-player ${squidMode ?? 'holdem'} table continues with four funded players after one busts`, t => {
+  const f = fixture(t, { count: 5, settings: { durationMinutes: 15, squid: Boolean(squidMode), ...(squidMode ? { squidMode } : {}), bombPot: true } });
+  const ended = f.bust([4]), first = f.room.hand.id, busted = f.users[4].id;
+  assert.equal(f.state(4).autoDeal.paused, false);
+  f.advance(5000); f.service.tick(f.room);
+  assert.equal(f.room.hand.id, first); assert.equal(f.room.nextHandAt, ended + 10000);
+  f.advance(4999); f.service.tick(f.room); assert.equal(f.room.hand.id, first);
+  f.advance(1); f.service.tick(f.room);
+  assert.equal(f.room.handNumber, 2); assert.equal(f.room.hand.players.length, 4);
+  assert.equal(f.room.hand.players.some(p => p.id === busted), false);
+  assert.equal(f.state(4).autoDeal.paused, false);
+  assert.equal(f.room.members[busted].seat, 4, 'busted player remains seated and may rebuy for a later hand');
+  f.command(4, 'buyin', { amountBB: 100 });
+  assert.equal(f.room.handNumber, 2); assert.equal(f.room.hand.players.some(p => p.id === busted), false);
+  assert.equal(f.room.members[busted].stack, 0, 'a mid-hand top-up cannot join the current pot');
+  assert.equal(f.service.pendingBuyIn(f.room.members[busted]), 1000, 'top-up is queued for the next hand');
+});
+
 test('a buy-in during the original result hold never shortens five seconds or adds a fresh five seconds', t => {
   const f = fixture(t), ended = f.bust(), hand = f.room.hand.id;
   f.advance(3000); f.command(1, 'buyin', { amountBB: 100 });

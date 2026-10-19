@@ -94,7 +94,7 @@ test('active-hand top-up opens immediately with queued-only guidance and cap acc
 test('header top-up remains available while playing, shows pending separately, and protects unavailable states',()=>{
   const h=harness();let html=h.roomView();assert.match(html,/data-topup-button[^>]*>.*?补码/);assert.match(html,/筹码 120 BB/);assert.doesNotMatch(html,/data-topup-button[^>]*disabled/);
   h.state.room.players[0].pendingBuyIn=1500;html=h.roomView();assert.match(html,/待加 150 BB · 下一手/);assert.doesNotMatch(html,/筹码 270 BB/);
-  for(const status of ['busy','offline','resync','departure']){const x=harness();if(status==='busy')x.state.busy=true;if(status==='offline')x.state.connected=false;if(status==='resync')x.state.feedbackResync=true;if(status==='departure')x.state.room.players[0].pendingDeparture='stand';assert.match(x.roomView(),/data-topup-button[^>]*disabled/);}
+  for(const status of ['busy','offline','resync','departure','leave']){const x=harness();if(status==='busy')x.state.busy=true;if(status==='offline')x.state.connected=false;if(status==='resync')x.state.feedbackResync=true;if(status==='departure')x.state.room.players[0].pendingDeparture='stand';if(status==='leave')x.state.room.players[0].pendingDeparture='leave';assert.match(x.roomView(),/data-topup-button[^>]*disabled/);}
   h.state.room.players[0].seat=null;assert.doesNotMatch(h.roomView(),/data-topup-button/);h.state.room.players[0].seat=0;h.state.room.status='closed';assert.doesNotMatch(h.roomView(),/data-topup-button/);
 });
 
@@ -115,6 +115,6 @@ test('a second device consuming cap marks an oversized draft invalid and editing
 });
 
 test('seat departure and table closure close only the matching top-up dialog',()=>{
-  for(const reason of ['stand','gone','closed']){const h=harness();h.buyinModal();const form=formFrom(h.modals.at(-1).body);h.attachForm(form);if(reason==='stand')h.state.room.players[0].pendingDeparture='stand';if(reason==='gone')h.state.room.players[0].seat=null;if(reason==='closed')h.state.room.status='closed';h.refreshBuyinStatus(h.state.room);assert.equal(h.state.modal,null);assert.equal(h.calls.length,0);}
+  for(const reason of ['stand','leave','gone','closed']){const h=harness();h.buyinModal();const form=formFrom(h.modals.at(-1).body);h.attachForm(form);if(reason==='stand')h.state.room.players[0].pendingDeparture='stand';if(reason==='leave')h.state.room.players[0].pendingDeparture='leave';if(reason==='gone')h.state.room.players[0].seat=null;if(reason==='closed')h.state.room.status='closed';h.refreshBuyinStatus(h.state.room);assert.equal(h.state.modal,null);assert.equal(h.calls.length,0);}
   const h=harness();h.buyinModal();const modal=h.state.modal,form=formFrom(modal.body);h.attachForm(form);h.refreshBuyinStatus({...h.state.room,code:'other-room',status:'closed'});assert.equal(h.state.modal,modal);
 });

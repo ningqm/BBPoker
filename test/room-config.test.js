@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {reusableRoomSettings} from '../public/room-config.js';
+import {reusableRoomSettings, ROOM_DURATION_CHOICES, normalizeRoomDuration} from '../public/room-config.js';
 import {settingsFor,DEFAULTS} from '../src/room.js';
 const defaults={maxPlayers:9,smallBlind:5,bigBlind:10,minBuyInBB:100,maxBuyInBB:1000,maxTotalBuyInBB:null,actionSeconds:20,squid:false,squidMode:'normal',squidExtraTokens:3,squidUnitBB:2,bombPot:false,bombIntervalMinutes:10,bombAnteBB:2,durationMinutes:60,timeBankCards:6,timeBankSeconds:30};
 test('reusing a room copies all supported options but none of its private or running state',()=>{
@@ -47,4 +47,15 @@ test('reused unlimited settings retain mode and extra fish without reinterpretin
   assert.equal(reusableRoomSettings({squid:true},defaults).squidMode,'normal');
   for(const patch of [{squidMode:'infinite'},{squidMode:42},{squidExtraTokens:-1},{squidExtraTokens:101},{squidExtraTokens:1.5}])assert.throws(()=>reusableRoomSettings({...input,...patch},defaults));
   assert.equal(input.squidExtraTokens,0);
+});
+
+
+test('reused legacy durations round upward to the new choices without editing their original room',()=>{
+  assert.deepEqual(ROOM_DURATION_CHOICES.slice(0,6),[15,30,45,60,90,120]);assert.equal(ROOM_DURATION_CHOICES.at(-1),720);
+  for(const [duration,expected] of [[15,15],[30,30],[31,45],[45,45],[46,60],[60,60],[61,90],[75,90],[91,120],[719,720],[720,720]]){
+    const old={...defaults,durationMinutes:duration,timeBankCards:999},copy=structuredClone(old),result=reusableRoomSettings(old,defaults);
+    assert.equal(normalizeRoomDuration(duration),expected);assert.equal(result.durationMinutes,expected);
+    assert.equal(result.timeBankCards,3*Math.ceil(expected/30));assert.doesNotThrow(()=>settingsFor(result));assert.deepEqual(old,copy);
+  }
+  for(const duration of [0,14,721,15.5,Infinity,NaN,'15',null])assert.throws(()=>reusableRoomSettings({durationMinutes:duration},defaults));
 });

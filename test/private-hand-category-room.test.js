@@ -184,3 +184,104 @@ test('legacy result labels normalize for live views, history and exports without
   assert.deepEqual(f.store.data, frozen, 'display normalization must not rewrite persistent cards, results or balances');
   assert.equal(archived.result.handNames[viewerId], '皇家同花顺');
 });
+
+function completedFlopFold(f) {
+  const ownId = f.users[0].id;
+  f.finishStreet(); f.ready();
+  while (f.hand.actingId !== ownId) f.act('check');
+  f.act('fold'); f.tick();
+  assert.equal(f.hand.status, 'complete');
+  assert.equal(f.hand.result.showdown, false);
+  assert.equal(f.hand.board.length, 3);
+  return ownId;
+}
+
+const displayedCategory = (f, owner = f.users[0].id, viewer = owner, service = f.service, room = f.room) =>
+  service.state(room, viewer).players.find(p => p.id === owner).displayHandCategory;
+
+test('a folded owner sees the improved rabbit category only after public reveal; actual category and hidden opponents stay unchanged', t => {
+  const f = fixture(t, 2), observerId = f.users[2].id;
+  assert.equal(displayedCategory(f), null, 'the initial deal has no supplemental category');
+  const ownId = completedFlopFold(f);
+  assert.equal(f.category(ownId), '一对');
+  assert.equal(displayedCategory(f), null, 'pending rabbit cards must not be evaluated ahead of their reveal');
+  assert.deepEqual(f.hand.rabbit.board, f.hand.board);
+  f.tick();
+  assert.equal(displayedCategory(f), '葫芦');
+  assert.equal(f.category(ownId), '一对');
+  assert.deepEqual(f.hand.board, ['Kc', '2d', '7h']);
+  for (const viewer of f.users.slice(1)) assert.equal(displayedCategory(f, ownId, viewer.id), null);
+  f.command(ownId, 'show', { indices: [0] });
+  assert.equal(displayedCategory(f, ownId, observerId), null);
+  f.command(ownId, 'show', { indices: [0, 1] });
+  assert.equal(displayedCategory(f, ownId, observerId), null, 'folded opponents retain the existing category privacy gate even after voluntary reveal');
+  assert.equal(displayedCategory(f), '葫芦');
+});
+
+test('a rabbit winner exposes a supplemental category to others only when both hole cards are public', t => {
+  const f = fixture(t, 2), winnerId = f.users[1].id, observerId = f.users[2].id;
+  completedFlopFold(f); f.tick();
+  assert.equal(f.category(winnerId), '一对');
+  assert.equal(displayedCategory(f, winnerId), '两对');
+  assert.equal(displayedCategory(f, winnerId, observerId), null);
+  f.command(winnerId, 'show', { indices: [0] });
+  const single = f.service.state(f.room, observerId).players.find(p => p.id === winnerId);
+  assert.deepEqual(single.cards, ['As', null]);
+  assert.equal(single.handCategory, null);
+  assert.equal(single.displayHandCategory, null, 'a category must not reveal information about the second hidden card');
+  f.command(winnerId, 'show', { indices: [1] });
+  assert.equal(displayedCategory(f, winnerId, observerId), '两对');
+  assert.equal(f.category(winnerId, observerId), '一对');
+});
+
+test('legacy partial rabbit reveals and service reconstruction use only the persisted visible prefix', t => {
+  const f = fixture(t, 2), ownId = completedFlopFold(f);
+  // Simulate a persisted v1 record that had revealed the turn, but not the river.
+  Object.assign(f.hand.rabbit, { version: 1, board: [...f.hand.board, 'Qc'], indices: [f.hand.deck.indexOf('Qc')], active: true });
+  assert.equal(displayedCategory(f), '两对', 'the hidden king on the river must not turn this into a full house yet');
+  assert.equal(f.category(ownId), '一对');
+  const partialData = structuredClone(f.store.data), restored = new RoomService({ data: partialData });
+  assert.equal(displayedCategory(f, ownId, ownId, restored, partialData.rooms[f.room.code]), '两对');
+  f.tick();
+  assert.equal(f.hand.rabbit.board.length, 5);
+  assert.equal(displayedCategory(f), '葫芦');
+  const fullData = structuredClone(f.store.data), restoredFull = new RoomService({ data: fullData });
+  assert.equal(displayedCategory(f, ownId, ownId, restoredFull, fullData.rooms[f.room.code]), '葫芦');
+  assert.equal(f.category(ownId, ownId, restoredFull, fullData.rooms[f.room.code]), '一对');
+});
+
+test('supplemental category projections cannot rewrite settlement, ledger, equities or archived categories', t => {
+  const f = fixture(t, 2), ownId = completedFlopFold(f);
+  const immutableResult = structuredClone({ board: f.hand.board, log: f.hand.log, result: f.hand.result,
+    equityFrames: f.hand.equityFrames, endingStacks: f.hand.endingStacks, ledger: f.store.data.ledger });
+  f.tick();
+  const before = structuredClone(f.store.data);
+  for (const viewer of f.users) {
+    const view = f.service.state(f.room, viewer.id);
+    assert.equal(view.players.find(p => p.id === ownId).displayHandCategory, viewer.id === ownId ? '葫芦' : null);
+  }
+  assert.deepEqual(f.store.data, before, 'reading display-only categories must be a pure projection');
+  assert.deepEqual({ board: f.hand.board, log: f.hand.log, result: f.hand.result,
+    equityFrames: f.hand.equityFrames, endingStacks: f.hand.endingStacks, ledger: f.store.data.ledger }, immutableResult);
+  for (const h of [f.hand, ...f.store.data.hands]) for (const p of h.players)
+    assert.equal(Object.hasOwn(p, 'displayHandCategory'), false, 'hypothetical display categories must never become persisted hand data');
+});
+
+test('supplemental categories reject mismatched, unextended and non-rabbit boards', t => {
+  const f = fixture(t, 2);
+  completedFlopFold(f); f.tick();
+  const rabbit = structuredClone(f.hand.rabbit);
+  for (const changed of [
+    { ...rabbit, originalCount: 0 },
+    { ...rabbit, board: ['Ac', ...rabbit.board.slice(1)] },
+    { ...rabbit, board: [...f.hand.board] },
+    { ...rabbit, board: rabbit.board.slice(0, 2) },
+    { ...rabbit, board: [...rabbit.board, '3d'] },
+  ]) {
+    f.hand.rabbit = changed;
+    assert.equal(displayedCategory(f), null);
+  }
+  f.hand.rabbit = rabbit;
+  f.hand.result.showdown = true;
+  assert.equal(displayedCategory(f), null, 'a real showdown cannot acquire a hypothetical rabbit category');
+});

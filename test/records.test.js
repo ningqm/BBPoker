@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import test from 'node:test';
 import { readyRoomAction } from './helpers/room-clock.js';
 import assert from 'node:assert/strict';
@@ -127,11 +128,11 @@ test('invalid record filters and cursor/limit values fail explicitly rather than
 
 test('HTTP records require login and room membership, reject malformed filters, and preserve folded-card privacy',async t=>{
   let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
-  const directory=mkdtempSync(join(tmpdir(),'bbpoker-records-')),app=createApp({dataDir:directory,allowGuestSessions:true});
+  const directory=mkdtempSync(join(tmpdir(),'bbpoker-records-')),app=createApp({dataDir:directory});
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(async()=>{await app.close();rmSync(directory,{recursive:true,force:true});});
   const base=`http://127.0.0.1:${app.server.address().port}`;
   async function api(user,path,body,status=200){const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(user?{Authorization:`Bearer ${user.token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();assert.equal(response.status,status,JSON.stringify(data));return data;}
-  const users=[];for(const name of ['甲','乙','旁观','局外'])users.push(await api(null,'/api/session',{name},201));
+  const users=[];for(const name of ['甲','乙','旁观','局外'])users.push(seedLegacyAccount(app, {name}));
   const room=(await api(users[0],'/api/rooms',{name:'HTTP朋友局'},201)).room;
   for(const user of users.slice(1,3))await api(user,`/api/rooms/${room.code}/join`,{invite:room.invite});
   for(const path of ['/api/sessions','/api/hands',`/api/sessions/${room.code}`])await api(null,path,undefined,401);

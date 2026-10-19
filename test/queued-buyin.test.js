@@ -32,7 +32,7 @@ function fixture(t, { count = 3, settings = {}, start = true, encrypted = false 
 }
 function conserved(f) {
   const r = f.room;
-  const held = Object.values(r.members).reduce((sum, m) => sum + m.stack + m.cashedOut, 0)
+  const held = Object.values(r.members).reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0)
     + Object.values(r.mini.squid.reserves).reduce((a, b) => a + b, 0)
     + (r.hand?.status === 'playing' ? r.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0);
   assert.equal(held, Object.values(r.members).reduce((sum, m) => sum + m.totalBuyIn, 0));

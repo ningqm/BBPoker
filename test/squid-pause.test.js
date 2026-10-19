@@ -103,7 +103,7 @@ test('a newcomer can join the ongoing round while an original reconnect still wa
   assert.equal(view.players.find(p => p.id === f.users[3].id).cards.length,0);
   f.win(1); view = f.service.state(f.room, f.users[4].id);
   assert.equal(view.players.find(p => p.id === f.users[4].id).waitingFor, null);
-  assert.equal(view.players.find(p => p.id === f.users[4].id).squidReserve, 4*f.room.mini.squid.unit);
+  assert.equal(view.players.find(p => p.id === f.users[4].id).squidReserve, 0);
   assert.equal(f.room.mini.squid.tokenBudget,4);assert.equal(f.room.mini.squid.participants.length,5);
 });
 
@@ -114,7 +114,7 @@ test('overtime waiting does not repeatedly write or refresh an already observed 
   const snapshot = structuredClone(f.data);
   for (let i = 0; i < 10; i++) { f.advance(1); assert.equal(f.service.tick(f.room, f.time), false); }
   assert.deepEqual(f.data, snapshot); assert.equal(deadline, f.time - 10 + 90000);
-  assert.equal(f.room.autoDealPaused, true);
+  assert.equal(f.room.autoDealPaused, false); // Expiry removes the pause; lack of participants still waits.
   f.advance(deadline - f.time); f.service.tick(f.room, f.time);
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.mini.squid.lastResult.reason, 'partial');
 });

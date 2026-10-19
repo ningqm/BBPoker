@@ -86,17 +86,17 @@ test('valid instant seating replaces only the caller legacy pending request', ()
   assert.equal(f.store.data.ledger.filter(l => l.type === 'buyin').length, 1);
 });
 
-test('table clock starts on first hand and settings cannot reset it after play', t => {
+for (const durationMinutes of [15, 30, 45]) test(`${durationMinutes}-minute table clock starts on first hand and settings cannot reset it after play`, t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ durationMinutes: 30 }, 3, value => { timestamp = value; });
+  const f = fixture({ durationMinutes }, 3, value => { timestamp = value; });
   f.service.connections.set(`${f.room.code}:${f.users[0].id}`, 1); f.service.connectionChanged(f.room);
   assert.equal(f.room.startedAt, null); assert.equal(f.service.needsTick(f.room, Date.now() + 1e9), false);
   const start = Date.now(); f.service.start(f.room, start);
-  assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
+  assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + durationMinutes * 60000);
   assert.equal(f.room.presentation.actionReadyAt, start + 1100);
   assert.equal(f.room.deadline, f.room.presentation.actionReadyAt + 20000); finish(f);
   assert.throws(() => f.cmd(0, 'settings', { settings: { durationMinutes: 60 } }), /配置已锁定/);
-  f.service.start(f.room, start + 60000); assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + 1800000);
+  f.service.start(f.room, start + 60000); assert.equal(f.room.startedAt, start); assert.equal(f.room.endsAt, start + durationMinutes * 60000);
 });
 
 test('time cards extend only a live actor turn and retry is idempotent without altering poker actions', t => {
@@ -137,12 +137,14 @@ test('time cards grant the whole session once and do not reset on half hours or 
   assert.equal(f.service.state(f.room, f.users[i].id).timeBankResetAt, null);
 });
 
-test('last five minutes skip new squid and bomb rounds while an existing squid round may continue', t => {
+test('last five minutes stop new squid rounds but still start scheduled bomb pots', t => {
   let timestamp = Date.now(); t.mock.method(Date, 'now', () => timestamp);
-  const f = fixture({ squid: true, bombPot: true, bombIntervalMinutes: 1 }, 3, value => { timestamp = value; }); f.cmd(0, 'start');
+  const f = fixture({ durationMinutes: 15, squid: true, bombPot: true, bombIntervalMinutes: 10 }, 3, value => { timestamp = value; }); f.cmd(0, 'start');
+  assert.equal(f.room.endsAt-f.room.startedAt,15*60000);assert.equal(f.service.state(f.room,f.users[0].id).miniGamesCutoffAt,f.room.startedAt+10*60000);
   const round = f.room.mini.squid.round; assert.equal(f.room.hand.bombPot, false); finish(f);
+  assert.equal(f.service.prepareStart(f.room,f.room.endsAt-300001).mayStartMini,true);
   timestamp = f.room.endsAt - 300000; f.service.start(f.room);
-  assert.equal(f.room.hand.bombPot, false); assert.equal(f.room.mini.squid.round, round);
+  assert.equal(f.room.hand.bombPot, true); assert.equal(f.room.mini.squid.round, round);
   const winner = f.room.mini.squid.participants.find(id => !f.room.mini.squid.won.includes(id));
   while (f.room.hand.status === 'playing') {
     const actor = f.room.hand.actingId, a = availableActions(f.room.hand, actor);
@@ -267,4 +269,41 @@ test('independent PokerKit replays ante-only bomb pots, short stacks, two-player
   const script = `import sys,json\nfrom pokerkit import HandHistory\nhands=list(HandHistory.loads_all(sys.stdin.read()))\nfor h in hands:\n s=list(h)[-1]\n assert not s.status,(h.hand,'unfinished')\n assert s.stacks==h.finishing_stacks,(h.hand,s.stacks,h.finishing_stacks)\nprint(json.dumps({'replayed':len(hands)}))\n`;
   const result = spawnSync(process.env.POKERKIT_PYTHON, ['-c', script], { input: source, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { replayed: examples.length });
+});
+
+
+test('new room creation and editable settings accept only the duration choices and reject invalid writes atomically',()=>{
+  const valid=[15,30,45,60,...Array.from({length:22},(_,i)=>90+i*30)];
+  for(const durationMinutes of valid){const f=fixture({durationMinutes},0);assert.equal(f.room.settings.durationMinutes,durationMinutes);f.cmd(0,'settings',{settings:{durationMinutes}});assert.equal(f.room.settings.durationMinutes,durationMinutes);}
+  const f=fixture({},0);
+  for(const durationMinutes of [0,14,16,29,31,44,46,59,61,75,105,719,721,15.5,NaN,Infinity,'15',null]){
+    assert.throws(()=>fixture({durationMinutes},0),/时长/);
+    const before=structuredClone(f.room.settings);assert.throws(()=>f.cmd(0,'settings',{settings:{durationMinutes}}),/时长/);assert.deepEqual(f.room.settings,before);
+  }
+  assert.throws(()=>settingsFor({durationMinutes:75,allowLegacyDuration:true}),/时长/);
+});
+
+test('persisted non-preset duration survives state reads, restart and later hands without shortening its clock or archives',t=>{
+  let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
+  const f=fixture({},3,value=>{timestamp=value;});f.room.settings.durationMinutes=75;f.room.settings.timeBankCards=9;
+  const original=structuredClone(f.store.data);assert.equal(f.service.state(f.room,f.users[0].id).settings.durationMinutes,75);assert.deepEqual(f.store.data,original);
+  assert.throws(()=>f.cmd(0,'settings',{settings:{smallBlind:5}}),/时长/);assert.equal(f.room.settings.durationMinutes,75);
+  f.service.start(f.room);const startedAt=f.room.startedAt,endsAt=f.room.endsAt;assert.equal(endsAt,startedAt+75*60000);finish(f);f.service.completeRabbit(f.room,timestamp);
+  const archived=structuredClone(f.store.data.hands[0]);assert.equal(archived.settings.durationMinutes,75);
+  const restoredStore={data:structuredClone(f.store.data)},service=new RoomService(restoredStore),room=service.room(f.room.code);
+  assert.equal(service.state(room,f.users[0].id).settings.durationMinutes,75);assert.equal(room.endsAt,endsAt);
+  timestamp=startedAt+60000;service.start(room,timestamp);assert.equal(room.settings.durationMinutes,75);assert.equal(room.endsAt,endsAt);
+  assert.equal(room.startedAt,startedAt);assert.equal(room.hand.settings.durationMinutes,75);assert.deepEqual(restoredStore.data.hands[0],archived);
+  assert.ok(Object.values(room.members).every(member=>service.timeBankFor(room,member).granted===9));
+});
+
+test('a fifteen-minute session grants three time cards and settles its final hand once at expiry',t=>{
+  let timestamp=Date.now();t.mock.method(Date,'now',()=>timestamp);
+  const f=fixture({durationMinutes:15},2,value=>{timestamp=value;});f.cmd(0,'start');
+  const actor=f.room.hand.actingId,index=f.users.findIndex(user=>user.id===actor);readyRoomAction(f.service,f.room,value=>{timestamp=value;});
+  const deadline=f.room.deadline;assert.equal(f.room.members[actor].timeBank.remaining,3);f.cmd(index,'timebank');
+  assert.equal(f.room.members[actor].timeBank.remaining,2);assert.equal(f.room.deadline,deadline+30000);
+  timestamp=f.room.endsAt;f.room.deadline=timestamp+20000;f.service.tick(f.room,timestamp);assert.equal(f.room.status,'playing');
+  finish(f);assert.equal(f.room.status,'closed');assert.equal(f.store.data.hands.length,1);conserved(f.room);
+  const ledger=structuredClone(f.store.data.ledger);assert.equal(f.service.tick(f.room,timestamp+1),false);assert.deepEqual(f.store.data.ledger,ledger);
 });

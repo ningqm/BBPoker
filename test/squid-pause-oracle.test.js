@@ -45,7 +45,7 @@ const rows = f => f.store.data.ledger.filter(row => row.type === 'squidSettlemen
 function conserved(f) {
   const r = f.room, members = Object.values(r.members);
   const pot = r.hand?.status === 'playing' ? r.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0;
-  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut, 0) + Object.values(r.mini.squid.reserves).reduce((sum, x) => sum + x, 0) + pot,
+  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + Object.values(r.mini.squid.reserves).reduce((sum, x) => sum + x, 0) + pot,
     members.reduce((sum, m) => sum + m.totalBuyIn, 0), 'stacks, reserves, cashouts and live pot conserve all bought-in points');
 }
 function roundSnapshot(f) {
@@ -80,8 +80,8 @@ test('continuity oracle: newcomer admission adds responsibility once while origi
   const hand = structuredClone(f.room.hand); f.connect(3, true);
   assert.deepEqual(f.room.hand, hand, 'reconnecting cannot join or change the current hand contract');
   f.win(1); assert.deepEqual(f.room.mini.squid.won, [f.users[0].id, f.users[1].id]);
-  assert.equal(f.room.mini.squid.reserves[f.users[0].id],6);
-  for(const i of [1,2,3,4])assert.equal(f.room.mini.squid.reserves[f.users[i].id],8);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],undefined);
+  for(const i of [1,2,3,4])assert.equal(f.room.mini.squid.reserves[f.users[i].id],undefined);
   assert.equal(rows(f).length, 0); conserved(f);
   assert.equal(aggregateAnalytics(f.store.data, f.users[4].id).miniNet, 0);
   assert.equal(aggregateAnalytics(f.store.data, f.users[4].id).hands, 1, 'only the actual admission hand counts');
@@ -107,7 +107,7 @@ test('continuity oracle: an original outside the hand may stand immediately with
   assert.deepEqual(roundSnapshot(f), before); assert.equal(rows(f).length, 0); conserved(f);
   f.cmd(3, 'stand', { ...f.consent(3), commandId }); f.win(1);
   assert.equal(f.room.members[f.users[3].id].seat, null); assert.equal(f.room.mini.squid.active, true);
-  assert.equal(rows(f).length, 0); assert.equal(f.room.mini.squid.reserves[f.users[3].id], 6);
+  assert.equal(rows(f).length, 0); assert.equal(f.room.mini.squid.reserves[f.users[3].id], undefined);
   assert.deepEqual(f.room.mini.squid.won, [f.users[0].id, f.users[1].id]); conserved(f);
   f.connect(2, false); f.advance(5000); f.service.tick(f.room, f.time);
   assert.equal(rows(f).length, 4); assert.ok(rows(f).every(r => r.reason === 'absent'));
@@ -164,7 +164,7 @@ test('continuity oracle: queued sit-out is cancellable; confirmed sit-out preser
   f.cmd(2, 'sitout', { value: false }); assert.equal(f.room.members[f.users[2].id].pendingDeparture, null);
   f.cmd(2, 'sitout', { value: true, ...f.consent(2) }); f.win(1);
   assert.equal(f.room.members[f.users[2].id].sittingOut, true); assert.equal(f.room.members[f.users[2].id].seat, 2);
-  assert.equal(rows(f).length, 0); assert.equal(f.room.mini.squid.reserves[f.users[2].id], 6); conserved(f);
+  assert.equal(rows(f).length, 0); assert.equal(f.room.mini.squid.reserves[f.users[2].id], undefined); conserved(f);
   f.cmd(3, 'sitout', { value: true, ...f.consent(3) }); f.advance(5000); f.service.tick(f.room, f.time);
   assert.equal(rows(f).length, 4); assert.equal(rows(f).find(r => r.playerId === f.users[3].id).amount, -4); conserved(f);
 });
@@ -173,9 +173,9 @@ test('continuity oracle: marked departure preserves reserves and later partial e
   const f = fixture(t); f.win(0); f.connect(3, false); f.start();
   f.cmd(0, 'stand', f.consent(0)); f.win(1);
   const returned = f.room.members[f.users[0].id].cashedOut;
-  assert.equal(f.room.mini.squid.reserves[f.users[0].id], 6); assert.equal(rows(f).length, 0); conserved(f);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id], undefined); assert.equal(rows(f).length, 0); conserved(f);
   f.cmd(0, 'close');
-  assert.equal(f.room.members[f.users[0].id].cashedOut, returned + 10);
+  assert.equal(f.room.members[f.users[0].id].cashedOut, returned + 4);
   assert.equal(aggregateAnalytics(f.store.data, f.users[0].id).miniNet, 4);
   assert.equal(rows(f).length, 4); conserved(f);
 });
@@ -197,10 +197,10 @@ test('continuity oracle: encrypted restart preserves hand and roster; reconnect 
   assert.deepEqual(f.room.mini.squid.won, [f.users[0].id, f.users[1].id]); conserved(f);
 });
 
-test('pause oracle: expiry completes a playable original squid round without starting another round or bomb pot', t => {
+test('pause oracle: expiry completes a playable original squid round without another squid round while allowing a due bomb pot', t => {
   const f = fixture(t, { bombPot: true, bombIntervalMinutes: 1 }); f.win(0);
   const before = roundSnapshot(f); f.room.nextBombAt = f.time; f.room.endsAt = f.time + 1; f.advance(1);
-  f.start(); assert.equal(f.room.hand.squidRound, before.round); assert.equal(f.room.hand.bombPot, false);
+  f.start(); assert.equal(f.room.hand.squidRound, before.round); assert.equal(f.room.hand.bombPot, true);
   f.win(1); assert.equal(f.room.mini.squid.active, true); assert.notEqual(f.room.status, 'closed'); conserved(f);
   f.start(); assert.equal(f.room.hand.squidRound, before.round); assert.equal(f.room.hand.bombPot, false);
   f.win(2); assert.equal(f.room.status, 'closed'); assert.equal(f.room.handNumber, 3);

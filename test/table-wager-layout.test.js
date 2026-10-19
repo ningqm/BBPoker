@@ -81,6 +81,27 @@ function measuredStage(){
  return {stage,trace,bounds,nodes};
 }
 
+test('empty wager and bubble layers do not read table geometry or register a resize observer',()=>{
+ const Original=globalThis.ResizeObserver;let reads=0,observers=0;
+ globalThis.ResizeObserver=class {constructor(){observers++;}observe(){}disconnect(){}};
+ const obstacles=Array.from({length:27},()=>({getBoundingClientRect(){reads++;return {left:0,top:0,width:20,height:20};}}));
+ const stage={getBoundingClientRect(){reads++;return {left:0,top:0,width:360,height:620};},querySelectorAll(selector){return ['.bet-chip','.seat-reaction'].includes(selector)?[]:obstacles;}};
+ try{
+  layoutTableWagers(stage);layoutTableBubbles(stage);
+  assert.equal(reads,0,'no geometry read is needed when there is nothing to place');
+  assert.equal(observers,0);
+ }finally{if(Original===undefined)delete globalThis.ResizeObserver;else globalThis.ResizeObserver=Original;}
+});
+
+test('a normal wager update with no chat only measures the wager obstacles once',()=>{
+ const {stage,nodes}=measuredStage(),original=stage.querySelectorAll;let obstacleReads=0;
+ const obstacle={getBoundingClientRect(){obstacleReads++;return {left:160,top:100,width:20,height:20};}};
+ stage.querySelectorAll=selector=>['.bet-chip','.seat-reaction'].includes(selector)?original(selector):[obstacle];
+ layoutTableBubbles(stage);
+ assert.equal(obstacleReads,1,'empty bubbles must not repeat the full obstacle measurement');
+ assert.ok(nodes.every(node=>node.dataset.wagerLayout==='clear'),'wagers still receive their ordinary placement');
+});
+
 test('wager placement batches all seat reads before final style writes instead of forcing layout per player',()=>{
  const {stage,trace,nodes}=measuredStage();layoutTableWagers(stage);
  assert.equal(nodes.every(node=>node.dataset.wagerLayout==='clear'),true);

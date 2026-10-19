@@ -210,9 +210,9 @@ test('last action, street reveal and readiness are separate once-only feedback p
   quiet(tracker.update({...flop,revision:5,serverTime:now+1300},{now:now+1300}));
   const ready={...flop,revision:6,serverTime:now+1801,actions:{canAct:true}};
   const turn=tracker.update(ready,{now:now+1801});
-  assert.equal(turn.sound,'yourturn');assert.equal(turn.speech,undefined);assert.equal(turn.chips,undefined);
+  assert.equal(turn.sound,null);assert.ok(turn.yourTurnId);assert.equal(turn.speech,undefined);assert.equal(turn.chips,undefined);
   assert.deepEqual(turn.animations,[{type:'turn',playerId:'a'}]);
-  assert.notEqual(turn.eventId,flip.eventId,'ready must survive audio event deduplication');
+  assert.notEqual(turn.yourTurnId,flip.eventId,'ready must survive audio event deduplication');
   quiet(tracker.update(ready,{now:now+1802}));
   quiet(tracker.update({...ready,revision:7,serverTime:now+2000},{now:now+2000}));
 });
@@ -241,4 +241,55 @@ test('river reveal metadata and chat do not replay tail call or announce a win b
   const won=room({revision:5,actor:null,board,status:'complete',log:[...tail.hand.log,{seq:4,type:'payout',playerId:'a',amount:30}],result:{mainWinnerIds:['a']}});
   const result=tracker.update(won);assert.equal(result.sound,'collect');assert.equal(result.speech,undefined);assert.equal(result.chips,false);
   assert.deepEqual(result.animations,[{type:'win',playerIds:['a']}]);quiet(tracker.update(won));
+});
+
+test('a ready first turn carries one independent ding alongside the live deal or board cue', () => {
+  const first = createTableFeedback();
+  first.update(room({handId:null}));
+  const dealt = first.update(room({revision:2}));
+  assert.equal(dealt.sound, 'deal'); assert.ok(dealt.yourTurnId);
+  quiet(first.update(room({revision:3})));
+  const flop = createTableFeedback();
+  flop.update(room({actor:'b'}));
+  const reveal = room({revision:2,actor:'a',board:['Ac','Kd','2s'],log:[...blindLog,
+    {seq:3,type:'check',playerId:'b'},{seq:4,type:'street',street:'flop'}]});
+  const cue = flop.update(reveal);
+  assert.equal(cue.sound, 'board'); assert.ok(cue.yourTurnId);
+  assert.equal(cue.checks.length, 1, 'previous player check is preserved');
+  quiet(flop.update(reveal));
+});
+
+test('new own turns do not replace the prior action and repeated raises can return to the same player', () => {
+  const tracker=createTableFeedback();tracker.update(room({actor:'b'}));
+  const called=room({revision:2,log:[...blindLog,{seq:3,type:'call',playerId:'b',amount:5}]});
+  const cue=tracker.update(called);
+  assert.equal(cue.sound,'chip');assert.equal(cue.speech,'call');assert.ok(cue.yourTurnId);
+  // The response may batch our prior raise and the next player's re-raise.
+  const reraised=room({revision:3,log:[...called.hand.log,
+    {seq:4,type:'raise',playerId:'a',amount:20,to:30},
+    {seq:5,type:'raise',playerId:'b',amount:80,to:90}]});
+  const again=tracker.update(reraised);
+  assert.ok(again.yourTurnId);assert.notEqual(again.yourTurnId,cue.yourTurnId);
+  assert.equal(again.speech,'reraise');quiet(tracker.update(reraised));
+});
+
+test('time-bank, network grace, chat and topups never create a new own-turn ding', () => {
+  const tracker=createTableFeedback();tracker.update(room({actor:'b'}));
+  const active=room({revision:2,log:[...blindLog,{seq:3,type:'check',playerId:'b'}]});
+  active.hand.actionReadyAt=1000;active.serverTime=1000;active.deadline=21000;active.actions={canAct:true};
+  assert.ok(tracker.update(active,{now:1000}).yourTurnId);
+  for(const extra of [{deadline:51000},{deadline:59000},{chat:[{id:'hello'}]},
+    {players:[{id:'a',pendingBuyIn:2000}]}]) {
+    quiet(tracker.update({...active,...extra,revision:3,serverTime:2000},{now:2000}));
+  }
+});
+
+test('other players, runouts and closed tables cannot trigger an own-turn ding', () => {
+  for(const kind of ['other','runout','closed']) {
+    const tracker=createTableFeedback();tracker.update(room({actor:null}));
+    const next=room({revision:2,actor:kind==='other'?'b':'a',log:[...blindLog,{seq:3,type:'check',playerId:'b'}]});
+    if(kind==='runout')next.hand.runout={active:true};
+    if(kind==='closed')next.status='closed';
+    assert.equal(tracker.update(next).yourTurnId,undefined);
+  }
 });

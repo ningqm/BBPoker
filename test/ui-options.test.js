@@ -8,7 +8,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {settingsFor} from '../src/room.js';
 import {avatarMarkup,createAvatarCache} from '../public/avatar.js';
-import {reusableRoomSettings} from '../public/room-config.js';
+import {reusableRoomSettings,ROOM_DURATION_CHOICES,normalizeRoomDuration} from '../public/room-config.js';
 import * as money from '../public/money.js';
 import {betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt} from '../public/table-controls.js';
 import {createTurnCountdown} from '../public/table-feedback.js';
@@ -18,7 +18,7 @@ function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a
 function harness({unit='points',...overrides}={}){
   money.setDisplayUnit(unit);
   const modals=[],listeners=new Map(),commands=[];
-  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...tableScene,...tableControls,...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,apiUrl:path=>path,
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...tableScene,...tableControls,...money,lifecycle,betPresetOptions,betActionLabel,normalizeBetAmount,betAmountFromSlider,betSliderFromAmount,revealOptions,rebuyPrompt,turnCountdown:createTurnCountdown(),tableSounds:{play(){}},avatarMarkup,createAvatarCache,reusableRoomSettings,ROOM_DURATION_CHOICES,normalizeRoomDuration,apiUrl:path=>path,
     requests:{capture:()=>({valid:()=>true,check(){}})},
     FormData:class{constructor(form){this.form=form;}get(name){const field=this.form.elements.namedItem(name);return !field||field.disabled?null:field.type==='checkbox'?(field.checked?'on':null):field.value;}},
     state:{clock:createRoomClock(),user:{name:'小鱼'},rooms:[],connected:true,feedbackResync:false},
@@ -78,6 +78,30 @@ test('room presets submit BB settings, direct buy-in and defaults without hidden
   assert.doesNotThrow(()=>settingsFor(s));
   assert.doesNotMatch(html,/蘑菇|name="(?:approvalRequired|minBuyIn|maxBuyIn)"/);
   c.state.createKeyRequired=true;c.createModal();assert.match(c.modals.at(-1).body,/小鱼必赢的局/);assert.doesNotMatch(c.modals.at(-1).body,/建房口令|name="createKey"/);
+});
+test('duration choices render and submit only fifteen-minute short sessions then half-hour steps',()=>{
+  const c=harness(),expected=[15,30,45,60,...Array.from({length:22},(_,i)=>90+30*i)];
+  for(const duration of expected){
+    const html=c.settingFields({...c.defaults,durationMinutes:duration}),form=formFrom(html);
+    const selector=html.match(/<select name="durationMinutes"[^>]*>([\s\S]*?)<\/select>/)[1];
+    assert.deepEqual([...selector.matchAll(/<option value="(\d+)"/g)].map(m=>Number(m[1])),expected);
+    assert.doesNotMatch(html,/<input[^>]*name="durationMinutes"/);
+    const result=c.readSettings(form);assert.equal(result.durationMinutes,duration);assert.equal(result.timeBankCards,3*Math.ceil(duration/30));
+    assert.doesNotThrow(()=>settingsFor(result));
+  }
+  const form=formFrom(c.settingFields(c.defaults)),summary={textContent:''},custom={hidden:true,querySelector:()=>({focus(){}})};
+  form.querySelector=selector=>selector==='[data-duration-custom]'?custom:selector==='[data-settings-overview]'?summary:null;
+  for(const duration of [15,30,45,60]){
+    c.applySettingPreset({dataset:{value:String(duration)},closest:()=>form,parentElement:{querySelectorAll:()=>[]}},'duration');
+    assert.equal(custom.hidden,true);assert.equal(c.readSettings(form).durationMinutes,duration);
+    assert.match(summary.textContent,new RegExp('开局 '+3*Math.ceil(duration/30)+' 张时间牌'));
+  }
+  c.applySettingPreset({dataset:{value:'custom'},closest:()=>form,parentElement:{querySelectorAll:()=>[]}},'duration');
+  assert.equal(custom.hidden,false);
+  form.fields.get('durationMinutes').value='150';c.updateSettingConstraints(form);
+  assert.equal(c.readSettings(form).durationMinutes,150);assert.match(summary.textContent,/开局 15 张时间牌/);
+  const legacy={...c.defaults,durationMinutes:75};
+  assert.equal(c.readSettings(formFrom(c.settingFields(legacy))).durationMinutes,90);assert.equal(legacy.durationMinutes,75);
 });
 test('thinking time is fixed at twenty seconds even when reusing legacy choices',()=>{
   const c=harness();
@@ -283,7 +307,7 @@ test('sit and rebuy confirmations cannot submit from disconnected or resynchroni
 
 test('no timing controls are offered; duration immediately determines the one-time grant',()=>{
  const c=harness();
- for(const [duration,cards] of [[30,3],[60,6],[90,9],[120,12],[45,6],[720,72]]){
+ for(const [duration,cards] of [[15,3],[30,3],[60,6],[90,9],[120,12],[45,6],[720,72]]){
   const html=c.settingFields({...c.defaults,durationMinutes:duration,timeBankCards:999,actionSeconds:90});
   assert.doesNotMatch(html,/name="(?:actionSeconds|timeBankCards|timeBankSeconds)"|每半小时重置/);
   const result=c.readSettings(formFrom(html));assert.equal(result.timeBankCards,cards);assert.equal(result.actionSeconds,20);assert.equal(result.timeBankSeconds,30);
@@ -320,4 +344,16 @@ test('compact summary clock stays compact after ticking while details retain the
  assert.match(summary.textContent,/^0:5[45]$/);assert.match(detail.textContent,/^剩余 0:5[45]$/);assert.equal(summary.attrs['aria-label'],detail.textContent);
  c.state.room.endsAt=Date.now()-1000;c.state.room.expiryMode='finish-squid';c.tick();assert.equal(summary.textContent,'鱿鱼加时');assert.equal(detail.textContent,'已到时 · 打完本轮鱿鱼');
  c.state.room.endsAt=null;c.tick();assert.equal(summary.textContent,'未开始');assert.match(detail.textContent,/首手开始计时/);
+});
+
+test('squid notice appears at the cutoff without waiting for another player action or room snapshot',()=>{
+ const label={hidden:true,textContent:''},marker={dataset:{squidDescription:'无限鱿鱼，余7/8'},attrs:{},querySelector:s=>s==='[data-squid-notice]'?label:null,setAttribute(k,v){this.attrs[k]=v;}};
+ const document={querySelectorAll:s=>s==='[data-squid-marker]'?[marker]:[]},c=harness({document});
+ let now=599999;c.state.clock={now:()=>now};
+ c.state.room={status:'playing',settings:{squid:true},players:[],miniGamesCutoffAt:600000,endsAt:900000,mini:{squid:{active:true}}};
+ c.tick();assert.equal(label.hidden,true);
+ now=600000;c.tick();assert.equal(label.hidden,false);assert.equal(label.textContent,'本轮结束后停开');assert.match(marker.attrs['aria-label'],/余7\/8.*本轮结束后停开/);
+ c.state.room.mini.squid.active=false;c.tick();assert.equal(label.textContent,'末5分钟 · 停开新轮');
+ now=900000;c.tick();assert.equal(label.textContent,'已到时 · 不再开轮');
+ c.state.room.status='closed';c.tick();assert.equal(label.hidden,true);
 });

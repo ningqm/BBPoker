@@ -1,3 +1,4 @@
+import { sameRoomSnapshot } from '../public/room-snapshot.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
@@ -279,7 +280,7 @@ function applicationFixture() {
   const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const start = source.indexOf('function normalizeState('), end = source.indexOf('async function command(', start);
   assert.ok(start >= 0 && end > start);
-  const context = vm.createContext({ state, isOlderRoomSnapshot, Date,
+  const context = vm.createContext({sameRoomSnapshot, state, isOlderRoomSnapshot, Date,
     captureRoomChanges: (_, room) => effects.push({ room, now: state.clock.now() }),
     rememberCommitment: () => false, syncBetControls: () => ({ amount: 0, preset: null, panelOpen: false, key: null }),
     render: () => paints.push({ room: state.room, clock: actorClock(state.room, state.clock.now()) }),

@@ -1,7 +1,7 @@
 import { createRoomClock, isOlderRoomSnapshot } from '../public/room-clock.js';
 import * as scene from '../public/table-scene.js';
 import * as statsUI from '../public/stats.js';
-import { renderHandCategory } from '../public/hand-category.js';
+import { renderHandCategory, displayedHandCategory } from '../public/hand-category.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -12,7 +12,7 @@ import {revealOptions,betActionEnabled} from '../public/table-controls.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const section=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);};
 function harness({realBoardCards=false}={}){
-  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...scene,lifecycle,renderHandCategory,formatChips,getDisplayUnit,revealOptions,betActionEnabled,Date,state:{clock:createRoomClock(),connected:true,connection:'已连接',animations:false,fun:false,chatUnread:0},
+  const context=vm.createContext({createRoomClock,isOlderRoomSnapshot,...scene,lifecycle,renderHandCategory,displayedHandCategory,formatChips,getDisplayUnit,revealOptions,betActionEnabled,Date,state:{clock:createRoomClock(),connected:true,connection:'已连接',animations:false,fun:false,chatUnread:0},
     avatar:()=>'<span class="avatar">B</span>',renderSeatMask:()=>'',reactionBubble:()=>'',statsUI,formatAction:a=>a.type||a,
     boardCard:()=>'<span class="board-slot"></span>',streetNames:{flop:'翻牌'},
     autoDealText:()=> '5 秒后自动发下一手',actionArea:()=>'<div class="action-area"></div>',chatPanel:()=>'',errorPage:()=>''});
@@ -20,6 +20,16 @@ function harness({realBoardCards=false}={}){
   return context.client;
 }
 function room(count=9){return {code:'fixture',name:'本地验收桌',status:'waiting',hostId:'p0',meId:'p0',settings:{maxPlayers:count,smallBlind:5,bigBlind:10,durationMinutes:60,squid:true,squidUnit:20,squidUnitBB:2,bombPot:true,bombAnte:30,bombAnteBB:3,bombIntervalMinutes:10},players:Array.from({length:count},(_,i)=>({id:'p'+i,name:'玩家昵称'+i,seat:i,stack:2000,connected:true})),mini:{squid:{active:false}},actions:{}};}
+
+test('real seat markup follows the supplemental category while preserving the settled label and hidden opponents',()=>{
+ const c=harness(),r=room(2);r.hand={id:'h',status:'complete',board:['Kc','2d','7h'],rabbit:{originalCount:3,board:['Kc','2d','7h','Qc','Kd']}};
+ Object.assign(r.players[0],{inHand:true,folded:true,cards:['Ks','Qs'],handCategory:'一对',displayHandCategory:'葫芦'});c.state.room=r;
+ const before=JSON.stringify(r),own=c.seatView(0,r),other=c.seatView(1,r);
+ assert.match(own,/data-hand-category="full-house"[^>]*>葫芦/);
+ assert.doesNotMatch(own,/data-hand-category="pair"/);assert.doesNotMatch(other,/data-hand-category/);
+ assert.equal(JSON.stringify(r),before);
+ r.players[0].displayHandCategory=null;assert.match(c.seatView(0,r),/data-hand-category="pair"[^>]*>一对/);
+});
 
 test('idle table moves settings into the compact header and reserves the felt for play',()=>{
   setDisplayUnit('points');const c=harness(),r=room(2);c.state.room=r;const html=c.roomView(),head=html.slice(0,html.indexOf('<div class="game-grid"')),center=c.tableCenter(r);
@@ -39,6 +49,16 @@ test('compact header retains live mode counts through active, completed, rabbit 
   setDisplayUnit('points');
 });
 
+test('table header uses configured duration independently of the name and shows the cutoff beside fish counts',()=>{
+ const c=harness(),r=room(5);r.name='四机器人15分钟局';r.settings.durationMinutes=30;r.miniGamesCutoffAt=600000;r.endsAt=900000;
+ r.settings.squidMode='unlimited';r.mini.squid={active:true,mode:'unlimited',round:2,unit:20,tokenBudget:8,participants:r.players.map(p=>p.id),counts:{p0:1},won:['p0']};
+ c.state.clock={now:()=>700000};c.state.room=r;
+ const html=c.roomView();assert.match(html,/data-room-duration>30分钟</);assert.match(html,/无限鱼 余7\/8/);assert.match(html,/data-squid-notice >本轮结束后停开/);
+ r.mini.squid.active=false;r.mini.squid.lastResult={round:2};
+ assert.match(c.roomStatusBar(r),/data-squid-notice >末5分钟 · 停开新轮/);
+ r.status='closed';assert.doesNotMatch(c.gameModeMarkers(r),/data-squid-notice/);
+});
+
 test('every seat count and rotated viewpoint preserves unique seats and names outside the avatar row',()=>{
   setDisplayUnit('points');const c=harness();
   for(let count=2;count<=9;count++){
@@ -49,7 +69,7 @@ test('every seat count and rotated viewpoint preserves unique seats and names ou
 });
 
 test('long player names and status descriptions are escaped, with all-in and position markers retained',()=>{
-  const c=harness(),r=room(2),p=r.players[1];c.state.room=r;p.name='<img src=x onerror=alert(1)>';p.inHand=true;p.cards=['As','Kd'];p.allIn=true;p.stack=0;p.bet=1234;p.squidWon=true;
+  const c=harness(),r=room(2),p=r.players[1];c.state.room=r;p.name='<img src=x onerror=alert(1)>';p.inHand=true;p.cards=['As','Kd'];p.allIn=true;p.stack=0;p.bet=1234;p.squidWon=true;r.mini={squid:{active:true,participants:[p.id],won:[p.id]}};
   r.hand={id:'h',status:'playing',buttonSeat:1,smallBlindSeat:1,bigBlindSeat:0};const html=c.seatView(1,r);
   assert.doesNotMatch(html,/<img/);assert.match(html,/title="&lt;img/);assert.match(html,/aria-label="查看 &lt;img/);assert.match(html,/title="庄家"/);assert.match(html,/title="小盲"/);assert.match(html,/squid-mark/);assert.match(html,/class="seat-allin-label"[^>]*>All-in</);assert.doesNotMatch(html,/bet-allin-label|class="seat-status[^>]*>All-in</);assert.match(html,/1,234 积分/);
 });
@@ -283,7 +303,7 @@ test('own time cards and countdown share one seat-side control area with no copy
 test('each opponent clock and fish counter remain in the identity grid with name, stack and avatar retained',()=>{
   const c=harness(),r=thinkingRoom();c.state.room=r;
   for(let index=1;index<9;index++){
-    r.hand.actingId='p'+index;r.players[index].squidWon=true;
+    r.hand.actingId='p'+index;r.players[index].squidWon=true;r.mini={squid:{active:true,participants:[r.players[index].id],won:[r.players[index].id]}};
     const tree=markupTree(c.seatView(index,r)),main=oneClass(tree,'seat-main'),identity=oneClass(main,'seat-identity');
     assert.equal(oneClass(identity,'seat-turn').parent,identity);
     assert.ok(oneClass(main,'name').text.length>0);assert.ok(oneClass(main,'stack-value').text.length>0);
@@ -383,7 +403,7 @@ test('post-fold rabbit reveal still opens the remaining cards together and marks
   const c=harness({realBoardCards:true}),r=room(2);c.state.room=r;c.state.animations=true;
   r.hand={id:'rabbit-group',status:'complete',number:1,street:'complete',pot:50,board:['As','Kd','2c'],rabbit:{originalCount:3,board:['As','Kd','2c','7h','9s']}};
   c.state.boardMotion={handId:r.hand.id,from:3,count:5,at:Date.now()};const html=c.tableCenter(r);
-  assert.equal((html.match(/is-flipping/g)||[]).length,2);assert.equal((html.match(/is-rabbit/g)||[]).length,2);assert.doesNotMatch(html,/--flip-delay:(?:70|140)ms/);assert.match(html,/补看余牌 · 不计输赢/);
+  assert.equal((html.match(/is-flipping/g)||[]).length,2);assert.equal((html.match(/is-rabbit/g)||[]).length,2);assert.doesNotMatch(html,/--flip-delay:(?:70|140)ms/);assert.doesNotMatch(html,/rabbit-note|补看余牌 · 不计输赢/);
 });
 
 
@@ -397,9 +417,9 @@ test('side-seat winners keep one compact payout alongside the category without s
   assert.match(html,/title="收池 9 BB"/);assert.match(html,/＋9 BB/);
   assert.doesNotMatch(html,/equity-badge/);
   r.hand.status='playing';r.players[3].connected=false;
-  assert.match(c.seatView(3,r),/seat-status-inline[\s\S]*离线/);
+  assert.doesNotMatch(c.seatView(3,r),/离线/);
   r.players[3].handCategory=null;const hidden=c.seatView(3,r);
-  assert.doesNotMatch(hidden,/seat-status-inline|hand-category/);assert.match(hidden,/离线/);
+  assert.doesNotMatch(hidden,/seat-status-inline|hand-category/);assert.doesNotMatch(hidden,/离线/);
 });
 
 
@@ -462,7 +482,7 @@ test('top-seat receipts use the above-seat information lane with or without publ
    }
    // The same lane also protects top-seat hole cards on disconnect during play.
    player.connected=false;player.handCategory=null;r.hand={id:'top-playing',status:'playing'};
-   const tree=markupTree(c.seatView(player.seat,r));assert.equal(oneClass(oneClass(tree,'seat-main'),'seat-status'),undefined);assert.match(oneClass(oneClass(tree,'seat-hand-info'),'seat-status-inline').text,/离线/);player.connected=true;
+   const tree=markupTree(c.seatView(player.seat,r));assert.doesNotMatch(tree.text,/离线/);assert.equal(oneClass(oneClass(tree,'seat-hand-info'),'seat-status-inline'),undefined);player.connected=true;
   }
  }
  assert.ok(checked>100);setDisplayUnit('points');

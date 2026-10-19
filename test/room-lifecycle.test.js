@@ -28,7 +28,7 @@ function fixture(t, settings = {}, count = 3) {
 }
 function conserved(r) {
   const members = Object.values(r.members), pot = r.hand?.status === 'playing' ? r.hand.players.reduce((sum, p) => sum + p.contributed, 0) : 0;
-  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut, 0) + Object.values(r.mini.squid.reserves).reduce((sum, x) => sum + x, 0) + r.mini.mushroom.pool + pot, members.reduce((sum, m) => sum + m.totalBuyIn, 0));
+  assert.equal(members.reduce((sum, m) => sum + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + Object.values(r.mini.squid.reserves).reduce((sum, x) => sum + x, 0) + r.mini.mushroom.pool + pot, members.reduce((sum, m) => sum + m.totalBuyIn, 0));
 }
 
 test('late seating preserves the current hand; departure is cancelable and occurs after settlement', t => {
@@ -53,8 +53,8 @@ test('a squid entrant joins the next eligible hand and pays only the enlarged cu
   assert.equal(f.service.state(f.room, f.users[3].id).players.find(p => p.id === f.users[3].id).waitingFor, 'squid');
   f.service.start(f.room); assert.deepEqual(f.room.hand.players.map(p => p.id), [...roster,f.users[3].id]);
   assert.equal(f.room.mini.squid.tokenBudget,3); assert.equal(f.room.mini.squid.counts[f.users[3].id],0);
-  assert.equal(f.room.mini.squid.reserves[f.users[0].id],40);
-  for(const i of [1,2,3])assert.equal(f.room.mini.squid.reserves[f.users[i].id],60);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id],undefined);
+  for(const i of [1,2,3])assert.equal(f.room.mini.squid.reserves[f.users[i].id],undefined);
   f.win(1); assert.equal(f.room.mini.squid.active,true);conserved(f.room);
   f.service.start(f.room); f.win(2);
   assert.equal(f.room.mini.squid.round,1);assert.equal(f.room.mini.squid.active,false);
@@ -85,9 +85,9 @@ test('unmarked departure requires a current quote and retains its original reser
 test('a marked player may leave and receives the final settlement without joining the finishing hand', t => {
   const f = fixture(t, { squid: true }); f.cmd(0, 'start'); f.win(0); f.cmd(0, 'stand', f.consent(0));
   const before = f.room.members[f.users[0].id].cashedOut;
-  assert.equal(f.room.mini.squid.reserves[f.users[0].id], 40); f.service.start(f.room); f.win(1);
+  assert.equal(f.room.mini.squid.reserves[f.users[0].id], undefined); f.service.start(f.room); f.win(1);
   assert.equal(f.room.hand.players.some(p => p.id === f.users[0].id), false);
-  assert.equal(f.room.members[f.users[0].id].cashedOut, before + 60);
+  assert.equal(f.room.members[f.users[0].id].cashedOut, before + 20);
   assert.equal(f.service.stats(f.users[0].id).miniNet, 20);
   assert.equal(f.service.sessionFor(f.users[0].id, f.room.code).session.meMiniNet, 20);
   assert.equal(f.service.exportAdjustments(f.users[0].id, f.room.code).filter(row => row.type === 'squidSettlement').length, 1); conserved(f.room);
@@ -124,7 +124,7 @@ test('an absent squid player does not block two peers; insufficient players requ
   const since=f.room.mini.squid.blockerSince;assert.equal(since,f.time);assert.equal(f.room.nextHandAt,null);
   assert.throws(() => f.cmd(2,'settleSquid',{timestamp:f.time+90000}),/90 秒/);
   f.advance(89999);assert.equal(f.service.state(f.room,f.users[2].id).mini.squid.canSettle,false);
-  f.connect(1,true);assert.equal(f.room.mini.squid.blockerSince,null);f.connect(1,false);
+  f.connect(1,true);assert.equal(f.room.members[f.users[1].id].sittingOut,false,'return before 90 seconds remains active');assert.equal(f.room.mini.squid.blockerSince,null);f.connect(1,false);
   assert.equal(f.room.mini.squid.blockerSince,f.time);f.advance(90000);f.service.tick(f.room,f.time);
   f.connect(3,true);assert.throws(()=>f.cmd(3,'settleSquid'),/90 秒/);
   assert.equal(f.service.state(f.room,f.users[2].id).mini.squid.canSettle,true);f.cmd(2,'settleSquid');

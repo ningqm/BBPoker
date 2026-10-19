@@ -28,3 +28,15 @@ test('a bought-in player who never received a hand is included, while an empty c
   assert.equal(roomResults(r).mine.cashOut,2000);assert.match(renderRoomResults(r),/1 人 · 0 手/);assert.match(renderRoomResults(r),/data-action="history" disabled/);
   r.players=[];assert.match(renderRoomResults(r),/本场没有玩家带入筹码/);
 });
+
+test('a squid loss beyond the stack is shown separately, never as negative recovered chips',()=>{
+  setDisplayUnit('points');const r=fixture();
+  r.players=[{id:'me',name:'自己',totalBuyIn:1000,sessionProfit:-1060,cashedOut:0,squidDebt:60},
+    {id:'left',name:'对手',totalBuyIn:1000,sessionProfit:1060,cashedOut:2060,squidDebt:0}];
+  const result=roomResults(r);assert.equal(result.mine.cashOut,0);assert.equal(result.mine.debt,60);
+  assert.equal(result.players.reduce((sum,p)=>sum+p.net,0),0);
+  const html=renderRoomResults(r);assert.match(html,/鱿鱼待补/);assert.match(html,/60 积分/);
+  assert.match(html,/净盈亏＝累计收回－累计带入－鱿鱼待补/);
+  assert.doesNotMatch(html,/<dt>累计收回<\/dt><dd>-60/);
+  delete r.players[0].cashedOut;assert.equal(roomResults(r).mine.cashOut,0,'legacy formula must add the separately displayed debt back');
+});

@@ -232,7 +232,18 @@ for (const kind of ['street', 'showdown', 'showdown-revealed', 'runout-showdown'
   const app = createApp({ dataDir: f.store.directory, actionTickMs: 1000000 }); t.after(() => app.close());
   const room = app.service.room(f.room.code);
   assert.deepEqual(room.hand, saved); assert.equal(room.deadline, null); assert.equal(room.hand.transition.nextAt, due);
-  f.at(due - 1); assert.equal(app.service.tick(room), false);
+  // The first post-restart tick observes the disconnected host; this is
+  // metadata only and must not advance any poker state before its deadline.
+  const beforeObservation = structuredClone(app.store.data), observationWallTime = new Date().getTime();
+  f.at(due - 1); assert.equal(app.service.tick(room), true);
+  assert.ok(Date.parse(room.updatedAt) >= observationWallTime && Date.parse(room.updatedAt) <= new Date().getTime());
+  const expectedObservation = structuredClone(beforeObservation), expectedRoom = expectedObservation.rooms[room.code];
+  Object.assign(expectedRoom, { hostAbsentSince: due - 1, hostAbsentEpoch: app.service.observationId,
+    hostAbsentId: room.hostId, revision: expectedRoom.revision + 1, updatedAt: room.updatedAt });
+  assert.deepEqual(app.store.data, expectedObservation, 'only host-observation metadata and its revision may change');
+  assert.deepEqual(room.hand, saved); assert.equal(room.deadline, null); assert.equal(room.hand.transition.nextAt, due);
+  assert.equal(app.service.tick(room), false, 'a stable observation cannot cause repeated writes');
+  assert.deepEqual(app.store.data, expectedObservation);
   f.at(due); assert.equal(app.service.tick(room), true);
   assert.equal(room.hand.transition?.revealed ?? false, kind === 'showdown');
   assert.equal(room.hand.status === 'complete', ['award', 'showdown-revealed', 'runout-showdown'].includes(kind));

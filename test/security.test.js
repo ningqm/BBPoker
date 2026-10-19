@@ -121,6 +121,9 @@ test('security: host transfer accepts only an actual room member and cannot stra
     assert.throws(() => f.command(0, 'transferHost', { playerId }), e => e.status === 403);
     assert.equal(f.room.hostId, f.users[0].id);
   }
+  assert.throws(() => f.command(0, 'transferHost', { playerId: f.users[1].id }), e => e.status === 409);
+  assert.equal(f.room.hostId, f.users[0].id);
+  f.service.connections.set(`${f.room.code}:${f.users[1].id}`, 1);
   f.command(0, 'transferHost', { playerId: f.users[1].id });
   assert.equal(f.room.hostId, f.users[1].id);
   f.command(1, 'close');

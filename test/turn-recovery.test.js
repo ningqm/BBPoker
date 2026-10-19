@@ -91,3 +91,99 @@ test('presentation recovery covers stalled runout and transitions, never complet
   delete r.hand.transition;r.hand.runout={active:true,nextAt:4000};assert.equal(stalledTurnReason(r,5200),'presentation');
   r.hand.status='complete';assert.equal(stalledTurnReason(r,30000),null);
 });
+
+test('a missed early action is recovered before the previous players old deadline',async()=>{
+  let time=2000;
+  const old=room({deadline:22000,actions:{canAct:false,turnAvailable:false},hand:{id:'h1',status:'playing',actingId:'b',actionSeq:4,actionReadyAt:2000}});
+  const context={room:old,page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false};
+  const probes=[],applied=[];
+  const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,
+    fetchRoom:()=>{throw new Error('must use the lightweight probe');},
+    probeRoom:async(code,known)=>{probes.push({code,known});return {room:room({revision:5,deadline:24000,actions:{canAct:true,turnAvailable:true}})};},
+    apply:value=>{applied.push(value);context.room=value;},reconnect:()=>{throw new Error('unexpected reconnect');}});
+  recovery.observed();
+  for(time=2400;time<5000;time+=400)await recovery.check();
+  assert.equal(probes.length,0);
+  time=5000;await recovery.check();
+  assert.equal(probes.length,1);assert.deepEqual(probes[0].known,{revision:4,canAct:false});
+  assert.equal(applied[0].actions.canAct,true);assert.ok(applied[0].deadline-time>=19000);
+});
+
+test('fresh snapshots and unchanged probes suppress redundant snapshots, hidden clients stop probing',async()=>{
+  let time=1000;
+  const context={room:room({actions:{canAct:true,turnAvailable:true}}),page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false};
+  let probes=0,applied=0;
+  const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,
+    probeRoom:async()=>{probes++;return {unchanged:true,code:context.room.code,meId:'a'};},apply:()=>applied++,fetchRoom:()=>{},reconnect:()=>{}});
+  recovery.observed();time=3900;await recovery.check();assert.equal(probes,0);
+  recovery.observed();time=5000;await recovery.check();assert.equal(probes,0);
+  time=6900;await recovery.check();assert.equal(probes,1);assert.equal(applied,0);
+  time=9700;await recovery.check();assert.equal(probes,1);
+  context.visible=false;time=10000;await recovery.check();assert.equal(probes,1);
+  context.visible=true;time=10400;await recovery.check();assert.equal(probes,2);
+});
+
+test('a trickle of buffered older snapshots cannot keep suppressing the independent freshness probe',async()=>{
+  let time=1000,probes=0;
+  const context={room:room({actions:{canAct:true,turnAvailable:true}}),page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false};
+  const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,
+    probeRoom:async()=>{probes++;return {unchanged:true,code:context.room.code,meId:'a',serverTime:time};},
+    fetchRoom:()=>{},apply:()=>{},reconnect:()=>{}});
+  assert.equal(recovery.observed({serverTime:1000}),true);
+  for(time=1500;time<=4500;time+=500){
+    assert.equal(recovery.observed({serverTime:time-4000}),false);
+    await recovery.check();
+  }
+  assert.equal(probes,1,'old transport activity must not be treated as live table progress');
+});
+
+for (const fresh of [false,true]) test(`failed idle probes preserve a healthy stream; fresh response during failure=${fresh}`,async()=>{
+ let time=1000,failures=[],reconnects=0;
+ const context={room:room({actions:{canAct:true},deadline:90000}),page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false};
+ const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,
+  probeRoom:()=>new Promise((resolve,reject)=>failures.push(reject)),fetchRoom:()=>{},apply:()=>{},reconnect:()=>reconnects++});
+ recovery.observed({serverTime:time});
+ time=4000;const first=recovery.check();failures[0](new Error('timeout'));await first;assert.equal(reconnects,0);
+ time=7000;const second=recovery.check();
+ if(fresh)recovery.observed({serverTime:time});
+ failures[1](new Error('timeout'));await second;assert.equal(reconnects,fresh?0:1);
+});
+
+test('fresh stream state supersedes a failed stalled-turn refresh',async()=>{
+ const h=harness();h.at(2500);const pending=h.recovery.check();
+ h.recovery.observed({serverTime:2500});h.calls[0].reject(new Error('timeout'));await pending;
+ assert.equal(h.reconnected.length,0);
+});
+test('probe diagnostics distinguish suppressed failure from repeated-failure reconnect and never report credentials',async()=>{
+ let time=1000;const events=[],rejects=[],reconnects=[];
+ const context={room:room({actions:{canAct:true},deadline:90000}),page:'room',identity:'SECRET',visible:true,online:true,connected:true,resync:false,busy:false};
+ const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,diagnose:(type,event)=>events.push({type,...event}),
+  probeRoom:()=>new Promise((_,reject)=>rejects.push(reject)),apply(){},fetchRoom(){},reconnect:(code,reason)=>reconnects.push({code,reason})});
+ recovery.observed({serverTime:time});time=4000;let p=recovery.check();recovery.observed({serverTime:time});rejects.shift()(Object.assign(new Error('secret'),{status:503}));await p;
+ assert.equal(events.at(-1).reason,'superseded');assert.equal(events.at(-1).status,503);assert.equal(reconnects.length,0);
+ for(time of [7000,10000]){p=recovery.check();rejects.shift()(Object.assign(new Error('private'),{status:429}));await p;}
+ assert.deepEqual(reconnects,[{code:'123456',reason:'probe_failures'}]);assert.equal(events.at(-1).reason,'probe_failures');assert.equal(JSON.stringify(events).includes('SECRET'),false);assert.equal(JSON.stringify(events).includes('private'),false);
+});
+test('diagnostic callback failures cannot block authoritative turn recovery',async()=>{
+ const context={room:room(),page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false,now:2500};let applied=false;
+ const recovery=createTurnRecovery({getContext:()=>context,clock:()=>2500,diagnose:()=>{throw new Error('telemetry');},fetchRoom:async()=>context.room,apply:()=>{applied=true;},reconnect(){}});
+ await recovery.check();assert.equal(applied,true);
+});
+test('a cancelled previous stream probe never borrows the replacement stream correlation',async()=>{
+ const h=harness(),events=[];let rejectPending;h.context.streamId='a'.repeat(32);
+ const recovery=createTurnRecovery({getContext:()=>({...h.context,now:2500}),clock:()=>2500,diagnose:(type,detail)=>events.push({type,...detail}),
+  fetchRoom:()=>new Promise((_,reject)=>{rejectPending=reject;}),apply(){},reconnect(){}});
+ const pending=recovery.check();recovery.reset();h.context.streamId='b'.repeat(32);rejectPending(new Error('old abort'));await pending;
+ assert.equal(events.length,1);assert.equal(events[0].streamId,'a'.repeat(32));assert.equal(events[0].type,'probe_start');
+});
+for(const probe of [false,true])test(`application failure during ${probe?'idle probe':'full recovery'} reconnects once without mistaking its own observed state for success`,async()=>{
+ let time=1000;const requests=[],reconnects=[],events=[];
+ const context={room:room({actions:{canAct:probe,turnAvailable:true},deadline:90000}),page:'room',identity:'session',visible:true,online:true,connected:true,resync:false,busy:false};
+ const recovery=createTurnRecovery({getContext:()=>({...context,now:time}),clock:()=>time,
+  fetchRoom:async code=>{requests.push({method:'GET',code});return {...context.room,serverTime:time};},
+  ...(probe?{probeRoom:async code=>{requests.push({method:'GET',code});return {room:{...context.room,serverTime:time}};}}:{}),
+  diagnose:(type,detail)=>events.push({type,...detail}),apply:()=>{throw new Error('render failure');},reconnect:(code,reason)=>reconnects.push({code,reason})});
+ recovery.observed({serverTime:time});time=4000;await recovery.check();
+ assert.deepEqual(reconnects,[{code:'123456',reason:'client_apply_error'}]);assert.equal(events.at(-1).reason,'client_apply_error');
+ assert.deepEqual(requests,[{method:'GET',code:'123456'}],'diagnostic recovery never replays a poker action');
+});

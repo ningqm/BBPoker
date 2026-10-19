@@ -48,7 +48,7 @@ function balanced(f) {
   const r = f.room, members = Object.values(r.members);
   const livePot = r.hand?.status === 'playing' ? r.hand.players.reduce((n, p) => n + p.contributed, 0) : 0;
   const reserves = Object.values(r.mini.squid.reserves).reduce((n, value) => n + value, 0);
-  assert.equal(members.reduce((n, m) => n + m.stack + m.cashedOut, 0) + reserves + livePot + r.mini.mushroom.pool,
+  assert.equal(members.reduce((n, m) => n + m.stack + m.cashedOut - (m.squidDebt ?? 0), 0) + reserves + livePot + r.mini.mushroom.pool,
     members.reduce((n, m) => n + m.totalBuyIn, 0), 'all credited points remain in stacks, cashouts, pots or reserves');
   for (const m of members) {
     assert.equal(f.store.data.ledger.filter(row => row.playerId === m.id && row.type === 'buyin').reduce((n, row) => n + row.amount, 0),
@@ -192,11 +192,11 @@ test('v013 oracle: persistence before and after a bomb does not duplicate the ha
   assert.equal(f.store.data.hands.filter(hand => hand.bombPot).length, 1); balanced(f);
 });
 
-test('v013 oracle: no newly scheduled bomb at the exact last-five-minute boundary', t => {
+test('v013 oracle: scheduled bomb still starts at the last-five-minute boundary', t => {
   const f = table(t, { bombPot: true, bombIntervalMinutes: 1, durationMinutes: 30 });
   f.start(); f.finish(); f.advance(25 * 60000); f.start();
-  assert.equal(f.room.hand.bombPot, false);
-  // bombDue describes the elapsed clock; the cutoff separately gates dealing.
+  assert.equal(f.room.hand.bombPot, true);
+  // A due bomb does not extend a room after normal expiry.
   f.finish(); f.advance(5 * 60000); f.start();
   assert.equal(f.room.status, 'closed'); assert.equal(f.room.handNumber, 2); balanced(f);
 });

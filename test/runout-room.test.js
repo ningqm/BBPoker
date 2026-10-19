@@ -1,3 +1,4 @@
+import { seedLegacyAccount } from './helpers/accounts.js';
 import { advanceRoomEvent, readyRoomAction } from './helpers/room-clock.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -177,7 +178,16 @@ for (const resumeAt of [1, 2, 3]) test(`encrypted runout restart after ${resumeA
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
   const room = app.store.data.rooms[f.room.code];
   assert.equal(room.deadline, null); assert.deepEqual(room.hand, saved.rooms[f.room.code].hand);
-  assert.equal(app.service.tick(room, room.hand.runout.nextAt - 1), false);
+  const beforeObservation = structuredClone(app.store.data), observationWallTime = new Date().getTime(), observedAt = room.hand.runout.nextAt - 1;
+  assert.equal(app.service.tick(room, observedAt), true, 'restart establishes the host absence observation');
+  assert.ok(Date.parse(room.updatedAt) >= observationWallTime && Date.parse(room.updatedAt) <= new Date().getTime());
+  const expectedObservation = structuredClone(beforeObservation), expectedRoom = expectedObservation.rooms[room.code];
+  Object.assign(expectedRoom, { hostAbsentSince: observedAt, hostAbsentEpoch: app.service.observationId,
+    hostAbsentId: room.hostId, revision: expectedRoom.revision + 1, updatedAt: room.updatedAt });
+  assert.deepEqual(app.store.data, expectedObservation, 'observation cannot alter deck, equity, clocks, balances or history');
+  assert.deepEqual(room.hand, saved.rooms[f.room.code].hand); assert.equal(room.deadline, null);
+  assert.equal(app.service.tick(room, observedAt), false, 'stable absence observation must not write again');
+  assert.deepEqual(app.store.data, expectedObservation);
   if (resumeAt < 3) {
     const burns = [...room.hand.burnIndices];
     assert.ok(advanceRoomEvent(app.service, room, value => f.advance(value - f.time)));
@@ -235,7 +245,7 @@ test('nine-player all-in runout publishes one complete flop and only three stree
 test('server persists each runout street before SSE, rolls back the entire flop on failed saves, and resumes without duplicate cards or settlement', async t => {
   let timestamp = 1800000000000; t.mock.method(Date, 'now', () => timestamp);
   const dir = mkdtempSync(join(tmpdir(), 'bbpoker-runout-sse-'));
-  const app = createApp({ dataDir: dir, allowGuestSessions: true, actionTickMs: 20 });
+  const app = createApp({ dataDir: dir, actionTickMs: 20 });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const controller = new AbortController();
   t.after(async () => { controller.abort(); await app.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -245,7 +255,7 @@ test('server persists each runout street before SSE, rolls back the entire flop 
     const body = await response.json(); assert.ok(response.ok, JSON.stringify(body)); return body;
   };
   const users = [];
-  for (const name of ['跑牌验收一', '跑牌验收二']) users.push(await api('/api/session', { name }));
+  for (const name of ['跑牌验收一', '跑牌验收二']) users.push(seedLegacyAccount(app, { name }));
   const created = (await api('/api/rooms', {}, users[0].token)).room, code = created.code;
   await api(`/api/rooms/${code}/join`, { invite: created.invite }, users[1].token);
   const room = () => app.store.data.rooms[code];

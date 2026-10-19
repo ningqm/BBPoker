@@ -23,3 +23,5 @@
  .results-mine{padding:12px 14px}.results-mine dl{margin-top:8px}.results-list-heading{margin:17px 0 9px}
  .results-player{padding:10px 12px}.results-player-name .result-avatar{flex-basis:28px;width:28px;height:28px}.results-profit>small{margin-bottom:3px}
 }
+
+.live-session-player{border:1px solid #d9e3dc;border-radius:12px;padding:12px;margin-top:8px}.live-session-player.is-me{background:#eef8f2;border-color:#72a791}.live-session-player header{display:flex;gap:12px;align-items:start;justify-content:space-between}.live-session-player header>strong{min-width:0;overflow-wrap:anywhere}.live-session-player header>span{font-size:18px;font-weight:750;white-space:nowrap}.live-session-numbers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px;font-size:11px;color:var(--muted)}.live-session-numbers b{display:block;margin-top:3px;font-size:13px;color:var(--ink);overflow-wrap:anywhere}.live-session-player small{display:block;color:var(--muted);margin-top:7px}

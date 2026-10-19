@@ -1,0 +1,52 @@
+.account-manager-head{display:grid;gap:12px;margin-bottom:18px}.account-manager-head .note{margin:0}.account-manager-head>button{justify-self:start}.account-search{margin-bottom:16px}.managed-accounts{display:grid;gap:10px}.managed-account{border:1px solid var(--line);border-radius:12px;padding:13px;background:#fbfcf9}.managed-account-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.managed-account-name{min-width:0;display:grid;gap:3px}.managed-account-name strong,.managed-account-name span{overflow-wrap:anywhere}.managed-account-name span,.managed-account-own{font-size:12px;color:var(--muted)}.managed-account-own{display:block;margin-top:9px}.managed-account-status{flex:none;font-size:11px;padding:3px 7px;border-radius:6px;color:#196c55;background:#e4f2e9}.managed-account-status.is-disabled{color:#826344;background:#f1e9df}.managed-account-actions{display:flex;gap:8px;margin-top:12px}.managed-account-actions button{min-height:40px}.admin-account-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}.assigned-credentials{display:grid;grid-template-columns:auto 1fr;gap:12px;margin:0;padding:16px;background:#f2f6ee;border-radius:12px;border:1px solid var(--line)}.assigned-credentials dt{color:var(--muted);font-size:12px}.assigned-credentials dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:16px;font-weight:650;user-select:all}dialog[data-kind^="admin-account"] .modal-body{overflow-wrap:anywhere}dialog[data-kind^="admin-account"] .note{margin-bottom:0}@media(max-width:390px){.assigned-credentials{grid-template-columns:1fr;gap:4px}.assigned-credentials dd+dt{margin-top:10px}.managed-account{padding:11px}.managed-account-actions{gap:6px}.managed-account-actions button{padding:9px 11px}}
+
+/* Keep account actions visible when the phone keyboard shrinks the dialog.
+   Only the fields scroll; the heading and action row have their own space. */
+#dialog[data-kind^="admin-account"][open]{
+ display:flex;flex-direction:column;min-height:0;
+ width:min(520px,calc(100vw - 24px));
+ max-height:calc(100dvh - 24px);overflow:hidden
+}
+#dialog[data-kind^="admin-account"] .modal-head{flex:none;position:relative}
+#dialog[data-kind^="admin-account"] .modal-body{
+ min-height:0;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere
+}
+#dialog[data-kind^="admin-account"] .modal-body:has(.admin-account-panel){
+ display:flex;flex-direction:column;padding:0;overflow:hidden
+}
+.admin-account-panel{
+ display:flex;flex-direction:column;flex:1 1 auto;min-height:0;min-width:0;overflow:hidden;margin:0
+}
+.admin-account-fields{
+ display:flex;flex-direction:column;flex:1 1 auto;gap:14px;min-height:0;min-width:0;
+ padding:18px 20px;overflow:auto;overscroll-behavior:contain;
+ scroll-padding:14px;-webkit-overflow-scrolling:touch
+}
+.admin-account-fields>.field,.admin-account-fields>.note{flex:none;margin:0}
+.admin-account-fields>.toast{flex:none;max-width:none;margin:0;box-shadow:none}
+.admin-account-panel>.admin-account-footer{
+ display:flex;flex:none;align-items:center;justify-content:flex-end;gap:10px;
+ margin:0;padding:12px 20px max(12px,env(safe-area-inset-bottom));
+ border-top:1px solid var(--line);background:#fff
+}
+.admin-account-panel>.admin-account-footer button{min-height:44px;min-width:80px}
+.admin-account-panel>.admin-account-footer .primary{flex:1;max-width:260px}
+.admin-account-panel>.admin-account-footer .wide{flex:1;min-width:0}
+@media(max-width:760px){
+ #dialog[data-kind^="admin-account"] .modal-head{padding:12px 16px;gap:8px}
+ #dialog[data-kind^="admin-account"] .modal-head h2{font-size:18px}
+ .admin-account-fields{padding:14px 16px;gap:12px}
+ .admin-account-panel>.admin-account-footer{padding:10px 16px max(10px,env(safe-area-inset-bottom));gap:8px}
+ .admin-account-panel>.admin-account-footer button{padding:9px 12px;font-size:14px}
+}
+@media(max-width:1100px){
+ html[data-keyboard-open] #dialog[data-kind^="admin-account"][open]{
+  top:calc(var(--keyboard-viewport-top) + 8px);bottom:auto;
+  margin-top:0;margin-bottom:0;max-height:calc(var(--keyboard-viewport-height) - 16px)
+ }
+ html[data-keyboard-open] #dialog[data-kind^="admin-account"] .modal-head{padding:8px 14px}
+ html[data-keyboard-open] .admin-account-fields{padding:12px 14px;gap:10px}
+ html[data-keyboard-open] .admin-account-panel>.admin-account-footer{padding:8px 14px}
+}
+
+.credential-copy-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.credential-copy-actions button{min-height:44px}

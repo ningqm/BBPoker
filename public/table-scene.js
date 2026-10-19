@@ -135,10 +135,14 @@ export function planWagerPositions({width,height,wagers,reserved=[],gap=4}){
 let lastWagerPlan=null;
 export function layoutTableWagers(stage){
  if(!stage)return;
+ const nodes=[...stage.querySelectorAll('.bet-chip')].filter(node=>node.closest('.seat'));
+ // Nothing to position between streets or during a locked runout. Avoid
+ // forcing layout of every seat/card merely to produce an empty plan.
+ if(!nodes.length)return;
  const outer=stage.getBoundingClientRect();if(!outer.width||!outer.height)return;
  const rect=el=>{const r=el.getBoundingClientRect();return{x:r.left-outer.left,y:r.top-outer.top,width:r.width,height:r.height};};
  const selectors='.seat-main,.hole-cards,.seat-label,.seat-turn,.seat-time-tools,.seat-hand-info,.table-config-primary,.table-config .game-mode,.table-config .squid-mode-note,.pot-total,.pot-breakdown,.board,.table-idle,.result-title,.result-countdown,.equity-runout,.rabbit-note,.street-label';
- const reserved=[...stage.querySelectorAll(selectors)].map(rect),nodes=[...stage.querySelectorAll('.bet-chip')].filter(node=>node.closest('.seat'));
+ const reserved=[...stage.querySelectorAll(selectors)].map(rect);
  // Read original CSS anchors on every render/resize, never the previous correction.
  const animations=nodes.map(node=>node.style.animation);
  for(const node of nodes){node.style.animation='none';node.style.removeProperty('left');node.style.removeProperty('right');node.style.removeProperty('top');node.style.removeProperty('bottom');node.style.removeProperty('transform');}
@@ -160,6 +164,9 @@ let observedTable=null,tableResizeObserver=null;
 // Prefer free felt space; never put chat over hole cards, action timer or board.
 export function layoutTableBubbles(stage){
  if(!stage)return;
+ const nodes=[...stage.querySelectorAll('.seat-reaction')];
+ const hasWagers=[...stage.querySelectorAll('.bet-chip')].some(node=>node.closest('.seat'));
+ if(!nodes.length&&!hasWagers){tableResizeObserver?.disconnect();observedTable=null;tableResizeObserver=null;return;}
  if(typeof ResizeObserver==='function'&&observedTable!==stage){
   tableResizeObserver?.disconnect();observedTable=stage;let size=stage.getBoundingClientRect();
   const observer=new ResizeObserver(()=>{
@@ -171,8 +178,11 @@ export function layoutTableBubbles(stage){
    size=next;layoutTableBubbles(stage);
   });tableResizeObserver=observer;observer.observe(stage);
  }
- layoutTableWagers(stage);const outer=stage.getBoundingClientRect(),reserved=[...stage.querySelectorAll('.seat-main,.hole-cards,.seat-label,.seat-turn,.seat-time-tools,.seat-hand-info,.bet-chip,.table-config-primary,.table-config .game-mode,.table-config .squid-mode-note,.pot-total,.pot-breakdown,.board,.result-title,.result-countdown,.equity-runout,.rabbit-note,.street-label,.table-idle')].map(el=>el.getBoundingClientRect());
- const nodes=[...stage.querySelectorAll('.seat-reaction')];
+ layoutTableWagers(stage);
+ // The usual action update has no chat bubble. Wagers have already been
+ // placed, so do not measure the complete table for an empty bubble list.
+ if(!nodes.length)return;
+ const outer=stage.getBoundingClientRect(),reserved=[...stage.querySelectorAll('.seat-main,.hole-cards,.seat-label,.seat-turn,.seat-time-tools,.seat-hand-info,.bet-chip,.table-config-primary,.table-config .game-mode,.table-config .squid-mode-note,.pot-total,.pot-breakdown,.board,.result-title,.result-countdown,.equity-runout,.rabbit-note,.street-label,.table-idle')].map(el=>el.getBoundingClientRect());
  // Measure each new/full-size bubble first. A prior crowded frame may have
  // compacted or hidden it, but a later roomy frame should restore normal chat.
  for(const bubble of nodes){bubble.dataset.bubbleLayout='normal';bubble.style.visibility='hidden';}

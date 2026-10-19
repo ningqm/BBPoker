@@ -10,18 +10,25 @@ const normalizedName = name => name === '皇家同花顺' ? '同花顺' : name;
 const categoryFor = name => HAND_CATEGORIES.find(entry => entry.name === normalizedName(name));
 export const HAND_CATEGORY_UPGRADE_MS = 1000;
 
+// Supplemental labels are viewer-filtered on the server; they never replace
+// the settled category in records, results or equity calculations.
+export const displayedHandCategory = player => player?.displayHandCategory ?? player?.handCategory;
+const visibleBoard = hand => hand?.status === 'complete' ? hand.rabbit?.board || hand.board || [] : hand?.board || [];
+const mayAnimate = (player, room) => !player.folded || player.id === room.meId && room.hand.status === 'complete' && Boolean(player.displayHandCategory);
+
 /** Only use viewer-filtered server labels. No cards are evaluated in the browser. */
 export function updateHandCategoryMotion(previous, room, motions = [], { live = false, now = Date.now() } = {}) {
   if (!live || !previous?.hand?.id || previous.code !== room?.code || previous.meId !== room.meId || previous.hand.id !== room.hand?.id) return [];
   const players = room.players || [];
-  const retained = motions.filter(m => m.handId === room.hand.id && now >= m.at && now - m.at < HAND_CATEGORY_UPGRADE_MS && players.some(p => p.id === m.playerId && !p.folded && normalizedName(p.handCategory) === normalizedName(m.to)));
-  const before = previous.hand.board || [], after = room.hand.board || [];
-  // Rabbit cards, duplicate deliveries, new identities and reconnect snapshots never upgrade a label.
-  if (previous.hand.status !== 'playing' || after.length <= before.length || !before.every((card, i) => after[i] === card)) return retained;
+  const retained = motions.filter(m => m.handId === room.hand.id && now >= m.at && now - m.at < HAND_CATEGORY_UPGRADE_MS && players.some(p => p.id === m.playerId && mayAnimate(p, room) && normalizedName(displayedHandCategory(p)) === normalizedName(m.to)));
+  const before = visibleBoard(previous.hand), after = visibleBoard(room.hand);
+  // Only a newly published board prefix triggers motion. Duplicate deliveries,
+  // newly shown hole cards and reconnect snapshots never replay an upgrade.
+  if (after.length <= before.length || !before.every((card, i) => after[i] === card)) return retained;
   const upgrades = players.flatMap(player => {
     const old = previous.players?.find(p => p.id === player.id);
-    const from = categoryFor(old?.handCategory), to = categoryFor(player.handCategory);
-    if (old?.folded || player.folded || !from || !to || to.strength <= from.strength) return [];
+    const from = categoryFor(displayedHandCategory(old)), to = categoryFor(displayedHandCategory(player));
+    if (!mayAnimate(player, room) || old?.folded && !player.displayHandCategory || !from || !to || to.strength <= from.strength) return [];
     return [{ handId: room.hand.id, playerId: player.id, from: from.name, to: to.name, at: now }];
   });
   return [...retained.filter(m => !upgrades.some(u => u.playerId === m.playerId)), ...upgrades];

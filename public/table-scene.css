@@ -455,3 +455,5 @@
  .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine) .seat-main>.name{line-height:10px}
  .at-table #app .table-stage[data-seat-count="9"] .seat:not(.mine) .seat-main>.stack-value{line-height:12px}
 }
+
+.at-table .seat-network-grace{font-size:8px;font-weight:500;line-height:1;opacity:.95}

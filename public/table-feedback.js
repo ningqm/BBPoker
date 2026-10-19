@@ -42,7 +42,7 @@ function snapshot(room, now) {
   const serverTime = typeof room.serverTime === 'number' ? room.serverTime : Date.parse(room.serverTime);
   const clock = Number.isFinite(serverTime) ? serverTime : now;
   const actionReadyAt = Number(hand?.actionReadyAt) || 0;
-  const turnReady = Boolean(hand?.status === 'playing' && hand.actingId && !hand.transition &&
+  const turnReady = Boolean(room.status !== 'closed' && hand?.status === 'playing' && hand.actingId && !hand.transition && !hand.runout?.active &&
     clock >= actionReadyAt && (hand.actingId !== room.meId || room.actions?.canAct !== false));
   return {
     code: room.code, meId: room.meId, revision: room.revision,
@@ -90,6 +90,15 @@ function spokenAction(hand, event) {
   return prior === 0 ? 'bet' : prior === 1 ? 'raise' : 'reraise';
 }
 
+function ownTurnCue(feedback, current) {
+  const hand = current.hand;
+  if (hand?.turnReady && hand.actingId === current.meId) {
+    // Independent from deal/board/action audio: a single update can carry both.
+    // Deadline extensions and profile/chat changes do not create a new turn.
+    feedback.yourTurnId = `${current.code}:${current.meId}:${hand.id}:turn:${hand.seq}:${hand.actionReadyAt}`;
+  }
+}
+
 function transitions(previous, current) {
   const before = previous.hand, after = current.hand;
   const feedback = emptyFeedback();
@@ -103,6 +112,7 @@ function transitions(previous, current) {
     feedback.animations.push({ type: 'deal' });
     if (after.boardLength) feedback.animations.push({ type: 'board', from: 0 });
     if (after.turnReady) feedback.animations.push({ type: 'turn', playerId: after.actingId });
+    ownTurnCue(feedback, current);
     feedback.sound = 'deal';
     feedback.eventId = `${current.code}:${current.meId}:${after.id}:${after.seq}`;
     return feedback;
@@ -136,9 +146,10 @@ function transitions(previous, current) {
   // Readiness is published without adding another poker action to the log.
   // Do not call a player while cards are still flipping; announce that same
   // action sequence only when its authoritative ready snapshot arrives.
-  if (after.turnReady && (after.actingId !== before.actingId || !before.turnReady || after.actionReadyAt !== before.actionReadyAt)) {
+  if (after.turnReady && (after.actingId !== before.actingId || !before.turnReady || after.actionReadyAt !== before.actionReadyAt ||
+      after.boardLength > before.boardLength || freshActions.some(event => event.playerId === after.actingId))) {
     feedback.animations.push({ type: 'turn', playerId: after.actingId });
-    if (after.actingId === current.meId && after.boardLength === before.boardLength) feedback.sound = 'yourturn';
+    ownTurnCue(feedback, current);
   }
   if (before.status !== 'complete' && after.status === 'complete') {
     feedback.animations.push({ type: 'win', playerIds: after.winnerIds });
@@ -151,7 +162,7 @@ function transitions(previous, current) {
     }
   }
   if (feedback.sound || feedback.speech) {
-    const turn = feedback.sound === 'yourturn' ? `:turn:${after.actingId}:${after.actionReadyAt}` : feedback.sound === 'collect' ? ':payout' : '';
+    const turn = feedback.sound === 'collect' ? ':payout' : '';
     feedback.eventId = `${current.code}:${current.meId}:${after.id}:${after.seq}${turn}`;
   }
   return feedback;
@@ -211,36 +222,59 @@ export function createTurnCountdown() {
   };
 }
 
+export const TABLE_COUNTDOWN_TONES = Object.freeze({
+  countdown: [[740, 740, 0, 0.12, 0.14]],
+  'countdown-last': [[880, 880, 0, 0.1, 0.16], [880, 880, 0.14, 0.1, 0.16]],
+});
+
+// Three simultaneous partials form one short bell strike, not three beeps.
+export const TABLE_TURN_TONES = Object.freeze([
+  Object.freeze([1046.5, 1046.5, 0, 0.24, 0.08]),
+  Object.freeze([2093, 2093, 0, 0.15, 0.025]),
+  Object.freeze([3139.5, 3139.5, 0, 0.09, 0.009]),
+]);
+
 const tones = {
   deal: [[660, 360, 0, 0.055, 0.025], [760, 440, 0.065, 0.055, 0.02]],
   board: [[520, 820, 0, 0.075, 0.022]],
   chip: [], // Same-origin multi-chip foley; no synthetic click fallback.
   collect: [], // The selected recording, fuller and lower for a pot being gathered.
-  fold: [[260, 130, 0, 0.06, 0.015]],
+  fold: [], // The short recorded word only; no descending synthetic boing.
   check: [], // Short double table knock in a separate action channel.
-  yourturn: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.09, 0.075, 0.025]],
+  yourturn: TABLE_TURN_TONES,
   win: [[660, 660, 0, 0.075, 0.025], [880, 880, 0.075, 0.075, 0.022], [1100, 1100, 0.15, 0.09, 0.019]],
-  countdown: [[820, 820, 0, 0.055, 0.035]],
-  'countdown-last': [[1050, 1050, 0, 0.075, 0.045]],
+  ...TABLE_COUNTDOWN_TONES,
 };
 
 export const TABLE_VOICE_CUES = Object.freeze(['bet', 'raise', 'reraise', 'call', 'fold', 'allin']);
 export const TABLE_VOICE_LABELS = Object.freeze({ bet: '下注', raise: '加注', reraise: '再加注', call: '跟注', check: '过牌', fold: '弃牌', allin: 'All-in' });
 // Versioned separately from the app release so replaced media never uses an old cache.
 const AUDIO_ASSET_VERSION = '20261015-real-table-taps-v8';
-export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, collect: 0.78, collectRate: 0.92, check: 0.85, voice: 0.8, voiceLead: 0.025 });
+export const TABLE_AUDIO_MIX = Object.freeze({ chips: 0.70, chipsUnderVoice: 0.42, collect: 0.78, collectRate: 0.92, check: 0.85, voice: 0.8, voiceLead: 0.025, voiceRate: 1.06 });
 
 /** Same-origin recorded cues and synthesized effects; never a delayed action queue. */
 export function createTableSounds({ enabled = false, voiceEnabled = true,
   AudioContext: AudioContextClass = globalThis.AudioContext ?? globalThis.webkitAudioContext,
-  document: doc = globalThis.document, now = () => Date.now(), fetch: fetcher = globalThis.fetch } = {}) {
+  document: doc = globalThis.document, window: win = doc?.defaultView ?? globalThis.window,
+  now = () => globalThis.performance?.now?.() ?? Date.now(), fetch: fetcher = globalThis.fetch,
+  setTimeout: schedule = globalThis.setTimeout, clearTimeout: cancelSchedule = globalThis.clearTimeout } = {}) {
   let context = null, unlocked = false, disposed = false, lastPlayed = -Infinity, generation = 0;
-  let voiceSource = null, knockNextAt = 0;
+  let voiceSource = null, knockNextAt = 0, healthTimer = null, stalledContext = null;
   let activated = false, suspendedByApp = false, recoveryAttempted = false;
+  let recovering = null, lastRecoveryAt = -Infinity, lastPreloadAt = -Infinity, lastCountdown = -Infinity;
   const buffers = new Map(), loading = new Map(), active = new Set();
   const heardEvents = new Set();
   const visible = () => doc?.visibilityState !== 'hidden';
-  const ready = () => !disposed && enabled && unlocked && visible() && context?.state === 'running';
+  function ready() {
+    if (disposed || !enabled || !visible() || suspendedByApp) return false;
+    // Some mobile engines omit statechange after an audio-route interruption.
+    // A new live event may repair an already activated context, but that event
+    // is dropped rather than queued behind an asynchronous resume.
+    if (context?.state !== 'running') { ignoreRejection(resumeActivated()); return false; }
+    if (activated) unlocked = true;
+    if (unlocked && now() - lastPreloadAt >= 3000) ignoreRejection(preloadAudio());
+    return unlocked;
+  }
   const ignoreRejection = promise => { if (promise?.catch) promise.catch(() => {}); };
   function stopVoice() {
     if (!voiceSource) return;
@@ -259,25 +293,81 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
   function stopPlayback() {
     stop(); stopVoice(); knockNextAt = 0;
   }
+  function clearHealthCheck() {
+    if (healthTimer !== null) cancelSchedule(healthTimer);
+    healthTimer = null;
+  }
+  function canRestore(audio) {
+    return !disposed && activated && enabled && visible() && !suspendedByApp && context === audio && audio?.state !== 'closed';
+  }
+  // Some WebKit interruptions leave state=running while the rendering clock
+  // is frozen. Check only after a foreground return, not on every action.
+  // One suspend/resume repair is allowed; never replay a missed game event.
+  function watchProgress(allowRepair = true) {
+    clearHealthCheck();
+    const audio = context, time = audio?.currentTime;
+    if (!canRestore(audio) || !Number.isFinite(time)) return;
+    healthTimer = schedule(() => {
+      healthTimer = null;
+      if (!canRestore(audio) || audio.state !== 'running' || !Number.isFinite(audio.currentTime)) return;
+      if (audio.currentTime > time + 0.001) { stalledContext = null; return; }
+      if (allowRepair) ignoreRejection(repairStalled(audio));
+      else stalledContext = { audio, time: audio.currentTime };
+    }, 800);
+  }
+  async function repairStalled(audio) {
+    if (!canRestore(audio) || recovering) return false;
+    const attempt = ++generation, recovery = { repair: true }, time = audio.currentTime;
+    recovering = recovery; unlocked = false; stopPlayback();
+    try {
+      await audio.suspend();
+      if (!canRestore(audio) || attempt !== generation) return false;
+      await audio.resume();
+      if (!canRestore(audio) || attempt !== generation) return false;
+      unlocked = audio.state === 'running';
+      if (unlocked) { recoveryAttempted = false; watchProgress(false); }
+      return unlocked;
+    } catch {
+      if (context === audio && attempt === generation) {
+        unlocked = false;
+        if (canRestore(audio) && audio.state === 'running' && audio.currentTime <= time + 0.001) {
+          stalledContext = { audio, time: audio.currentTime };
+        }
+      }
+      return false;
+    }
+    finally { if (recovering === recovery) recovering = null; }
+  }
   function suspend() {
-    generation++; unlocked = false; suspendedByApp = true; stop(); stopVoice(); knockNextAt = 0;
+    clearHealthCheck(); stalledContext = null;
+    generation++; recovering = null; unlocked = false; suspendedByApp = true; stop(); stopVoice(); knockNextAt = 0;
     try { if (context && context.state !== 'closed') ignoreRejection(context.suspend()); } catch {}
   }
   async function resumeActivated() {
-    // Reuse only an already activated context. Browsers may still require a
-    // fresh real gesture; a rejected/pending resume never blocks the table or
-    // queues missed sounds. One attempt per interruption avoids retry loops.
+    // An already activated context can recover without replaying missed cues.
+    // Rejected resumes may be retried on later live/lifecycle events, capped
+    // at once per 3 seconds. One unresolved browser-policy promise stays alone
+    // until a real gesture supersedes it; no growing resume/playback queue.
     if (disposed || !activated || !enabled || !visible() || suspendedByApp ||
-        !context || context.state === 'closed' || recoveryAttempted) return false;
-    recoveryAttempted = true;
-    const audio = context, attempt = generation;
+        !context || context.state === 'closed' || recovering ||
+        (recoveryAttempted && now() - lastRecoveryAt < 3000)) return false;
+    recoveryAttempted = true; lastRecoveryAt = now();
+    const audio = context, attempt = generation, recovery = {};
+    recovering = recovery;
     try {
-      if (audio.state !== 'running') await audio.resume();
+      const neededResume = audio.state !== 'running';
+      if (neededResume) { stopPlayback(); await audio.resume(); }
       if (disposed || context !== audio || attempt !== generation || !enabled || !visible() || suspendedByApp) return false;
       unlocked = audio.state === 'running';
-      if (unlocked) { recoveryAttempted = false; ignoreRejection(preloadAudio()); }
+      if (unlocked) {
+        recoveryAttempted = false; ignoreRejection(preloadAudio());
+        // Start the clock check after resume completes: it may take longer
+        // than the watchdog itself when the app returns from the background.
+        if (neededResume) watchProgress();
+      }
       return unlocked;
     } catch { if (context === audio && attempt === generation) unlocked = false; return false; }
+    finally { if (recovering === recovery) recovering = null; }
   }
   function audioStateChanged() {
     if (disposed || !activated || !enabled || !visible() || suspendedByApp) return;
@@ -286,14 +376,37 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       unlocked = false; stopPlayback(); ignoreRejection(resumeActivated());
     }
   }
+  function restoreAudio() {
+    if (!visible() || disposed || !enabled) return;
+    suspendedByApp = false;
+    const resumed = resumeActivated();
+    ignoreRejection(resumed);
+    if (context?.state === 'running' && healthTimer === null && !stalledContext && !recovering) watchProgress();
+    if (activated && context?.state === 'running' && now() - lastPreloadAt >= 3000) ignoreRejection(preloadAudio());
+    return resumed;
+  }
   function visibilityChanged() {
     if (!visible()) suspend();
-    else { suspendedByApp = false; recoveryAttempted = false; ignoreRejection(resumeActivated()); }
+    else { recoveryAttempted = false; restoreAudio(); }
   }
   doc?.addEventListener?.('visibilitychange', visibilityChanged);
+  // Touch pointerdown is not an activation-triggering event on mobile. The
+  // release/click path must work on any part of the page, including dialogs,
+  // without requiring the user to toggle their saved sound preference.
+  const gestureTypes = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'];
+  function gestureUnlock(event) {
+    if (event?.isTrusted === false || event?.type === 'pointerdown' && event.pointerType !== 'mouse' ||
+        event?.type === 'pointerup' && event.pointerType === 'mouse' || event?.type === 'keydown' && event.key === 'Escape') return;
+    ignoreRejection(unlock());
+  }
+  for (const type of gestureTypes) doc?.addEventListener?.(type, gestureUnlock, { capture: true, passive: true });
+  // BFCache returns, audio-route dialogs and restored connectivity do not all
+  // dispatch visibilitychange consistently across Safari/embedded browsers.
+  for (const type of ['pageshow', 'focus', 'online']) win?.addEventListener?.(type, restoreAudio);
+  win?.addEventListener?.('pagehide', suspend);
   function preloadAudio() {
     if (disposed || !context?.decodeAudioData || typeof fetcher !== 'function') return Promise.resolve(false);
-    const audio = context;
+    const audio = context; lastPreloadAt = now();
     const types = ['chips', ...(voiceEnabled ? TABLE_VOICE_CUES : [])];
     return Promise.all(types.map(type => {
       if (buffers.has(type)) return Promise.resolve(true);
@@ -320,9 +433,9 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       return entry.promise;
     })).then(results => results.every(Boolean));
   }
-  function clearAudio() {
+  function clearAudio({ keepBuffers = false } = {}) {
     for (const { controller } of loading.values()) controller.abort();
-    loading.clear(); buffers.clear();
+    loading.clear(); if (!keepBuffers) buffers.clear();
   }
   function register(node, gain, kind = 'tone') {
     const entry = { node, gain, kind }; active.add(entry);
@@ -355,11 +468,12 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     const start = context.currentTime + offset;
     for (const [from, to, delay, duration, volume] of tones[type]) {
       const oscillator = context.createOscillator(), gain = context.createGain();
-      register(oscillator, gain); oscillator.type = 'sine';
+      register(oscillator, gain, type.startsWith('countdown') ? 'countdown' : type === 'yourturn' ? 'turn' : 'tone'); oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(from, start + delay);
       oscillator.frequency.exponentialRampToValueAtTime(to, start + delay + duration);
       gain.gain.setValueAtTime(0.0001, start + delay);
       gain.gain.exponentialRampToValueAtTime(volume, start + delay + 0.004);
+      if (type.startsWith('countdown')) gain.gain.setValueAtTime(volume, start + delay + duration * 0.55);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + delay + duration);
       oscillator.start(start + delay); oscillator.stop(start + delay + duration + 0.01); played = true;
     }
@@ -382,13 +496,18 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
     if (type === 'check') return knock();
     // A real payout can share a response with the final action. It replaces
     // that chip channel immediately; the event ID prevents duplicate playback.
-    const timestamp = now(); if (type !== 'collect' && timestamp - lastPlayed < 90) return false;
-    stop('tone');
+    const timestamp = now(), countdown = type.startsWith('countdown'), turn = type === 'yourturn';
+    if (countdown ? timestamp - lastCountdown < 300 : !turn && type !== 'collect' && timestamp - lastPlayed < 90) return false;
+    // Action-ready bells and final-seconds warnings have independent channels.
+    // A preceding action or board cue cannot swallow or cut off either one.
+    // Turn IDs handle deduplication without a time throttle that could eat a
+    // different real turn arriving in a coalesced update.
+    stop(countdown ? 'countdown' : turn ? 'turn' : 'tone');
     try {
       const separateChips = chips && !['chip', 'collect'].includes(type);
       const chipsPlayed = separateChips ? cue('chip', 0, speech) : false;
-      const effectPlayed = cue(type, separateChips ? 0.08 : 0, speech);
-      if (chipsPlayed || effectPlayed) lastPlayed = timestamp;
+      const effectPlayed = cue(type, separateChips && !turn ? 0.08 : 0, speech);
+      if (chipsPlayed || effectPlayed) { if (countdown) lastCountdown = timestamp; else if (!turn) lastPlayed = timestamp; }
       return chipsPlayed || effectPlayed;
     } catch { stop(); return false; }
   }
@@ -406,10 +525,54 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       }
       const node = context.createBufferSource(), gain = context.createGain();
       node.buffer = buffers.get(type); gain.gain.setValueAtTime(TABLE_AUDIO_MIX.voice, context.currentTime);
+      // A small, uniform speed-up keeps the approved recordings and wording,
+      // including Mandarin All-in. Only speech is shortened; table effects
+      // retain their own pace. Buffer playback raises pitch slightly as well.
+      node.playbackRate.setValueAtTime(TABLE_AUDIO_MIX.voiceRate, context.currentTime);
       node.connect(gain); gain.connect(context.destination); const entry = { node, gain }; voiceSource = entry;
       node.onended = () => { if (voiceSource === entry) voiceSource = null; try { node.disconnect(); gain.disconnect(); } catch {} };
       node.start(context.currentTime + TABLE_AUDIO_MIX.voiceLead); return true;
     } catch { stopVoice(); return false; }
+  }
+  async function unlock() {
+    if (disposed || !enabled || !visible() || !AudioContextClass) return false;
+    // A newer real gesture supersedes an automatic recovery or an older
+    // gesture. Late promises must not relock a successfully resumed table.
+    if (stalledContext?.audio === context && context.currentTime > stalledContext.time + 0.001) stalledContext = null;
+    // Releasing a touch also dispatches click. Healthy audio needs no second
+    // resume, graph rebuild, source stop or generation of queued promises.
+    if (context?.state === 'running' && activated && !suspendedByApp && !stalledContext && !recovering?.repair) {
+      if (recovering) { generation++; recovering = null; }
+      unlocked = true;
+      if (now() - lastPreloadAt >= 3000) ignoreRejection(preloadAudio());
+      return true;
+    }
+    // Queue resume during this gesture even if an earlier suspend is still
+    // pending and the browser has not changed its reported state yet.
+    const resumePendingRepair = Boolean(recovering?.repair), wasActivated = activated;
+    const attempt = ++generation;
+    let audio;
+    try {
+      suspendedByApp = false; recoveryAttempted = false; recovering = null;
+      if (!context || context.state === 'closed' || stalledContext?.audio === context) {
+        const retired = context;
+        clearHealthCheck(); stopPlayback();
+        retired?.removeEventListener?.('statechange', audioStateChanged);
+        clearAudio({ keepBuffers: Boolean(stalledContext) }); activated = false; stalledContext = null;
+        try { if (retired && retired.state !== 'closed') ignoreRejection(retired.close()); } catch {}
+        context = new AudioContextClass();
+        context.addEventListener?.('statechange', audioStateChanged);
+      }
+      audio = context;
+      if (audio.state !== 'running' || resumePendingRepair) { stopPlayback(); await audio.resume(); }
+      if (disposed || attempt !== generation || context !== audio || !enabled || !visible() || suspendedByApp) return false;
+      unlocked = audio.state === 'running';
+      if (unlocked) {
+        activated = true; ignoreRejection(preloadAudio());
+        if (wasActivated) watchProgress();
+      }
+      return unlocked;
+    } catch { if (attempt === generation && (!audio || context === audio)) unlocked = false; return false; }
   }
   return {
     setEnabled(value) { enabled = Boolean(value); if (!enabled) suspend(); },
@@ -417,34 +580,27 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
       voiceEnabled = Boolean(value);
       if (!voiceEnabled) stopVoice(); else if (ready()) ignoreRejection(preloadAudio());
     },
-    async unlock() {
-      if (disposed || !enabled || !visible() || !AudioContextClass) return false;
-      // A newer real gesture supersedes an automatic recovery or an older
-      // gesture. Late promises must not relock a successfully resumed table.
-      const attempt = ++generation;
-      let audio;
-      try {
-        suspendedByApp = false; recoveryAttempted = false;
-        if (!context || context.state === 'closed') {
-          context?.removeEventListener?.('statechange', audioStateChanged);
-          clearAudio(); activated = false; context = new AudioContextClass();
-          context.addEventListener?.('statechange', audioStateChanged);
-        }
-        audio = context;
-        if (audio.state !== 'running') await audio.resume();
-        if (disposed || attempt !== generation || context !== audio || !enabled || !visible() || suspendedByApp) return false;
-        unlocked = audio.state === 'running';
-        if (unlocked) { activated = true; ignoreRejection(preloadAudio()); }
-        return unlocked;
-      } catch { if (attempt === generation && (!audio || context === audio)) unlocked = false; return false; }
-    },
+    unlock, restore: restoreAudio,
     play, speak, stopPlayback, preloadAudio, preloadVoices: preloadAudio,
     playFeedback(feedback) {
+      // Readiness can arrive separately from the action that passes the turn.
+      // Deduplicate it independently so an already heard action ID cannot
+      // swallow a fresh bell; consume muted/hidden events without replaying.
+      const hasTurnId = typeof feedback?.yourTurnId === 'string' && feedback.yourTurnId.length > 0;
+      let turned = false;
+      if (hasTurnId) {
+        const id = `yourturn:${feedback.yourTurnId}`;
+        if (!heardEvents.has(id)) {
+          heardEvents.add(id);
+          if (heardEvents.size > 256) heardEvents.delete(heardEvents.values().next().value);
+          turned = play('yourturn');
+        }
+      }
       // A command response and SSE can reach independent presentation hooks.
       // Consume the event even while muted/loading so enabling audio cannot play
       // an old action. Keep a bounded set, not a playback queue.
       if (feedback?.eventId) {
-        if (heardEvents.has(feedback.eventId)) return false;
+        if (heardEvents.has(feedback.eventId)) return turned;
         heardEvents.add(feedback.eventId);
         if (heardEvents.size > 256) heardEvents.delete(heardEvents.values().next().value);
       }
@@ -457,14 +613,21 @@ export function createTableSounds({ enabled = false, voiceEnabled = true,
         checked = knock() || checked;
       }
       if (checks.length && !feedback?.speech) stopVoice();
-      const effect = feedback?.sound && !(feedback.sound === 'check' && checks.length) ? play(feedback.sound, { chips: feedback.chips === true, speech: voiceEnabled && buffers.has(feedback.speech) }) : false;
+      // Older callers may also carry sound=yourturn. Keep their chips/voice,
+      // but never play the same bell twice when the new turn ID is present.
+      const effectType = hasTurnId && feedback?.sound === 'yourturn' ? (feedback.chips === true ? 'chip' : null) : feedback?.sound;
+      const effect = effectType && !(effectType === 'check' && checks.length) ? play(effectType, { chips: feedback.chips === true, speech: voiceEnabled && buffers.has(feedback.speech) }) : false;
       const spoken = feedback?.speech ? speak(feedback.speech) : false;
-      return checked || effect || spoken;
+      return turned || checked || effect || spoken;
     },
     suspend,
     dispose() {
+      clearHealthCheck(); stalledContext = null;
       disposed = true; generation++; unlocked = false; stop(); stopVoice(); knockNextAt = 0; clearAudio();
       doc?.removeEventListener?.('visibilitychange', visibilityChanged);
+      for (const type of gestureTypes) doc?.removeEventListener?.(type, gestureUnlock, true);
+      for (const type of ['pageshow', 'focus', 'online']) win?.removeEventListener?.(type, restoreAudio);
+      win?.removeEventListener?.('pagehide', suspend);
       context?.removeEventListener?.('statechange', audioStateChanged);
       try { if (context && context.state !== 'closed') ignoreRejection(context.close()); } catch {}
       context = null; heardEvents.clear();

@@ -200,3 +200,20 @@ export function renderHandOverview(hand, viewerId) {
     }).join('')}</div></article>`;
   }).join('')}</div>${chronology(hand, lines, bb, names)}<p class="ho-privacy">这里只展示本人底牌与已公开底牌；未公开底牌保留牌背。净盈亏含本手关联的小游戏结算。</p></section>`;
 }
+
+export function renderCompactHand(hand, viewerId) {
+  validate(hand);
+  const bb=hand.settings?.bigBlind??hand.bigBlind, lines=actions(hand,bb);
+  const visible=hand.board; // Supplemental rabbit cards never become betting streets.
+  const boardCells=[null,visible.slice(0,3),visible.slice(3,4),visible.slice(4,5)];
+  const kinds=new Set(['ante','entryBlind','deadBlind','check','call','raise','allin','fold']);
+  const compactMoney=n=>formatChips(n,bb,{signed:true,unitLabel:false,digits:4});
+  const brief=line=>line.label.replaceAll('全下','All-in').replaceAll('加注至','加至').replaceAll('跟注','跟').replaceAll(' 积分','').replaceAll(' BB','bb');
+  return `<section class="hand-overview compact-hand" aria-label="简略牌谱"><p class="compact-units">单位：${unitLabel()} · 小盲／大盲见玩家标记</p><div class="compact-route compact-route-head"><span>玩家</span>${streets.map((s,i)=>`<span>${streetNames[s]}${boardCells[i]?.length?cardRow(boardCells[i],boardCells[i].length):''}</span>`).join('')}<span>德州<br>输赢</span></div>${[...hand.players].sort((a,b)=>a.seat-b.seat).map(p=>{
+    const mini=miniNet(hand,p.id,p);
+    return `<article class="compact-route${p.id===viewerId?' compact-me':''}" aria-label="${esc(p.name)}的简略牌谱"><div class="compact-player"><strong title="${esc(p.name)}">${esc(p.name)}</strong>${p.id===viewerId?'<small>我</small>':''}${position(hand,p)}</div>${streets.map((street,i)=>{
+      const route=lines.filter(l=>l.event.playerId===p.id&&l.event.street===street&&kinds.has(l.event.type));
+      return `<div class="compact-street">${i===0?cardRow(p.cards,2):''}${route.length?route.map(l=>`<span class="compact-action ho-action-${actionKind(l)}" title="${esc(l.label)}">${esc(brief(l))}</span>`).join(''):'<span class="compact-muted">—</span>'}</div>`;
+    }).join('')}<div class="compact-profit ${tone(p.net)}">${esc(compactMoney(p.net))}${mini?`<small>小游戏 ${esc(compactMoney(mini))}</small>`:''}</div></article>`;
+  }).join('')}<p class="note compact-footnote">单位：${unitLabel()} · 德州输赢与鱿鱼分列。未公开底牌仍隐藏；完整顺序、分池和补看余牌见详细版。</p></section>`;
+}

@@ -1,0 +1,4 @@
+/* The final hand keeps the ordinary table, header, controls and toolbar.
+   Only impossible actions are disabled; no separate recap screen or overlay. */
+.room-ending .empty-seat{visibility:hidden}
+.room-ending .show-card-hint{display:none}

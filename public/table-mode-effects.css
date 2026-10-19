@@ -1,0 +1,39 @@
+/* A short transition lives in the existing table summary row. Its children
+   remain hit-testable, while the decorative surface never intercepts input. */
+.room-status-bar.has-mode-notice{position:relative;isolation:isolate}
+.room-status-bar.has-mode-notice>:not(.table-mode-notice){opacity:0}
+.table-mode-notice{--mode-ink:#643ca0;--mode-edge:#bc96e5;--mode-fill:#f1e6ff;--mode-shine:#b783e1;position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;box-sizing:border-box;padding:1px 9px;border:1px solid var(--mode-edge);border-radius:8px;background:linear-gradient(105deg,var(--mode-fill),#fffdf8 53%,var(--mode-fill));color:var(--mode-ink);overflow:hidden;white-space:nowrap;pointer-events:none;line-height:1.15;font-variant-numeric:tabular-nums;animation:none}
+.table-mode-notice.is-animated{animation:table-mode-lifetime var(--mode-duration,1100ms) linear calc(-1 * var(--mode-age,0ms)) both}
+.table-mode-notice.mode-bomb{--mode-ink:#734600;--mode-edge:#dab15a;--mode-fill:#ffe9ae;--mode-shine:#efb63e}
+.table-mode-notice.mode-combined{--mode-ink:#663a88;--mode-edge:#c49bc3;--mode-fill:#f8dfbe;--mode-shine:#ca86d6;background:linear-gradient(105deg,#ffebba,#f6e9ff 66%,#ecdcff)}
+.table-mode-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px;line-height:1;width:21px;position:relative;z-index:1}
+.mode-combined .table-mode-icon{width:36px;font-size:15px;letter-spacing:1px}
+.table-mode-title{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:850;position:relative;z-index:1;letter-spacing:.015em}
+.table-mode-detail{min-width:0;max-width:65%;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600;position:relative;z-index:1}
+.table-mode-notice[data-mode-type="squid-end"] .table-mode-icon{width:18px;height:18px;border:1px solid var(--mode-edge);border-radius:50%;font-size:13px;font-weight:900;background:#fff8}
+.table-mode-notice[data-mode-type="squid-end"] .table-mode-detail{font-weight:850}
+.table-mode-notice.is-positive .table-mode-detail{color:#126b49}.table-mode-notice.is-negative .table-mode-detail{color:#a83c41}
+.table-mode-notice:before,.table-mode-notice:after{content:"";position:absolute;pointer-events:none;opacity:0}
+.table-mode-notice.is-animated:before{width:46px;height:46px;left:calc(50% - 23px);top:calc(50% - 23px);border:3px dashed var(--mode-shine);border-radius:50%;animation:table-mode-ring 900ms ease-out calc(-1 * var(--mode-age,0ms)) both}
+.table-mode-notice.is-animated:after{inset:-40% -15%;background:linear-gradient(115deg,transparent 38%,#fff9 49%,transparent 61%);animation:table-mode-sweep 950ms ease-out calc(-1 * var(--mode-age,0ms)) both}
+.table-mode-notice.is-animated .table-mode-icon{animation:table-mode-pop 620ms cubic-bezier(.2,.85,.3,1) calc(-1 * var(--mode-age,0ms)) both}
+.table-mode-notice.is-animated[data-mode-type="squid-end"]:before{animation-name:table-mode-gather;animation-duration:900ms}
+.results-heading>div:first-child{flex:1}
+.results-heading p.has-mode-notice{position:relative;color:transparent!important;isolation:isolate}
+.results-heading p.has-mode-notice .table-mode-notice{justify-content:flex-start;border:0;background:none;border-radius:0;padding:0;gap:5px;color:#643ca0}
+.results-heading p.has-mode-notice .table-mode-icon{width:14px;height:14px;font-size:10px}.results-heading p.has-mode-notice .table-mode-title,.results-heading p.has-mode-notice .table-mode-detail{font-size:11px}
+.results-heading p.has-mode-notice .table-mode-notice:before,.results-heading p.has-mode-notice .table-mode-notice:after{display:none}
+@keyframes table-mode-lifetime{0%,88%{opacity:1}100%{opacity:0}}
+@keyframes table-mode-pop{0%{transform:scale(.45) rotate(-18deg)}45%{transform:scale(1.2) rotate(7deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes table-mode-ring{0%{transform:scale(.3) rotate(-30deg);opacity:.9}100%{transform:scale(4.5) rotate(35deg);opacity:0}}
+@keyframes table-mode-gather{0%{transform:scale(4.5) rotate(35deg);opacity:0}45%{opacity:.55}100%{transform:scale(.3) rotate(-30deg);opacity:0}}
+@keyframes table-mode-sweep{0%{transform:translateX(-75%);opacity:0}20%{opacity:.85}100%{transform:translateX(75%);opacity:0}}
+@media(max-width:760px){.table-mode-notice{gap:5px;padding:1px 6px;border-radius:6px}.table-mode-title{font-size:11px}.table-mode-detail{font-size:10px}.table-mode-icon{font-size:16px;width:19px}.mode-combined .table-mode-icon{width:31px;font-size:14px}}
+@media(max-width:360px){.table-mode-notice{gap:4px;padding-inline:4px}.table-mode-title{font-size:10px;letter-spacing:0}.table-mode-detail{font-size:9px}.mode-combined .table-mode-icon{width:28px;font-size:12px}.results-heading p.has-mode-notice .table-mode-title,.results-heading p.has-mode-notice .table-mode-detail{font-size:10px}}
+@media(prefers-reduced-motion:reduce){.table-mode-notice{animation:none}.table-mode-notice:before,.table-mode-notice:after{display:none}.table-mode-notice .table-mode-icon{animation:none!important;transform:none}}
+
+.squid-settlement-live{position:absolute;inset:0;z-index:8;background:#faf5ff;border:2px solid #b48bd8;border-radius:14px;padding:8px 10px;pointer-events:none;overflow:auto}.squid-result-card h3{font-size:14px;color:#713da0;margin:0 0 8px}.squid-result-rows{display:grid;gap:6px}.squid-result-row{display:grid;grid-template-columns:1fr auto;gap:4px;padding:7px;border-radius:8px;background:#f5f0fa;min-width:0}.squid-result-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.squid-result-row small{color:var(--muted)}.squid-result-row.is-me{outline:1px solid #a47ac9}.compact .squid-result-rows{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.compact .squid-result-row{display:flex;flex-direction:column;padding:3px 5px;font-size:11px;gap:2px}.compact .squid-result-row strong{font-size:11px;white-space:nowrap}.squid-result-history details{margin-top:10px;border:1px solid #dbc9e9;border-radius:10px;padding:10px}.squid-result-history summary{cursor:pointer;font-size:13px;color:#713da0}.squid-result-history details[open]>summary{margin-bottom:10px}
+
+.squid-settlement-live{padding:6px 8px}.compact h3{font-size:12px;line-height:18px;margin-bottom:4px}.compact .squid-result-row{line-height:12px;padding:2px 4px;gap:1px}.compact .squid-result-row strong{line-height:13px}.compact .squid-result-rows{gap:3px}
+/* Keep the dock footprint while the independent, non-interactive settlement is shown. */
+.table-bottom:has(>.squid-settlement-live)>:not(.squid-settlement-live),.table-bottom:has(>.squid-settlement-live)>:not(.squid-settlement-live) *{visibility:hidden!important}

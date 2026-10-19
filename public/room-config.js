@@ -1,5 +1,14 @@
 // Only reusable gameplay options cross from an old room to a new form.
 // Identity, invites, players and running-hand state are deliberately excluded.
+export const ROOM_DURATION_CHOICES = Object.freeze([15, 30, 45, 60, ...Array.from({ length: 22 }, (_, i) => 90 + i * 30)]);
+
+// Reusing an older room creates a new configuration. Round upward only here:
+// existing rooms and their absolute expiry time must keep their original value.
+export function normalizeRoomDuration(value) {
+  if (!Number.isSafeInteger(value) || value < 15 || value > 720) throw new Error('牌桌时长需要在 15–720 分钟之间');
+  return ROOM_DURATION_CHOICES.find(duration => duration >= value);
+}
+
 export function reusableRoomSettings(input, defaults) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('这个牌桌的配置无法读取，请选择其他牌桌');
   const result = { ...defaults };
@@ -23,6 +32,7 @@ export function reusableRoomSettings(input, defaults) {
   result.maxBuyInBB = 1000;
   result.actionSeconds = 20;
   result.timeBankSeconds = 30;
+  result.durationMinutes = normalizeRoomDuration(result.durationMinutes);
   result.timeBankCards = 3 * Math.ceil(result.durationMinutes / 30);
   if (!own('squidUnitBB') && own('squidUnit')) {
     if (typeof input.squidUnit !== 'number' || !Number.isFinite(input.squidUnit)) throw new Error('这个牌桌的配置无法读取，请选择其他牌桌');
@@ -33,7 +43,7 @@ export function reusableRoomSettings(input, defaults) {
     maxPlayers: [2, 9], smallBlind: [1, 1000], bigBlind: [result.smallBlind * 2, 2000],
     maxTotalBuyInBB: [100, Math.floor(1e9 / result.bigBlind / 50) * 50],
     squidUnitBB: [1, Math.floor(1e6 / result.bigBlind)], squidExtraTokens: [0, 100], actionSeconds: [20, 20],
-    bombIntervalMinutes: [1, 120], bombAnteBB: [1, 1000], durationMinutes: [30, 720], timeBankCards: [3, 72], timeBankSeconds: [30, 30],
+    bombIntervalMinutes: [1, 120], bombAnteBB: [1, 1000], durationMinutes: [15, 720], timeBankCards: [3, 72], timeBankSeconds: [30, 30],
   };
   for (const [key, [min, max]] of Object.entries(ranges)) {
     if (key === 'maxTotalBuyInBB' && result[key] === null) continue;

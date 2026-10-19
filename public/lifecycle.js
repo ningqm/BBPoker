@@ -23,6 +23,17 @@ export function lobbyTime(endsAt, now = Date.now()) {
 
 export function squidName(mode) { return mode === 'unlimited' ? '无限鱿鱼' : '普通鱿鱼'; }
 
+// The server's cutoff governs new rounds; an existing round still finishes.
+// Recompute from the synchronized clock even when no new room event arrives.
+export function squidRoundNotice(room, now = Date.now()) {
+  if (!room || room.status === 'closed' || (!room.settings?.squid && !room.mini?.squid?.active)) return '';
+  const cutoff = Number(room.miniGamesCutoffAt);
+  if (!Number.isFinite(cutoff) || cutoff <= 0 || now < cutoff) return '';
+  const ended = Number(room.endsAt) > 0 && now >= Number(room.endsAt);
+  if (room.mini?.squid?.active) return ended ? '已到时 · 本轮收尾' : '本轮结束后停开';
+  return ended ? '已到时 · 不再开轮' : '末5分钟 · 停开新轮';
+}
+
 // Read only the public round snapshot. Legacy rounds have one mark per winner;
 // a new room's settings must never relabel an already-running legacy round.
 export function squidProgress(room) {
@@ -43,6 +54,8 @@ export function squidProgress(room) {
 }
 
 export function playerSquidCount(room, player) {
+  // Finished counts remain in history, never on seats during ordinary hands.
+  if (!room?.mini?.squid?.active || room.status === 'closed') return 0;
   const value = player?.squidCount;
   if (Number.isSafeInteger(value) && value >= 0) return value;
   return squidProgress(room).counts[player?.id] ?? Number(Boolean(player?.squidWon));
@@ -65,8 +78,8 @@ export function squidMode(room) {
   const note = settlingAbsentees ? '可继续的原轮玩家均已有标记。等待片刻后按现有标记结轮；未获标者及时回来并满足参与条件，仍可继续原轮。' : waitingAtExpiry ? '牌桌已到时，可参与的原轮玩家不足两人。等待窗口内恢复就继续原轮，否则按现有标记结算散桌。'
     : admissionClosed ? '牌桌已到时，仅已加入本轮的玩家继续或返回；不再增加参与者或本轮鱼数。'
     : ordinaryHand ? '本手沿用发牌时的玩法，不获得鱿鱼标记；下一手继续本轮，符合入场条件的新人可加入。'
-    : blocked ? '可参与的本轮玩家不足两人，暂不开新手。已有鱼和预留保留；未到时可等返桌或符合条件的新人加入。'
-    : '缺席者不发新牌、不持续扣盲，已有鱼与预留保留。新人符合等盲或补盲及预留条件后，从下一手加入本轮，初始无鱼且总鱼数加 1。';
+    : blocked ? '可参与的本轮玩家不足两人，暂不开新手。已有鱼与结算责任保留；未到时可等返桌或符合条件的新人加入。'
+    : '缺席者不发新牌、不持续扣盲，已有鱼与结算责任保留。新人符合等盲或补盲条件后，从下一手加入本轮，初始无鱼且总鱼数加 1；结轮时才扣结算积分。';
   return { paused: blocked, playing, round, countsForSquid, ordinaryHand, waitingAtExpiry, settlingAbsentees, label, note };
 }
 
@@ -95,17 +108,17 @@ export function entryBlindView(room, player) {
     capacity: ['本轮暂不可增加参与者', '等下轮', '已入座，本轮参与人数已达上限，等待本轮结束。'],
     offline: ['等待连接恢复', '离线', '座位与参与方式已保存，连接恢复后再参与。'],
     sittingOut: ['已暂离', '暂离', '座位与参与方式已保留，返回牌桌后再参与。'],
-    departing: ['等待取消离开安排', '待离开', '已安排离座或暂离；请先取消安排，再修改参与方式。'],
+    departing: ['等待取消离开安排', '待离开', '已安排离座、暂离或离开本桌；请先取消安排，再修改参与方式。'],
   }[waitingFor];
   if (blocked) [label, seatLabel, note] = blocked;
   if (estimated && !blocked) note += ' 本手仍在进行，最终以结束后的座位和积分为准。';
   return { mode, modeLabel: mode === 'wait' ? '等大盲加入' : '补盲加入', live, dead, total: live + dead, waitingFor, label, note, seatLabel,
     naturalBigBlind, estimated, nextHandEligible: entry.nextHandEligible === true,
-    missed: entry.reason === 'missed', canChoose: player.seat != null && !player.pendingDeparture && !player.sittingOut };
+    missed: entry.reason === 'missed', canChoose: player.seat != null && !player.pendingDeparture && !player.sittingOut && !player.leftRoom };
 }
 
 // A successful change needs visible acknowledgement even when a position or
-// squid reserve still prevents dealing. Never promise insertion into a live hand.
+// participation condition still prevents dealing. Never promise insertion into a live hand.
 export function entryChoiceFeedback(room, player) {
   const entry = entryBlindView(room, player);
   if (!entry) return participation(room, player).label;
@@ -134,7 +147,7 @@ export function squidJoinView(room, player) {
   const requiredReserve = Number.isSafeInteger(quote?.requiredReserve) && quote.requiredReserve >= 0 ? quote.requiredReserve : null;
   const budget = Number.isSafeInteger(quote?.tokenBudgetAfterJoin) && quote.tokenBudgetAfterJoin > 0 ? quote.tokenBudgetAfterJoin : null;
   return { status, label, seatLabel, requiredReserve, budget, minimum: room.hand?.status === 'playing',
-    note: typeof quote?.reason === 'string' && quote.reason ? quote.reason : '符合等盲或补盲及预留条件后，实际拿牌才加入本轮；以 0 鱼入轮，总鱼数加 1。' };
+    note: typeof quote?.reason === 'string' && quote.reason ? quote.reason : '符合等盲或补盲条件后，实际拿牌才加入本轮；以 0 鱼入轮，总鱼数加 1，不提前扣积分。' };
 }
 
 export function squidAdmissionClosed(room, player, now = Date.now()) {
@@ -144,13 +157,14 @@ export function squidAdmissionClosed(room, player, now = Date.now()) {
 }
 
 export function participation(room, player) {
-  if (!player || player.seat == null) return { label: '观战中', note: '选择空座，带入积分后参加。' };
+  if (!player || player.seat == null) return { label: '观战中', note: player?.leftRoom ? '已离开本桌，回来查看不会自动参与；选择空座重新入座。' : '选择空座，带入积分后参加。' };
   if (player.pendingDeparture) return {
-    label: player.pendingDeparture === 'stand' ? '本手后离座' : '本手后暂离',
+    label: player.pendingDeparture === 'leave' ? '本手后离开本桌' : player.pendingDeparture === 'stand' ? '本手后离座' : '本手后暂离',
     note: '已安排，当前这手仍照常进行。', canCancel: true,
   };
   if (room.hand?.status === 'playing' && player.inHand) return { label: '正在参与本手', note: '' };
-  if (player.sittingOut) return { label: '你已暂离', note: '座位、鱿鱼资格与预留保留。回来后可继续未结束的原轮。', canReturn: true };
+  if (player.leftRoom) return { label: '已离开本桌', note: '回来查看不会自动参与；继续参与后再按入桌条件发牌。', canReturn: true };
+  if (player.sittingOut) return { label: player.autoSitOut ? '断线满 90 秒，已自动暂离' : '你已暂离', note: '座位、鱿鱼资格与结算责任保留。回来后可继续未结束的原轮。', canReturn: true };
   const join = squidJoinView(room, player);
   if (join) return join;
   const entry = entryBlindView(room, player);
@@ -165,8 +179,8 @@ export function buyinTiming(room, isSit = true, player = null, now = Date.now())
     : '立即到账，下次发牌前可用。';
   const original = room.mini?.squid?.active && room.mini.squid.participants?.includes(player?.id);
   if (isSit && squidAdmissionClosed(room, player, now)) return '牌桌已到时，仅收尾本轮；新玩家不能再入座参加本轮，可留在房间观战。';
-  if (isSit && original) return '确认后立即入座。本轮鱿鱼资格、已有鱼与预留都保留，重新入座不重复增加鱼数或收一份入轮预留；漏盲仍按提示处理。';
-  if (isSit && room.mini?.squid?.active) return '确认后立即入座，可中途加入本轮。符合等盲或补盲及预留条件后，从符合条件的下一手以 0 鱼加入，总鱼数加 1；实际拿牌时才收预留，等待时不扣盲。';
+  if (isSit && original) return '确认后立即入座。本轮鱿鱼资格、已有鱼与结算责任都保留，重新入座不重复增加鱼数；漏盲仍按提示处理。';
+  if (isSit && room.mini?.squid?.active) return '确认后立即入座，可中途加入本轮。符合等盲或补盲条件后，从符合条件的下一手以 0 鱼加入，总鱼数加 1；不提前扣鱿鱼积分，等待时不扣盲。';
   if (isSit && room.hand?.status === 'playing') return '确认后立即入座。这手已经开始，等待后续符合条件的手牌，等待时不扣盲。';
   return '确认后立即入座，无需房主审核。';
 }
@@ -182,9 +196,9 @@ export function departurePlan(room, player, type) {
   return {
     type, queued, cost, reserve, participant, round: participant ? Number(squid.round) || 0 : 0, won, fishCount,
     canEarnMark: queued && Boolean(squidMode(room)?.countsForSquid),
-    title: type === 'stand' ? '离开座位' : '暂离牌桌',
-    label: queued ? type === 'stand' ? '本手后离座' : '本手后暂离' : type === 'stand' ? '确认离座' : '确认暂离',
-    description: type === 'stand' ? '离座后收回可用的桌上积分，留在房间观战；本轮鱿鱼预留仍保留至结算。以后可以重新入座。' : '保留座位和积分，暂不参加新的手牌、不持续扣盲；回来后可继续。',
+    title: type === 'leave' ? '离开本桌' : type === 'stand' ? '离开座位' : '暂离牌桌',
+    label: type === 'leave' ? queued ? '确认离开 · 本手后离座' : '确认离开本桌' : queued ? type === 'stand' ? '本手后离座' : '本手后暂离' : type === 'stand' ? '确认离座' : '确认暂离',
+    description: type === 'leave' ? '返回大厅并退出自己的参与，不暂停或结束其他人的牌局。可用积分在离座时收回，鱿鱼权益与结算责任保留；房主离开会转交管理权。回来查看不会自动重新参与。' : type === 'stand' ? '离座后收回可用的桌上积分，留在房间观战；仍参与本轮鱿鱼结算，离开不会免除应付积分。以后可以重新入座。' : '保留座位和积分，暂不参加新的手牌、不持续扣盲；回来后可继续。',
   };
 }
 
@@ -197,4 +211,48 @@ export function squidSettlement(room) {
     mode: progress.mode, awarded: progress.awarded,
     loserCost: progress.awarded * Number(squid.unit || 0), winnerGain: progress.missing * Number(squid.unit || 0),
     winnerCount: progress.holders, loserCount: progress.missing };
+}
+
+// A quote only: the server applies the debt existing at the safe credit boundary.
+export function buyinSettlement(amount, debt = 0) {
+  const incoming = Number.isSafeInteger(amount) && amount >= 0 ? amount : 0;
+  const owed = Number.isSafeInteger(debt) && debt >= 0 ? debt : 0;
+  const repaid = Math.min(incoming, owed);
+  return { repaid, usable: incoming - repaid, remaining: owed - repaid };
+}
+
+// Revealing one card must not lock the other card or the next hand's controls.
+// Each request carries an immutable identity/room/hand scope.
+export function createCardRevealController({ current, send, apply, failed, changed }) {
+  const pending = new Map();
+  const key = (scope, index) => JSON.stringify([scope?.userId, scope?.code, scope?.handId, index]);
+  const same = scope => {
+    const live = current();
+    return live && live.userId === scope.userId && live.code === scope.code && live.handId === scope.handId && scope.valid();
+  };
+  return {
+    pending(scope, index) { return pending.has(key(scope, index)); },
+    reset() { pending.clear(); },
+    async reveal(index) {
+      const scope = current();
+      if (!scope || ![0, 1].includes(index) || !scope.canReveal(index)) return false;
+      const id = key(scope, index);
+      if (pending.has(id)) return false;
+      const request = {};
+      pending.set(id, request); changed();
+      try {
+        const result = await send(scope, index);
+        if (same(scope)) apply(result);
+        return true;
+      } catch (error) {
+        // The event stream may already have confirmed a request whose HTTP
+        // response was lost. Do not report an already-visible card as failed.
+        if (same(scope) && !current().isShown(index)) failed(error);
+        return false;
+      } finally {
+        if (pending.get(id) === request) pending.delete(id);
+        if (same(scope)) changed();
+      }
+    },
+  };
 }

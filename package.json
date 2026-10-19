@@ -1,9 +1,9 @@
 {
   "name": "bbpoker",
-  "version": "0.23.0",
+  "version": "0.25.6",
   "private": true,
   "type": "module",
-  "description": "Points-only Texas Hold'em for friends with public or invited tables",
+  "description": "Points-only Texas Holdem for friends with public or invited tables",
   "engines": {
     "node": ">=22"
   },
@@ -11,7 +11,15 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check src/auth.js && node --check src/room.js && node --check src/phh.js && node --check src/origins.js && node --check public/app.js && node --check public/platform.js && node --check public/replay.js && node --check src/avatar.js && node --check src/profile.js && node --check public/avatar.js && node --check public/table-feedback.js && node --check public/check-knock.js && node --check public/turn-recovery.js && node --check src/records.js && node --check src/hand-context.js && node --check public/room-config.js && node --check public/records.js && node --check public/hand-overview.js && node --check src/equity.js && node --check src/analytics.js && node --check public/stats.js && node --check public/table-fun.js && node --check src/lobby.js && node --check public/lifecycle.js && node --check src/entry-blinds.js && node --check public/money.js && node --check public/starting-hands.js && node --check public/table-controls.js && node --check public/stable-controls.js && node --check public/visual-viewport.js && node --check src/player-stats.js && node --check src/versus-stats.js && node --check public/player-stats.js && node --check public/versus-stats.js && node --check public/history-refresh.js && node --check public/lobby-view.js && node --check src/opponent-transfers.js && node --check src/direct-records.js && node --check src/record-games.js && node --check public/hand-position.js && node --check public/table-scene.js && node --check public/hand-category.js && node --check public/room-clock.js && node --check public/room-results.js"
+    "check": "node --check src/account-admin.js && node --check src/analytics.js && node --check src/auth.js && node --check src/avatar.js && node --check src/client-ip.js && node --check src/connection-diagnostics.js && node --check src/direct-records.js && node --check src/entry-blinds.js && node --check src/equity.js && node --check src/fairness.js && node --check src/hand-context.js && node --check src/lobby.js && node --check src/opponent-transfers.js && node --check src/origins.js && node --check src/phh.js && node --check src/player-stats.js && node --check src/poker.js && node --check src/pre-actions.js && node --check src/profile.js && node --check src/record-games.js && node --check src/records.js && node --check src/request-timing.js && node --check src/room.js && node --check src/static-assets.js && node --check src/store.js && node --check src/turn-delivery.js && node --check src/versus-stats.js && node --check public/action-performance.js && node --check public/admin-accounts.js && node --check public/app.js && node --check public/avatar.js && node --check public/check-knock.js && node --check public/client-config.js && node --check public/connection-diagnostics.js && node --check public/hand-category.js && node --check public/hand-overview.js && node --check public/hand-position.js && node --check public/history-refresh.js && node --check public/lifecycle.js && node --check public/lobby-view.js && node --check public/money.js && node --check public/platform.js && node --check public/player-stats.js && node --check public/pre-actions.js && node --check public/records.js && node --check public/replay.js && node --check public/room-clock.js && node --check public/room-config.js && node --check public/room-ending.js && node --check public/room-results.js && node --check public/room-snapshot.js && node --check public/stable-controls.js && node --check public/starting-hands.js && node --check public/startup.js && node --check public/stats.js && node --check public/sw.js && node --check public/table-controls.js && node --check public/table-feedback.js && node --check public/table-fun.js && node --check public/table-mode-effects.js && node --check public/table-mode-events.js && node --check public/table-scene.js && node --check public/turn-delivery.js && node --check public/turn-recovery.js && node --check public/versus-stats.js && node --check public/visual-viewport.js && node --check server.js",
+    "clients:prepare": "node scripts/build-clients.mjs",
+    "desktop:start": "npm --prefix apps/desktop start",
+    "desktop:package": "npm --prefix apps/desktop run package",
+    "mobile:sync": "npm --prefix apps/mobile run sync",
+    "build:web": "node scripts/build-web.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   },
   "license": "UNLICENSED"
 }

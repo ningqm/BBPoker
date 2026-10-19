@@ -37,3 +37,6 @@ apps/mobile/ios/
 deploy/STATUS.md
 coverage/
 
+
+# Local test evidence and generated reports
+/output/

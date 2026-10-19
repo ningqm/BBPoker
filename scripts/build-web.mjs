@@ -1,0 +1,22 @@
+import { build } from 'esbuild';
+import { readFile, writeFile, readdir, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const root=new URL('../',import.meta.url),pub=new URL('public/',root);
+const bundled=await build({entryPoints:[new URL('app.js',pub).pathname],bundle:true,minify:true,format:'esm',platform:'browser',target:['es2022'],write:false,metafile:true});
+const js=bundled.outputFiles[0].contents;
+let html=await readFile(new URL('index.html',pub),'utf8');
+const cssFiles=['style.css','table-fun.css','table-interactions.css','lobby.css','hand-records.css','hand-overview.css','money.css','table-scene.css','table-controls.css','room-results.css','room-ending.css','admin-accounts.css','table-mode-effects.css'];
+const css=await build({stdin:{contents:(await Promise.all(cssFiles.map(f=>readFile(new URL(f,pub),'utf8')))).join('\n'),loader:'css',resolveDir:pub.pathname},minify:true,write:false});
+const hash=b=>createHash('sha256').update(b).digest('hex').slice(0,16);
+const jsName=`app-entry.${hash(js)}.js`,cssName=`site.${hash(css.outputFiles[0].contents)}.css`;
+await writeFile(new URL(jsName,pub),js);await writeFile(new URL(cssName,pub),css.outputFiles[0].contents);
+html=html.replace(/\s*<!-- Start module downloads[^]*?-->\s*/,'\n').replace(/\s*<link rel="modulepreload"[^>]*>/g,'').replace(/<link rel="stylesheet"[^>]*>/g,'');
+html=html.replace('</head>',`  <link rel="stylesheet" href="/${cssName}">\n</head>`).replace(/<script type="module"(?: id="app-entry")? src="\/(?:app|app-entry\.[a-f0-9]+)\.js"><\/script>/,`<script type="module" id="app-entry" src="/${jsName}"></script>`);
+await writeFile(new URL('index.html',pub),html);
+for(const f of await readdir(pub))if(/^(app-entry\.[a-f0-9]+\.js|site\.[a-f0-9]+\.css)$/.test(f)&&![jsName,cssName].includes(f))await unlink(new URL(f,pub));
+// Source fingerprints let packaging reject a stale generated entry.
+const inputs=Object.keys(bundled.metafile.inputs).map(f=>new URL(f,`file://${process.cwd()}/`).pathname);
+const names=[...inputs.map(f=>f.slice(root.pathname.length)),...cssFiles.map(f=>'public/'+f),...[jsName,cssName,'index.html','startup.js','sw.js'].map(f=>'public/'+f)];
+const manifest=await Promise.all(names.sort().map(async name=>`${hash(await readFile(new URL(name,root)))}  ${name}`));
+await writeFile(new URL('web-build.sha256',root),manifest.join('\n')+'\n');
+console.log(JSON.stringify({js:jsName,jsBytes:js.length,css:cssName,cssBytes:css.outputFiles[0].contents.length}));
